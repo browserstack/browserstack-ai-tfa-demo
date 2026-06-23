@@ -1,0 +1,25 @@
+{
+  "$comment": "Central config for the generic RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals — infra tools are discovered at runtime via the capability manifest (see skills/rca-build/references/evidence-routing.md).",
+  "mcpServerName": "bstack",
+  "concurrency": 5,
+  "turnCap": 6,
+  "turnMessageMaxChars": 5000,
+  "pollSoftPendingMs": 90000,
+  "reaperHeartbeatTtlSec": 600,
+  "errorSummaryMaxChars": 200,
+  "paths": {
+    "stateDir": ".rca",
+    "csvFile": ".rca/rca-state.csv",
+    "reportFile": ".rca/rca-report.md"
+  },
+  "evidenceRouting": {
+    "test_logs": { "owner": "tfa", "skip": true },
+    "product_code": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
+    "deploy": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
+    "ci": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
+    "k8s": { "capability": "k8s", "discoveryHints": [] },
+    "kibana": { "capability": "logs", "discoveryHints": [] },
+    "metrics": { "capability": "metrics", "discoveryHints": [] },
+    "other": { "capability": "other", "discoveryHints": [] }
+  }
+}

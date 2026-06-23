@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "bstack": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@browserstack/mcp-server"],
+      "env": {
+        "BROWSERSTACK_USERNAME": "${BROWSERSTACK_USERNAME}",
+        "BROWSERSTACK_ACCESS_KEY": "${BROWSERSTACK_ACCESS_KEY}",
+        "O11Y_TFA_RCA_BASE_URL": "${O11Y_TFA_RCA_BASE_URL}"
+      }
+    }
+  }
+}

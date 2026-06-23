@@ -1,0 +1,12 @@
+{
+  "name": "soft-pending — resumable",
+  "testRunId": 81,
+  "turns": [
+    {
+      "status": "PENDING",
+      "confidence": "unknown",
+      "threadId": "thr-81",
+      "turnId": "turn-81-1"
+    }
+  ]
+}

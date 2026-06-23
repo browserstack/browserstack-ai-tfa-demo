@@ -5,6 +5,6 @@
   "type": "module",
   "description": "Generic multi-client RCA agent plugin harness",
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test"
   }
 }

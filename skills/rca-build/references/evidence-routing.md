@@ -131,3 +131,32 @@ SUMMARY: not-found | unreachable | unavailable | out-of-scope — <one line: wha
 An all-`unavailable` / all-`not-found` turn still resubmits — TFA decides whether
 the gap is fatal (→ BLOCKED) or it can converge anyway (best-effort, lower
 confidence). The coordinator does not pre-empt that decision.
+
+---
+
+## Capability manifest (built once per run)
+
+Rather than re-discover "is there a kibana skill?" on every ask across every
+test, the orchestrator enumerates the client's available skills/tools **once** up
+front into a manifest (`lib/routing.mjs` → `buildManifest`):
+
+```
+{ github: {available: true, via: "github-mcp"}, k8s: {available: false}, ... }
+```
+
+- Every ask routes against this manifest — reproducible, no per-ask discovery.
+- The orchestrator **declares the unavailable capabilities to the user** up front
+  ("k8s + metrics will be unavailable") and includes them in the first turn so
+  TFA plans asks around what's obtainable.
+- Frozen at run start. A skill appearing mid-run is not picked up until the next run.
+
+## Build-level evidence cache (compute once)
+
+"Diff since last green", "deploy timeline", and "PRs in the suspect window" are
+properties of the **build**, not the test. The orchestrator computes the
+last-green→this-build delta **once** (`lib/evidence-cache.mjs`), caches it by
+`(repo, commit-range, evidenceType)`, and pre-seeds every coordinator with the
+same grounded suspect window — collapsing N×M redundant git/infra calls to ~M and
+front-loading the highest-signal evidence so many tests RESOLVE before any infra
+ask fires. No "last green" (never-green suite) → fall back to a configured
+baseline ref and note the weaker grounding in the report.

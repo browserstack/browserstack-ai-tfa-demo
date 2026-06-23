@@ -99,6 +99,18 @@ across modes. Do not fork the loop; only the gap action differs. When all gaps i
 a turn are resolvable (gathered or user-answered), the loop proceeds normally to a
 terminal `RCA_OUTPUT`.
 
+## Suspect-PR falsification (github asks)
+
+For `product_code` / `deploy` / `ci` asks, follow `references/github-evidence.md`:
+gather the **exact** evidence (diff-since-baseline, PRs-in-window touching the
+failing path, blame, deploy timing) via **GitHub MCP → `gh` → degrade**, and for
+each candidate suspect **try to disprove it** (path overlap? shipped before the
+failure window? behind an OFF flag?). Feed both supporting *and* disconfirming
+evidence back as a structured suspect packet; only `verdict: supported` suspects
+belong in `related_prs`. Reuse the pre-computed build-level evidence — do not
+re-fetch per test. Never fabricate a PR when the github capability is unavailable
+— emit an `unavailable` block.
+
 ## The loop
 
 ```

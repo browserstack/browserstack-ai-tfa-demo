@@ -120,6 +120,39 @@ test("pendingRows returns only pending work", () => {
   assert.equal(pend[0].testRunId, "102");
 });
 
+test("flip rejects a missing/non-terminal rca_done without mutating the row", () => {
+  seed(csv, "build-1", TESTS);
+  claim(csv, 101, "w1", 1000);
+  // missing rca_done
+  assert.equal(flip(csv, 101, { root_cause: "x" }, 2000), false);
+  // invalid rca_done
+  assert.equal(flip(csv, 101, { rca_done: "weird" }, 2000), false);
+  const row = readRows(csv).find((r) => r.testRunId === "101");
+  assert.equal(row.rca_done, PENDING); // not reverted to claimable-pending silently
+  assert.equal(row.in_flight_worker, "w1"); // claim intact — bug surfaces, no clobber
+  assert.equal(row.root_cause, ""); // nothing written
+});
+
+test("pending-resume is resumable: not terminal, listed, and re-claimable", () => {
+  seed(csv, "build-1", TESTS);
+  claim(csv, 101, "w1", 1000);
+  flip(csv, 101, { rca_done: "pending-resume", threadId: "thr-1", turnId: "t-1" }, 2000);
+  const row = readRows(csv).find((r) => r.testRunId === "101");
+  assert.equal(row.in_flight_worker, ""); // this attempt released the claim
+  assert.equal(row.threadId, "thr-1"); // resume handles retained
+  assert.equal(row.turnId, "t-1");
+  // appears in the fan-out work-list and can be claimed by the resume pass
+  assert.ok(pendingRows(csv).some((r) => r.testRunId === "101"));
+  assert.equal(claim(csv, 101, "w2", 3000), true);
+});
+
+test("reaper ignores pending-resume rows (not in flight)", () => {
+  seed(csv, "build-1", TESTS);
+  claim(csv, 101, "w1", 1000);
+  flip(csv, 101, { rca_done: "pending-resume" }, 2000);
+  assert.deepEqual(reaper(csv, 600, 10_000_000), []);
+});
+
 test("CSV codec round-trips fields with commas, quotes, newlines", () => {
   seed(csv, "build-1", [{ test_id: 200, test_name: "weird" }]);
   flip(

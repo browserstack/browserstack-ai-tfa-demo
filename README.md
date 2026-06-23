@@ -27,6 +27,16 @@ The plugin auto-configures on load: the `bstack` MCP server (from `.mcp.json`),
 the `/rca-build` command, the `rca-build` skill, and the `ai-tfa-coordinator`
 agent are all discovered by convention.
 
+### Cursor & Codex
+
+The MCP core (`listTestIds` + `tfaRcaTurn`) and the skill/agent layer port to
+both — Cursor uses `.cursor-plugin/plugin.json` + `.cursor-mcp.json`, Codex uses
+`~/.codex/config.toml` (see `codex-mcp.example.toml`). The only Claude-specific
+piece is the auto-mode *dynamic workflow*; on Cursor/Codex the same batch runs via
+interactive subagents or the sequential harness (`lib/loop.mjs`). Full
+per-host wiring (MCP config, skill/agent discovery, deeplink) is in
+**[INTEGRATION.md](INTEGRATION.md)**.
+
 ## Usage
 
 ```

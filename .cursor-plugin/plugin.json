@@ -1,0 +1,8 @@
+{
+  "name": "tfa-rca",
+  "description": "Collaborative root-cause analysis over all failed tests of a BrowserStack build, generic across product and infra.",
+  "version": "0.1.0",
+  "mcpServers": "../.cursor-mcp.json",
+  "skills": "./skills/",
+  "author": { "name": "BrowserStack" }
+}

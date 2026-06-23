@@ -139,6 +139,12 @@ re-fetch per test. Never fabricate a PR when the github capability is unavailabl
 6. EMIT the RCA_OUTPUT block from the captured terminal state.
 ```
 
+> The loop mechanics above have an **executable mirror** in `lib/loop.mjs`
+> (`runRcaLoop`) — conformance-tested against recorded `tfaRcaTurn` transcripts
+> (`tests/conformance.test.mjs`). It also serves as the **sequential thin-client
+> harness** (D5): MCP clients without workflows/subagents drive the same contract
+> by calling `runRcaLoop` with a real `submit` bound to `tfaRcaTurn`.
+
 **Sibling confirm (cluster member).** When `pre_seed` is present the first turn
 states the representative's hypothesis and asks TFA to confirm against this
 test's own logs. If TFA `RESOLVED`s in one turn → a logs-grounded per-test RCA at

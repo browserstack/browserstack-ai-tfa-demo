@@ -1,0 +1,37 @@
+{
+  "name": "needs_info → evidence → resolved",
+  "testRunId": 39,
+  "turns": [
+    {
+      "status": "NEEDS_INFO",
+      "confidence": "low",
+      "threadId": "thr-39",
+      "questions": ["Did the buildName validator change?"],
+      "asks": [
+        {
+          "what": "Did request-validation on POST /builds change since last green?",
+          "why": "the failing test posts an empty buildName",
+          "evidenceType": "product_code",
+          "priority": "high"
+        },
+        {
+          "what": "Full run logs for test 39",
+          "why": "to read the failure",
+          "evidenceType": "test_logs",
+          "priority": "high"
+        }
+      ]
+    },
+    {
+      "status": "RESOLVED",
+      "confidence": "high",
+      "threadId": "thr-39",
+      "rca": {
+        "root_cause": "PR #7421 tightened the buildName validator to reject empty strings",
+        "possible_fix": "send a non-empty buildName or relax the validator",
+        "failure_type": "product_regression",
+        "related_prs": ["#7421"]
+      }
+    }
+  ]
+}

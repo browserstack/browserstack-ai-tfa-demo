@@ -1,0 +1,13 @@
+{
+  "name": "blocked — unmet asks",
+  "testRunId": 72,
+  "turns": [
+    {
+      "status": "BLOCKED",
+      "confidence": "low",
+      "threadId": "thr-72",
+      "reason": "could not obtain server-side logs; cannot distinguish product bug from env flake",
+      "unmetAsks": ["kibana", "k8s"]
+    }
+  ]
+}

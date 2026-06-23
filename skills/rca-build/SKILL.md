@@ -92,9 +92,10 @@ representatives deep, siblings one-turn-confirm. Eagerly persist to the CSV/WAL
 - **auto** → run the dynamic workflow `workflows/rca-batch.mjs` (script-orchestrated,
   no user input; gap → "unavailable" back to TFA → best-effort finalize).
 - **interactive** → spawn `ai-tfa-coordinator` subagents 5 at a time; on an
-  evidence gap a subagent returns the gap to this orchestrator, which asks the
-  user (A1), then feeds the answer back. Subagents return compact `RCA_OUTPUT`
-  blocks, not transcripts (keeps the main context lean for large batches).
+  evidence gap a subagent ends early with a `GAP_OUTPUT` (resume handles), and
+  this orchestrator asks the user (A1) then re-dispatches with `resume=`. Subagents
+  return compact blocks, not transcripts (keeps the main context lean for large
+  batches). Full protocol: `references/interactive-mode.md`.
 
 Both modes use the **same** `ai-tfa-coordinator`; only the injected gap-resolver
 differs. A coordinator that dies becomes a recorded `failed` row — one stuck test

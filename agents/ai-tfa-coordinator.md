@@ -71,12 +71,33 @@ capability available for that `evidenceType`):
 
 - **auto** → emit an `unavailable` block back to TFA (no user prompt). TFA
   finalizes best-effort with lower confidence.
-- **interactive** → **return the gap to the caller** (the main agent), which asks
-  the user (A1) for that data, then feeds the answer back. A subagent cannot
-  prompt the user itself.
+- **interactive** → a subagent cannot pause to prompt the user, so **end the run
+  early and return a `GAP_OUTPUT` block** (status `PENDING`) carrying the resume
+  handles + the gap. The orchestrator asks A1, then **re-dispatches a coordinator
+  with `resume={threadId, turnId}`** and the answer digested into the next turn.
+  See `references/interactive-mode.md`.
 
-Everything else — the loop, routing, digest, caps, output — is identical across
-modes. Do not fork the loop; only the gap action differs.
+`GAP_OUTPUT` block (interactive gap only):
+
+```
+GAP_OUTPUT_START
+## testRunId
+<integer>
+## thread_id
+<threadId>
+## turn_id
+<turnId>            # resume handle
+## gap
+- evidenceType: <type>
+- what: <verbatim ask `what`>
+- why: <verbatim ask `why`>
+GAP_OUTPUT_END
+```
+
+Everything else — the loop, routing, digest, caps, terminal output — is identical
+across modes. Do not fork the loop; only the gap action differs. When all gaps in
+a turn are resolvable (gathered or user-answered), the loop proceeds normally to a
+terminal `RCA_OUTPUT`.
 
 ## The loop
 

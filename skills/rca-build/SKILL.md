@@ -1,6 +1,6 @@
 ---
 name: rca-build
-description: Run collaborative root-cause analysis over ALL failed tests of a BrowserStack build. Generic across product and infra. Mandatory pre-flight GitHub intake, then discovery via listTestIds, failure-signature clustering, and per-test RCA via tfaRcaTurn (auto = dynamic workflow / interactive = subagents). Use when a build is red and you want a per-test RCA for every failure in the TRA dashboard.
+description: Batch collaborative RCA over every failed test of a BrowserStack build via tfaRcaTurn. Clusters failures, routes evidence (GitHub/k8s/logs/metrics), writes a per-test RCA. Generic across product and infra. Use when a build is red. Args: build id, optional mode=auto|interactive.
 ---
 
 # rca-build — batch collaborative RCA over a build
@@ -20,29 +20,41 @@ Config (concurrency, turn-cap, paths, evidence registry) lives in
 
 ## Step 0 — mode + input
 
-Parse from `/rca-build` args: the build id and optional `mode=auto|interactive`.
+Parse the build id from the invocation args. Accepted forms: a bare build id, a
+`build_id=<id>` token, or a build dashboard link (extract the id). Also accept an
+optional `mode=auto|interactive` and any PR URLs the user supplies (carry them
+into the pre-flight intake as the product/automation PRs).
 
 - No build id present → it is required:
   - interactive session → ask the user.
   - **headless (`claude -p`) with build id missing → end immediately (fail fast).**
 - No mode given → ask the user once (auto vs interactive). In headless, default `auto`.
 
-## Step 1 — pre-flight intake (F1, mandatory, both modes)
+## Step 1 — pre-flight intake (F1)
 
-Ask the user (A1) for, in one pass:
+Intake fields: product repo, automation (test) repo, working branch, default
+branch, the PRs in play (product + automation), and the build id. **How they're
+collected depends on mode — auto must never block.**
 
-- product repo name, automation (test) repo name
-- working branch, default branch
-- the PRs in play (product + automation)
-- the build id (if not already supplied)
+**Auto mode → do NOT prompt. Proceed with whatever is present.** Gather the
+intake from the invocation args (build id + any PR URLs / repos / branch the user
+passed) and from cheap inference (e.g. `gh repo view`, current branch). Any field
+not supplied is recorded as "I don't have one" and the run proceeds **RCA-only**
+for that field. Auto mode is autonomous — it does not stop to ask the user, in an
+interactive `claude` session or otherwise. Show the resolved intake + capability
+manifest as a one-line FYI, then immediately continue to Step 2. (This is the
+"present human answered at launch by passing args" assumption — the absence of an
+arg is itself the answer, not a reason to wait.)
 
-Every question is **mandatory to ask** but answerable with **"I don't have one"**
-→ record the gap and proceed **RCA-only** (BrowserStack-side evidence + whatever
-infra skills exist). Do not block the run on missing GitHub context.
+**Interactive mode → ask A1 once, in one pass**, for the fields above. Every
+question is answerable with "I don't have one" → record the gap and proceed
+RCA-only. Do not block the run on missing GitHub context. After this single
+upfront pass, the rest of the batch runs without re-prompting (gaps surface via
+the per-test gap-return, not the intake).
 
-**Headless rule:** in `claude -p`, any *required* input still missing after
-parsing (build id) ends the run immediately. Optional intake answers default to
-"none" without prompting.
+**Headless rule:** in `claude -p`, the build id is the only required input; if
+it's missing after parsing, end immediately (fail fast). All intake fields
+default to "none" without prompting (same as auto).
 
 ## Step 2 — discovery (F2)
 

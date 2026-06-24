@@ -19,7 +19,8 @@ ask-and-resume loop.
 
 ```
 1. Take the next ≤5 pending work items (representatives first, then siblings).
-2. Dispatch one ai-tfa-coordinator subagent per item, mode=interactive, passing
+2. Dispatch one `tfa-rca:ai-tfa-coordinator` subagent per item (plugin agents are
+   namespaced by plugin name — use the `tfa-rca:` prefix), mode=interactive, passing
    the manifest + pre-computed build evidence + (for siblings) the pre-seed.
 3. Each subagent runs its loop until either:
      - a terminal status → returns RCA_OUTPUT (the orchestrator flips the CSV row), or

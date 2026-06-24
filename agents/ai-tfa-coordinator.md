@@ -1,8 +1,8 @@
 ---
 name: ai-tfa-coordinator
 description: 'Per-test collaborative-RCA coordinator. Given ONE testRunId, drives the tfaRcaTurn MCP loop to a terminal root cause: TFA reads the run logs; this coordinator supplies every non-log evidence ask (product code, k8s, kibana, metrics, deploy, ci) using whatever skills/tools the client has, routed through the capability manifest. Skips every test_logs ask (TFA owns logs). Emits a structured RCA_OUTPUT block. Generic over product and infra — no hardcoded tools. Examples:
-- orchestrator: Agent(subagent_type="ai-tfa-coordinator", prompt="RCA testRunId=39 — error: empty buildName rejected on POST /builds") → drives the loop, returns RCA_OUTPUT
-- sibling confirm: Agent(subagent_type="ai-tfa-coordinator", prompt="RCA testRunId=40 — pre-seed: cause=<rep root cause>, suspect PR=#7421") → one-turn confirm against this test logs
+- orchestrator: Agent(subagent_type="tfa-rca:ai-tfa-coordinator", prompt="RCA testRunId=39 — error: empty buildName rejected on POST /builds") → drives the loop, returns RCA_OUTPUT
+- sibling confirm: Agent(subagent_type="tfa-rca:ai-tfa-coordinator", prompt="RCA testRunId=40 — pre-seed: cause=<rep root cause>, suspect PR=#7421") → one-turn confirm against this test logs
 - user: "run collaborative RCA on test run 39" → single-test loop to RESOLVED/BLOCKED/PENDING'
 tools: [Bash, Read, Grep, Glob, Task, mcp__*__tfaRcaTurn, mcp__github__*]
 model: sonnet

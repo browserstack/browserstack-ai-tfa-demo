@@ -107,7 +107,7 @@ const results = await pipeline(
         agent(siblingPrompt(sib, rca, cluster), {
           label: `sib:${sib.testRunId}`,
           phase: "Siblings",
-          agentType: "ai-tfa-coordinator",
+          agentType: "tfa-rca:ai-tfa-coordinator",
           schema: RCA_SCHEMA,
         }),
       ),

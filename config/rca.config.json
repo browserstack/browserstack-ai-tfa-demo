@@ -17,7 +17,7 @@
     "product_code": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
     "deploy": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
     "ci": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
-    "k8s": { "capability": "k8s", "discoveryHints": [] },
+    "k8s": { "capability": "k8s", "discoveryHints": ["k8s-rengg-tfa"] },
     "kibana": { "capability": "logs", "discoveryHints": [] },
     "metrics": { "capability": "metrics", "discoveryHints": [] },
     "other": { "capability": "other", "discoveryHints": [] }

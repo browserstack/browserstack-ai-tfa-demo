@@ -69,7 +69,27 @@ headless. Running `claude -p` with a required input missing ends immediately.
   skills your client already has. Missing ones degrade gracefully (the RCA's
   confidence band reflects what evidence was actually available).
 
+## Demo run (rengg-tfa)
+
+A seeded failing build exercises the full loop against real staging infra:
+
+1. **Seed the build** — `automation/` holds failing API cases for the rcaChat /
+   `is_mcp_driven` feature and `upload.sh` to push them. The current seeded build:
+   `awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2` (project "RCA Feature Fencing",
+   build "VRT Build"). See `automation/README.md`.
+2. **k8s evidence harness** — `skills/k8s-rengg-tfa/` + `bin/k8s-context.sh`
+   provide the `k8s` capability: read-only obs-api context (pod health, deployed
+   image, error logs, events) from the `rengg-tfa` namespace, secrets redacted.
+3. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported and `kubectl`
+   pointed at the staging cluster:
+   ```
+   /rca-build awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2 mode=interactive
+   ```
+   The harness clusters the failures, drives `tfaRcaTurn` per cluster, and routes
+   `k8s` asks to the `k8s-rengg-tfa` skill while `product_code`/`deploy` asks go to
+   GitHub — landing per-test RCAs that trace back to the seeded regressions.
+
 ## Layout
 
-See `docs/plans/2026-06-23-001-feat-generic-rca-agent-plugin-plan.md` for the
-implementation plan and `docs/brainstorms/` for the requirements.
+Implementation plan + requirements live under `docs/` (local, gitignored).
+Cross-client wiring is in `INTEGRATION.md`.

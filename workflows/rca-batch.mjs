@@ -98,7 +98,7 @@ const results = await pipeline(
     agent(repPrompt(cluster), {
       label: `rep:${cluster.representative.testRunId}`,
       phase: "Representatives",
-      agentType: "ai-tfa-coordinator",
+      agentType: "tfa-rca:ai-tfa-coordinator",
       schema: RCA_SCHEMA,
     }).then((rca) => ({ cluster, rca })),
   ({ cluster, rca }) =>

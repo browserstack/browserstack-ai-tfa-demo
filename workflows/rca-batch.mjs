@@ -1,24 +1,27 @@
 export const meta = {
   name: "rca-batch",
   description:
-    "Drive collaborative RCA over all failed tests of a build (auto mode): cluster representatives run the full loop, siblings one-turn-confirm, ~5 concurrent.",
+    "Drive autonomous collaborative RCA over all failed tests of a build: cluster representatives run the full loop, siblings one-turn-confirm, ~5 concurrent. Never prompts a user.",
   phases: [
     { title: "Representatives", detail: "full multi-turn RCA per cluster" },
     { title: "Siblings", detail: "one-turn confirm against own logs" },
   ],
 };
 
-// AUTO MODE orchestration (D2). This is a dynamic-workflow script: it runs in the
-// Workflow sandbox (no filesystem, no Date.now/Math.random, agent()/pipeline()
-// as globals). It therefore does NO state I/O itself — the orchestrator seeds the
-// CSV, clusters, and builds the manifest in normal context and passes the
-// work-list via `args`; each dispatched `ai-tfa-coordinator` agent (which HAS
-// tool access) claims + flips its own CSV row eagerly (WAL); this script
-// orchestrates concurrency and returns the structured results for reconciliation.
+// The /factory batch orchestration (fully autonomous — the gate closed before
+// this runs; nothing here ever asks the user). This is a dynamic-workflow
+// script: it runs in the Workflow sandbox (no filesystem, no Date.now/
+// Math.random, agent()/pipeline() as globals). It therefore does NO state I/O
+// itself — the orchestrator seeds the CSV, clusters, and builds the validated
+// manifest at the gate and passes the work-list via `args`; each dispatched
+// `ai-tfa-coordinator` agent (which HAS tool access) claims + flips its own CSV
+// row eagerly (WAL); this script orchestrates concurrency and returns the
+// structured results for reconciliation. The final glimpse + triggerRcaReport
+// step happens back in the orchestrator (SKILL.md Step 6).
 //
 // args shape:
 // {
-//   csvPath, buildId, mode: "auto",
+//   csvPath, buildId,
 //   manifest: { capability: { available, via } },
 //   buildEvidence: { baselineRef, suspectWindow, ... },   // pre-computed once
 //   clusters: [
@@ -32,10 +35,11 @@ const RCA_SCHEMA = {
   required: ["testRunId", "status"],
   properties: {
     testRunId: { type: "string" },
-    status: { enum: ["RESOLVED", "BLOCKED", "PENDING", "failed"] },
+    status: { enum: ["RESOLVED", "PENDING", "failed"] },
     confidence: { enum: ["high", "medium", "low", "unknown"] },
     root_cause: { type: "string" },
-    possible_fix: { type: "string" },
+    failure_type: { type: "string" },
+    view_rca: { type: "string" },
     related_prs: { type: "array", items: { type: "string" } },
     suspect_signals: { type: "array", items: { type: "string" } },
     threadId: { type: "string" },
@@ -55,7 +59,8 @@ const shared = [
   `CSV state file: ${ctx.csvPath}`,
   `Capability manifest: ${JSON.stringify(ctx.manifest ?? {})}`,
   `Build-level evidence (pre-computed once, reuse — do not re-fetch): ${JSON.stringify(ctx.buildEvidence ?? {})}`,
-  `Mode: auto — on an evidence gap with no capability, report "unavailable" back to TFA (NEVER prompt a user). Best-effort finalize.`,
+  `Autonomous run — on an evidence gap with no valid connector, report "unavailable" back to TFA (NEVER prompt a user). Best-effort finalize.`,
+  `PRODUCT_BUG / application-bug mandate: hunt the culprit PR via the github connector (deploy timeline vs last-pass window, changed paths vs failure signature) and feed the PR link(s) to TFA so related_prs populates. No PR after digging to the turn cap → state explicitly "no culprit PR identified after <what was searched>" so the CSV row records the gap.`,
   `Persist eagerly to the CSV: claim your row before turn 1, flip it on terminal (lib/csv-state.mjs).`,
 ].join("\n");
 
@@ -78,7 +83,7 @@ function siblingPrompt(sibling, repResult, cluster) {
     `  root_cause: ${repResult?.root_cause ?? "(representative did not resolve)"}`,
     `  related_prs: ${JSON.stringify(repResult?.related_prs ?? [])}`,
     `State this hypothesis on turn 1 and ask TFA to CONFIRM it against THIS test's own logs.`,
-    `If TFA confirms in one turn → done. If it does NOT (NEEDS_INFO/BLOCKED), fall back to the full loop — never blindly inherit.`,
+    `If TFA confirms in one turn → done. If it does NOT (NEEDS_INFO), fall back to the full loop — never blindly inherit.`,
     `testRunId=${sibling.testRunId}  testName=${sibling.testName ?? ""}`,
     `error_digest: ${sibling.error_summary ?? "(none)"}`,
     shared,
@@ -86,7 +91,7 @@ function siblingPrompt(sibling, repResult, cluster) {
   ].join("\n");
 }
 
-log(`Auto-mode batch: ${clusters.length} cluster(s) over build ${ctx.buildId ?? "?"}`);
+log(`Batch: ${clusters.length} cluster(s) over build ${ctx.buildId ?? "?"}`);
 
 // Pipeline: each cluster flows representative → siblings independently (no barrier
 // between stages), so a small cluster's siblings confirm while a big cluster's
@@ -125,6 +130,6 @@ const byStatus = all.reduce((acc, r) => {
   return acc;
 }, {});
 
-log(`Auto-mode batch complete: ${all.length} test(s) — ${JSON.stringify(byStatus)}`);
+log(`Batch complete: ${all.length} test(s) — ${JSON.stringify(byStatus)}`);
 
 return { clusters: flat.length, tests: all.length, byStatus, results: flat };

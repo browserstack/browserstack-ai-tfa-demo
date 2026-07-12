@@ -16,8 +16,30 @@ that tries to *disprove* each suspect before it enters `related_prs`.
    `gh api`, `merge-base`, ancestry) and anything the MCP doesn't cover.
 3. **Neither** → emit an `unavailable` block for the ask (do not fabricate a PR).
 
-The orchestrator records which is present in the capability manifest
+The gate records which is present **and probe-validated** (`gh auth status` /
+GitHub MCP tools listed) in the capability manifest
 (`capability: github → { available, via }`); route every github ask against it.
+
+## Application bugs REQUIRE a culprit-PR hunt (mandatory)
+
+Whenever TFA's working classification is **PRODUCT_BUG / application bug**, the
+github connector is not optional evidence — it is the deliverable. The
+coordinator MUST hunt the culprit PR:
+
+1. **Deploy timeline vs last-pass window** — what shipped to the run's env
+   between the last passing run and this failure.
+2. **Changed paths vs failure signature** — intersect the window's PRs' changed
+   files with the failing file/function from the signature.
+3. Run the falsification protocol below on each candidate.
+
+Feed the surviving PR **link(s)** to TFA in the turn message so the BrowserStack
+agent populates `related_prs` in the dashboard RCA. **An application-bug RCA
+with no GitHub PR link is INCOMPLETE**: keep digging on subsequent turns until
+the turn cap. If still none, the turn must explicitly state
+`no culprit PR identified after <what was searched: window, repos, paths>` and
+the CSV row records the gap. Never fabricate a PR; if the github connector is
+invalid/absent, the same explicit statement plus an `unavailable` block goes to
+TFA (a gate-recorded gap).
 
 ## Evidence each ask needs (be specific — no fishing)
 

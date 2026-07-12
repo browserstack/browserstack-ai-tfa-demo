@@ -1,5 +1,5 @@
 {
-  "$comment": "Central config for the generic RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals — infra tools are discovered at runtime via the capability manifest (see skills/rca-build/references/evidence-routing.md).",
+  "$comment": "Central config for the /factory RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals — connectors are discovered and probe-validated at the gate into the capability manifest (see skills/factory/references/evidence-routing.md). No reportFile: the plugin never writes a local RCA report — the full report lives on the Test Observability UI (triggerRcaReport).",
   "mcpServerName": "bstack",
   "concurrency": 5,
   "turnCap": 6,
@@ -9,8 +9,7 @@
   "errorSummaryMaxChars": 200,
   "paths": {
     "stateDir": ".rca",
-    "csvFile": ".rca/rca-state.csv",
-    "reportFile": ".rca/rca-report.md"
+    "csvFile": ".rca/rca-state.csv"
   },
   "evidenceRouting": {
     "test_logs": { "owner": "tfa", "skip": true },

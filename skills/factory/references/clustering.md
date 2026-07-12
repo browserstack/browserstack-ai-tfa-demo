@@ -47,7 +47,7 @@ Distinct failures can share an error string. A sibling's pre-seed turn is a
 *hypothesis to confirm*, not a verdict to copy:
 
 - TFA `RESOLVED`s the sibling in one turn → logs-grounded inheritance, cheap. 
-- TFA returns `NEEDS_INFO` / `BLOCKED` (the hypothesis does not hold for this
+- TFA returns `NEEDS_INFO` (the hypothesis does not hold for this
   test's logs) → the sibling **falls back to its own full loop**. The
   representative's cause is never stamped onto a sibling without log confirmation.
 

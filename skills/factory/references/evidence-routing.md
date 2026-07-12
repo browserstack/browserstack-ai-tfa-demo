@@ -8,8 +8,9 @@ submits on the next turn.
 The core contract: **TFA owns logs; the client agent owns everything else.** The
 coordinator never seeds logs and never fulfills a `test_logs` ask. Every other
 `evidenceType` routes to a capability that is gathered via **whatever skill/tool
-the client actually has** for it (discovered once into the capability manifest —
-see `SKILL.md` § Pre-compute). There are **no `kubectl` / `chitragupta` /
+the client actually has** for it (discovered **and validated** once into the
+capability manifest — see `SKILL.md` § Gate Part A). There are **no `kubectl` /
+`chitragupta` /
 `bifrost` literals here** — that is the whole point of going generic.
 
 The registry logic lives in `lib/routing.mjs` (`routeAsk` / `routeAsks`); this
@@ -27,11 +28,9 @@ priority }`. For each ask, in descending `priority` (`high` → `medium` → `lo
    - **skip** — `test_logs` (TFA-owned). Gather nothing; record in `asks_skipped`.
    - **gather** — a capability is available. Run its discovered skill/tool scoped
      by `what` / `why`, then digest the result into one ask block.
-   - **gap** — no capability is available. Hand the ask to the injected
-     **`resolveGap()`** policy:
-     - **auto mode** → emit an `unavailable` block back to TFA (no user prompt).
-     - **interactive mode** → return the gap to the main agent, which asks the
-       user, then feeds the answer back.
+   - **gap** — no valid connector for that `evidenceType` (the gate recorded it
+     as `invalid`/`absent`). Emit an `unavailable` block back to TFA — **never
+     prompt the user** (the gate is closed; the run is autonomous).
 2. Concatenate the per-ask blocks into the next-turn `message` and resubmit on
    the same `threadId`.
 
@@ -125,30 +124,32 @@ SUMMARY: not-found | unreachable | unavailable | out-of-scope — <one line: wha
 
 - `not-found` — the skill/tool ran but the signal isn't there. State the search performed.
 - `unreachable` — the surface was not reachable from this agent context. State which.
-- `unavailable` — no capability/skill exists for this `evidenceType` (auto-mode gap result).
+- `unavailable` — no valid connector exists for this `evidenceType` (a gate-recorded gap).
 - `out-of-scope` — the ask is `test_logs` or otherwise not the agent's to fulfill.
 
-An all-`unavailable` / all-`not-found` turn still resubmits — TFA decides whether
-the gap is fatal (→ BLOCKED) or it can converge anyway (best-effort, lower
-confidence). The coordinator does not pre-empt that decision.
+An all-`unavailable` / all-`not-found` turn still resubmits — TFA decides how to
+converge (best-effort, lower confidence) or what else to ask. The coordinator
+does not pre-empt that decision.
 
 ---
 
-## Capability manifest (built once per run)
+## Capability manifest (built once, at the gate)
 
 Rather than re-discover "is there a kibana skill?" on every ask across every
-test, the orchestrator enumerates the client's available skills/tools **once** up
-front into a manifest (`lib/routing.mjs` → `buildManifest`):
+test, Gate Part A enumerates **and probe-validates** the client's connectors
+**once** up front into a manifest (`lib/routing.mjs` → `buildManifest`).
+`valid` maps to `available: true`; `invalid`/`absent` map to `available: false`
+(a recorded gap):
 
 ```
-{ github: {available: true, via: "github-mcp"}, k8s: {available: false}, ... }
+{ github: {available: true, via: "gh"}, k8s: {available: false}, ... }
 ```
 
 - Every ask routes against this manifest — reproducible, no per-ask discovery.
-- The orchestrator **declares the unavailable capabilities to the user** up front
-  ("k8s + metrics will be unavailable") and includes them in the first turn so
-  TFA plans asks around what's obtainable.
-- Frozen at run start. A skill appearing mid-run is not picked up until the next run.
+- The gate summary **declares the gaps to the user** ("k8s + metrics not
+  available") and the first turn declares them to TFA so it plans asks around
+  what's obtainable.
+- Frozen at gate close. A skill appearing mid-run is not picked up until the next run.
 
 ## Build-level evidence cache (compute once)
 
@@ -159,4 +160,5 @@ last-green→this-build delta **once** (`lib/evidence-cache.mjs`), caches it by
 same grounded suspect window — collapsing N×M redundant git/infra calls to ~M and
 front-loading the highest-signal evidence so many tests RESOLVE before any infra
 ask fires. No "last green" (never-green suite) → fall back to a configured
-baseline ref and note the weaker grounding in the report.
+baseline ref and note the weaker grounding in the turn digest (it lands in the
+dashboard RCA).

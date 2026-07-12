@@ -2,36 +2,40 @@
 
 This plugin is built so the **MCP core is truly cross-client** and the **harness
 layer ports via the cross-vendor Agent Skills standard**. Only one piece is
-genuinely Claude-Code-specific (the auto-mode *dynamic workflow*); on Cursor and
-Codex that role is filled by the sequential harness or interactive subagents.
+genuinely Claude-Code-specific (the batch *dynamic workflow*); on Cursor and
+Codex that role is filled by the sequential harness or subagents. Every path is
+autonomous after the single `/factory` gate — no host ever prompts mid-run.
 
 ## What transfers, what doesn't
 
 | Layer | Claude Code | Cursor | Codex |
 |---|---|---|---|
-| `bstack` MCP server (`listTestIds` + `tfaRcaTurn`) | `.mcp.json` (auto-discovered) | `.cursor-mcp.json` / `.cursor/mcp.json` | `~/.codex/config.toml` `[mcp_servers.bstack]` |
-| `rca-build` skill (`SKILL.md`) | plugin `skills/` | Agent Skills (`.cursor/skills/` or cursor-plugin `"skills":"./skills/"`) | Agent Skills (`.agents/skills/`) |
+| `bstack` MCP server (`listTestIds` + `tfaRcaTurn` + `triggerRcaReport`) | `.mcp.json` (auto-discovered) | `.cursor-mcp.json` / `.cursor/mcp.json` | `~/.codex/config.toml` `[mcp_servers.bstack]` |
+| `factory` skill (`SKILL.md`) | plugin `skills/` | Agent Skills (`.cursor/skills/` or cursor-plugin `"skills":"./skills/"`) | Agent Skills (`.agents/skills/`) |
 | `ai-tfa-coordinator` agent | plugin `agents/` | `.cursor/agents/` (also reads `.claude/agents/`) | `.codex/agents/` |
 | Per-test RCA **loop** | `agents/ai-tfa-coordinator.md` | same skill/agent | same skill/agent |
-| Batch orchestration | **auto** = dynamic workflow `workflows/rca-batch.mjs`; **interactive** = subagents | subagents, or **sequential** `lib/loop.mjs` | subagents, or **sequential** `lib/loop.mjs` |
+| Batch orchestration | dynamic workflow `workflows/rca-batch.mjs` (or subagents) | subagents, or **sequential** `lib/loop.mjs` | subagents, or **sequential** `lib/loop.mjs` |
 
 The dynamic workflow (`workflows/rca-batch.mjs`) uses Claude Code's Workflow
 runtime, which Cursor/Codex don't have. The same batch still runs there via
-**interactive subagents** (both hosts support subagents) or the **sequential
-thin-client harness** `lib/loop.mjs` (`runRcaLoop`) — the conformance-tested
-loop that drives `tfaRcaTurn` over the same contract without any host-specific
-orchestration.
+**subagents** (both hosts support subagents) or the **sequential thin-client
+harness** `lib/loop.mjs` (`runRcaLoop`) — the conformance-tested loop that
+drives `tfaRcaTurn` over the same contract without any host-specific
+orchestration. On every host the run finishes the same way: glimpse table →
+`triggerRcaReport(buildUuid)` → "Full report on the Test Observability UI:
+<viewReport>". No local report file is ever written.
 
 ## Claude Code
 
 ```bash
 cp .env.example .env   # BROWSERSTACK_USERNAME / BROWSERSTACK_ACCESS_KEY
 claude --plugin-dir ./
-/rca-build <build-id>
+/factory <build-id>
 ```
 
-`.claude-plugin/plugin.json` + root `.mcp.json` + `skills/` + `agents/` +
-`commands/` are auto-discovered.
+`.claude-plugin/plugin.json` + root `.mcp.json` + `skills/` + `agents/` are
+auto-discovered. (No `commands/factory.md` on purpose — a command and skill
+with the same name collide and the skill body fails to load.)
 
 ## Cursor
 
@@ -59,7 +63,7 @@ ln -s ../skills  .cursor/skills
 ln -s ../agents  .cursor/agents
 ```
 
-Then drive it from Agent chat: invoke the `rca-build` skill with a build id.
+Then drive it from Agent chat: invoke the `factory` skill with a build id.
 
 ## Codex
 
@@ -84,7 +88,7 @@ ln -s ../skills  .agents/skills
 ln -s ../agents  .codex/agents
 ```
 
-Then run the `rca-build` skill; the coordinator + `tfaRcaTurn` loop are identical.
+Then run the `factory` skill; the coordinator + `tfaRcaTurn` loop are identical.
 
 ## Notes
 
@@ -95,4 +99,4 @@ Then run the `rca-build` skill; the coordinator + `tfaRcaTurn` loop are identica
   Cursor/Codex, replace the placeholders with literals if your client doesn't
   expand them.
 - Everything in `lib/` and the `SKILL.md`/agent prose is host-agnostic — only the
-  MCP wiring file and the auto-mode workflow are host-specific.
+  MCP wiring file and the dynamic workflow are host-specific.

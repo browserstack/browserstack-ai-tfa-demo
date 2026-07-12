@@ -31,7 +31,7 @@ PROJECT_NAME="RCA Feature Fencing" BUILD_NAME="VRT Build" \
 
 The upload response carries the build id. Feed it to the plugin:
 ```
-/rca-build <build-id> mode=interactive
+/factory <build-id>
 ```
 
 ## The failures (what RCA should rediscover)

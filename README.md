@@ -4,15 +4,18 @@ Drive BrowserStack's collaborative root-cause-analysis loop over **all failed
 tests of a build**, generic across product and infra, from inside an agentic
 MCP client (Claude Code / Cursor / Codex).
 
-The plugin wraps two stable MCP tools — `listTestIds` and `tfaRcaTurn` (from the
-`bstack` MCP server) — and adds the harness that batches RCA over a whole build,
-clusters failures by signature, routes evidence requests to whatever
-skills/tools the client already has, and writes a per-test RCA into the TRA
-dashboard.
+The plugin wraps three stable MCP tools — `listTestIds`, `tfaRcaTurn`, and
+`triggerRcaReport` (from the `bstack` MCP server) — and adds the harness that
+batches RCA over a whole build, clusters failures by signature, routes evidence
+requests to whatever skills/tools the client already has, and lands a per-test
+RCA in the TRA (Test Observability) dashboard.
 
-> It **discovers and delegates** to the infra skills/tools already in your
-> client (GitHub, k8s/EKS, kibana/other logs, metrics). It does **not** install
-> or own those connectors.
+> **The full RCA report lives on the Test Observability UI, not in Claude.**
+> The plugin surfaces a terse glimpse, triggers the dashboard report
+> (`triggerRcaReport`), and prints the link. It **discovers and delegates** to
+> the infra skills/tools already in your client (GitHub, k8s/EKS, kibana/other
+> logs, metrics). It does **not** install or own those connectors, and it never
+> writes a local report file.
 
 ## Install
 
@@ -24,42 +27,63 @@ claude --plugin-dir ./
 ```
 
 The plugin auto-configures on load: the `bstack` MCP server (from `.mcp.json`),
-the `/rca-build` command, the `rca-build` skill, and the `ai-tfa-coordinator`
-agent are all discovered by convention.
+the `factory` skill, and the `ai-tfa-coordinator` agent are all discovered by
+convention. (There is deliberately **no** command file named `factory` — a
+command and skill sharing a name collide and the skill body fails to load.)
 
 ### Cursor & Codex
 
-The MCP core (`listTestIds` + `tfaRcaTurn`) and the skill/agent layer port to
-both — Cursor uses `.cursor-plugin/plugin.json` + `.cursor-mcp.json`, Codex uses
-`~/.codex/config.toml` (see `codex-mcp.example.toml`). The only Claude-specific
-piece is the auto-mode *dynamic workflow*; on Cursor/Codex the same batch runs via
-interactive subagents or the sequential harness (`lib/loop.mjs`). Full
-per-host wiring (MCP config, skill/agent discovery, deeplink) is in
-**[INTEGRATION.md](INTEGRATION.md)**.
+The MCP core (`listTestIds` + `tfaRcaTurn` + `triggerRcaReport`) and the
+skill/agent layer port to both — Cursor uses `.cursor-plugin/plugin.json` +
+`.cursor-mcp.json`, Codex uses `~/.codex/config.toml` (see
+`codex-mcp.example.toml`). The only Claude-specific piece is the batch *dynamic
+workflow*; on Cursor/Codex the same batch runs via subagents or the sequential
+harness (`lib/loop.mjs`). Full per-host wiring (MCP config, skill/agent
+discovery, deeplink) is in **[INTEGRATION.md](INTEGRATION.md)**.
 
 ## Usage
 
 ```
-/rca-build <build-id>
-/rca-build build_id=<id> mode=auto
+/factory <build-id>
+/factory build_id=<id> https://github.com/org/repo/pull/123
 ```
 
-On start the plugin runs a **mandatory pre-flight intake** asking for your
-product + automation repos, working branch, default branch, and the PRs in
-play, plus the build id. Every question is answerable with "I don't have one" →
-the run proceeds RCA-only.
+Args: a build id (bare, `build_id=`, or a dashboard link) plus optional PR URLs
+/ repo hints.
 
-## Modes
+## The single gate
 
-- **auto** — a dynamic workflow drives the whole batch (5 tests concurrent), no
-  mid-run prompts. When evidence can't be gathered (no matching skill), it
-  reports "unavailable" back to the TFA agent, which finalizes best-effort.
-- **interactive** — the main session spawns subagents (5 at a time); on an
-  evidence gap a subagent returns the gap to the main agent, which asks you,
-  then feeds the answer back.
+The run has exactly **one gate** before execution, with two parts:
 
-`auto` means autonomy *during* the batch from an interactive session — not
-headless. Running `claude -p` with a required input missing ends immediately.
+1. **Connector discovery + validation** — every connector relevant to test RCA
+   (github, k8s, logs, metrics, …) is enumerated and probe-validated (`gh auth
+   status`, `kubectl` reachability, MCP tools listed). The result is a validated
+   capability manifest: `connector → valid | invalid | absent`. A gap is
+   recorded and declared to the TFA agent ("I don't have logs/metrics access") —
+   never a blocker.
+2. **Requirements** — intake fields (product repo, automation repo, branches,
+   PRs in play, build id) are resolved **by assumption** wherever possible
+   (invocation args, `gh repo view`, current branch). At most **one**
+   consolidated question may be asked at gate close, and only for genuinely
+   non-assumable, load-bearing fields. Headless (`claude -p`) never asks: a
+   missing build id fails fast; everything else is a recorded gap.
+
+**After the gate closes, the run never asks you anything again** — RCA
+execution is fully autonomous. Evidence gaps degrade to "unavailable" back to
+the TFA agent, which finalizes best-effort.
+
+## Output
+
+When every test is terminal, the run prints a terse **glimpse table**
+(`testRunId → cluster → status → confidence one-liner`), calls
+`triggerRcaReport(buildUuid)`, and prints:
+
+```
+Full report on the Test Observability UI: <viewReport link>
+```
+
+That dashboard report — populated per-test by the BrowserStack agent, with
+mandatory culprit-PR links on application bugs — is the real deliverable.
 
 ## Requirements
 
@@ -83,11 +107,13 @@ A seeded failing build exercises the full loop against real staging infra:
 3. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported and `kubectl`
    pointed at the staging cluster:
    ```
-   /rca-build awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2 mode=interactive
+   /factory awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2
    ```
-   The harness clusters the failures, drives `tfaRcaTurn` per cluster, and routes
-   `k8s` asks to the `k8s-rengg-tfa` skill while `product_code`/`deploy` asks go to
-   GitHub — landing per-test RCAs that trace back to the seeded regressions.
+   The gate validates connectors (github via `gh`, k8s via the `k8s-rengg-tfa`
+   skill), then the harness clusters the failures, drives `tfaRcaTurn` per
+   cluster, routes `k8s` asks to the skill while `product_code`/`deploy` asks go
+   to GitHub — landing per-test RCAs on the dashboard that trace back to the
+   seeded regressions, then prints the glimpse + the Test Observability link.
 
 ## Layout
 

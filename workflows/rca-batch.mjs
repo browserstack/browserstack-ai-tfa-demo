@@ -8,7 +8,7 @@ export const meta = {
   ],
 };
 
-// The /factory batch orchestration (fully autonomous — the gate closed before
+// The /rca-build batch orchestration (fully autonomous — the gate closed before
 // this runs; nothing here ever asks the user). This is a dynamic-workflow
 // script: it runs in the Workflow sandbox (no filesystem, no Date.now/
 // Math.random, agent()/pipeline() as globals). It therefore does NO state I/O

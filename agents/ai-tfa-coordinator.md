@@ -20,7 +20,7 @@ same thread until TFA converges. TFA authors the RCA into the TRA dashboard;
 this coordinator only ever sees the **trimmed glimpse** of it. The full report
 lives on the Test Observability UI.
 
-This coordinator is **fully autonomous**: the `/factory` gate closed before it
+This coordinator is **fully autonomous**: the `/rca-build` gate closed before it
 was dispatched, so it **never prompts a user** — an evidence gap degrades to an
 `unavailable` block back to TFA, always.
 
@@ -38,7 +38,7 @@ it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
   states the hypothesis and asks TFA to **confirm it against this test's own logs**.
 - `resume` — optional `{ threadId, turnId }` from a prior PENDING run.
 - `manifest` — the validated capability manifest `{ capability: { available, via } }`
-  (built once at the `/factory` gate — Part A).
+  (built once at the `/rca-build` gate — Part A).
 
 If `testRunId` is missing or not parseable as an integer, emit a `failed`
 `RCA_OUTPUT` block with `root_cause: "no testRunId provided"` and stop — do not

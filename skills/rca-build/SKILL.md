@@ -1,9 +1,9 @@
 ---
-name: factory
+name: rca-build
 description: Single-gate autonomous batch RCA over every failed test of a BrowserStack build via tfaRcaTurn. One gate (connector validation + assumed intake), then fully autonomous — clusters failures, routes evidence, triggers the dashboard report. Args: build id, optional PR URLs / repo hints.
 ---
 
-# factory — single-gate autonomous RCA over a build
+# rca-build — single-gate autonomous RCA over a build
 
 Drives the `tfaRcaTurn` collaborative loop over **every failed test** of a build
 and lands a per-test RCA in the TRA (Test Observability) dashboard. **TFA owns

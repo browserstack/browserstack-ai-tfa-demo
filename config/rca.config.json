@@ -1,5 +1,5 @@
 {
-  "$comment": "Central config for the /factory RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals — connectors are discovered and probe-validated at the gate into the capability manifest (see skills/factory/references/evidence-routing.md). No reportFile: the plugin never writes a local RCA report — the full report lives on the Test Observability UI (triggerRcaReport).",
+  "$comment": "Central config for the /rca-build RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals — connectors are discovered and probe-validated at the gate into the capability manifest (see skills/rca-build/references/evidence-routing.md). No reportFile: the plugin never writes a local RCA report — the full report lives on the Test Observability UI (triggerRcaReport).",
   "mcpServerName": "bstack",
   "concurrency": 5,
   "turnCap": 6,

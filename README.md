@@ -27,8 +27,8 @@ claude --plugin-dir ./
 ```
 
 The plugin auto-configures on load: the `bstack` MCP server (from `.mcp.json`),
-the `factory` skill, and the `ai-tfa-coordinator` agent are all discovered by
-convention. (There is deliberately **no** command file named `factory` — a
+the `rca-build` skill, and the `ai-tfa-coordinator` agent are all discovered by
+convention. (There is deliberately **no** command file named `rca-build` — a
 command and skill sharing a name collide and the skill body fails to load.)
 
 ### Cursor & Codex
@@ -44,8 +44,8 @@ discovery, deeplink) is in **[INTEGRATION.md](INTEGRATION.md)**.
 ## Usage
 
 ```
-/factory <build-id>
-/factory build_id=<id> https://github.com/org/repo/pull/123
+/rca-build <build-id>
+/rca-build build_id=<id> https://github.com/org/repo/pull/123
 ```
 
 Args: a build id (bare, `build_id=`, or a dashboard link) plus optional PR URLs
@@ -107,7 +107,7 @@ A seeded failing build exercises the full loop against real staging infra:
 3. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported and `kubectl`
    pointed at the staging cluster:
    ```
-   /factory awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2
+   /rca-build awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2
    ```
    The gate validates connectors (github via `gh`, k8s via the `k8s-rengg-tfa`
    skill), then the harness clusters the failures, drives `tfaRcaTurn` per

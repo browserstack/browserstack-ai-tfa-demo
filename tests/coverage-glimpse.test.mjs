@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { coverageStamp, classifyCoverage } from "../lib/coverage.mjs";
-import { renderReport } from "../lib/report.mjs";
+import { renderGlimpse } from "../lib/glimpse.mjs";
 
 // ---- coverage stamp --------------------------------------------------------
 
@@ -47,62 +47,51 @@ test("classifyCoverage dedupes and handles empties", () => {
   assert.equal(classifyCoverage([], ["x"]), "thin");
 });
 
-// ---- report ----------------------------------------------------------------
+// ---- glimpse (the ONLY in-client output — no local report) ------------------
 
-test("empty batch renders a valid report, no crash", () => {
-  const md = renderReport([], { buildId: "b1" });
-  assert.match(md, /No failed tests analyzed/);
+test("empty batch renders a valid glimpse, no crash", () => {
+  const txt = renderGlimpse([], { buildId: "b1" });
+  assert.match(txt, /No failed tests analyzed/);
 });
 
-test("report renders a row table with status counts", () => {
+test("glimpse renders one arrow line per test with status counts", () => {
   const rows = [
     {
       testRunId: "101",
-      testName: "login",
+      cluster_id: "c1",
       rca_done: "resolved",
       confidence: "high",
-      coverage: "full",
       root_cause: "PR #7421 tightened validator",
-      related_prs: "#7421",
     },
     {
       testRunId: "102",
-      testName: "checkout",
-      rca_done: "blocked",
+      cluster_id: "c1",
+      rca_done: "failed",
       confidence: "",
-      coverage: "",
       root_cause: "",
-      related_prs: "",
     },
   ];
-  const md = renderReport(rows, { buildId: "b1" });
-  assert.match(md, /2 test\(s\)/);
-  assert.match(md, /resolved: 1/);
-  assert.match(md, /blocked: 1/);
-  assert.match(md, /101/);
-  assert.match(md, /not available/); // 102's blank fields degrade
+  const txt = renderGlimpse(rows, { buildId: "b1" });
+  assert.match(txt, /2 test\(s\)/);
+  assert.match(txt, /resolved: 1/);
+  assert.match(txt, /failed: 1/);
+  assert.match(txt, /101 → c1 → resolved → high: PR #7421 tightened validator/);
+  assert.match(txt, /102 → c1 → failed → -/); // blank fields degrade to "-"
 });
 
-test("report escapes pipes and collapses newlines in cells", () => {
+test("glimpse one-liner truncates and collapses newlines (stays terse)", () => {
   const rows = [
     {
       testRunId: "1",
-      testName: "t",
+      cluster_id: "solo-1",
       rca_done: "resolved",
-      root_cause: "a | b\nsecond line",
-      related_prs: "#1",
+      confidence: "medium",
+      root_cause: `line one\nline two ${"x".repeat(200)}`,
     },
   ];
-  const md = renderReport(rows);
-  assert.ok(!md.includes("a | b\nsecond"));
-  assert.match(md, /a \\\| b second line/);
-});
-
-test("report surfaces coverage caveats for thin/partial rows", () => {
-  const rows = [
-    { testRunId: "1", testName: "t", rca_done: "resolved", coverage: "partial" },
-  ];
-  const md = renderReport(rows);
-  assert.match(md, /Coverage caveats/);
-  assert.match(md, /confidence band reflects evidence that was unavailable/);
+  const txt = renderGlimpse(rows);
+  const line = txt.split("\n").find((l) => l.startsWith("1 →"));
+  assert.ok(line.includes("line one line two"));
+  assert.ok(line.endsWith("…"));
+  assert.ok(line.length < 120);
 });

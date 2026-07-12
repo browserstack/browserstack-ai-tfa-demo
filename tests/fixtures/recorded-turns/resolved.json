@@ -1,5 +1,5 @@
 {
-  "name": "needs_info → evidence → resolved",
+  "name": "needs_info → evidence → resolved (trimmed terminal glimpse)",
   "testRunId": 39,
   "turns": [
     {
@@ -26,12 +26,12 @@
       "status": "RESOLVED",
       "confidence": "high",
       "threadId": "thr-39",
-      "rca": {
+      "glimpse": {
         "root_cause": "PR #7421 tightened the buildName validator to reject empty strings",
-        "possible_fix": "send a non-empty buildName or relax the validator",
         "failure_type": "product_regression",
         "related_prs": ["#7421"]
-      }
+      },
+      "viewRca": "https://observability.browserstack.com/builds/awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2"
     }
   ]
 }

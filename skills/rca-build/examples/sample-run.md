@@ -61,17 +61,17 @@ SUMMARY: out-of-scope — TFA owns test logs; skipped by contract.
 ## 3. Terminal output (glimpse only — NO local report)
 
 ```
-RCA batch complete — build awswx…fw2 (7 failed → 3 clusters)
-
-39  → c1 → RESOLVED  (high)  PR #7421 tightened buildName validator; related_prs: #7421
-41  → c1 → RESOLVED  (high)  sibling of 39 (cluster confirm)
-57  → c2 → RESOLVED  (med)   flaky selector wait; test-side
-81  → c3 → PENDING   (—)     soft-pending, resumable (turnId recorded)
-…
+RCA analysis complete — build awswx…fw2
+7 test(s) · 6 resolved · 1 pending
 
 Full report on the Test Observability UI:
 https://automation.browserstack.com/builds/awswx…fw2?tab=ai_report&subTab=aitfa
 ```
+
+That is the **entire** in-Claude output. No root causes, no culprit PRs, no
+per-test table — those are on the dashboard, authored by the BrowserStack agent.
+The RESOLVED turn shown earlier is the coordinator↔TFA exchange (internal to the
+loop), not something re-printed to the user at the end.
 
 State file: `<tmpdir>/bstack-rca/rca-state.awswx…fw2.csv` (resume-safe; re-run
 the same build id to pick up the PENDING row).

@@ -54,7 +54,7 @@ test("empty batch renders a valid glimpse, no crash", () => {
   assert.match(txt, /No failed tests analyzed/);
 });
 
-test("glimpse renders one arrow line per test with status counts", () => {
+test("glimpse is a completion notice with counts — NO per-test detail", () => {
   const rows = [
     {
       testRunId: "101",
@@ -62,24 +62,22 @@ test("glimpse renders one arrow line per test with status counts", () => {
       rca_done: "resolved",
       confidence: "high",
       root_cause: "PR #7421 tightened validator",
+      related_prs: "#7421",
     },
-    {
-      testRunId: "102",
-      cluster_id: "c1",
-      rca_done: "failed",
-      confidence: "",
-      root_cause: "",
-    },
+    { testRunId: "102", cluster_id: "c1", rca_done: "pending-resume" },
+    { testRunId: "103", cluster_id: "c2", rca_done: "failed" },
   ];
   const txt = renderGlimpse(rows, { buildId: "b1" });
-  assert.match(txt, /2 test\(s\)/);
-  assert.match(txt, /resolved: 1/);
-  assert.match(txt, /failed: 1/);
-  assert.match(txt, /101 → c1 → resolved → high: PR #7421 tightened validator/);
-  assert.match(txt, /102 → c1 → failed → -/); // blank fields degrade to "-"
+  assert.match(txt, /RCA analysis complete — build b1/);
+  assert.match(txt, /3 test\(s\)/);
+  assert.match(txt, /1 resolved/);
+  assert.match(txt, /1 pending/); // pending-resume buckets to "pending"
+  assert.match(txt, /1 failed/);
+  // The trim: no per-test lines, no root cause, no PRs, no testRunIds leak.
+  assert.doesNotMatch(txt, /7421|PR #|→|101|102|103|c1|c2/);
 });
 
-test("glimpse one-liner truncates and collapses newlines (stays terse)", () => {
+test("glimpse never leaks a verbose root_cause, however long", () => {
   const rows = [
     {
       testRunId: "1",
@@ -90,8 +88,6 @@ test("glimpse one-liner truncates and collapses newlines (stays terse)", () => {
     },
   ];
   const txt = renderGlimpse(rows);
-  const line = txt.split("\n").find((l) => l.startsWith("1 →"));
-  assert.ok(line.includes("line one line two"));
-  assert.ok(line.endsWith("…"));
-  assert.ok(line.length < 120);
+  assert.doesNotMatch(txt, /line one|line two|xxxx/); // cause stays out of Claude
+  assert.match(txt, /1 test\(s\) · 1 resolved/);
 });

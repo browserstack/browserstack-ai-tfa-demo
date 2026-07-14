@@ -193,24 +193,26 @@ identified after <what was searched>" and the CSV row records the gap.
 
 ## Step 6 — finish: glimpse + dashboard report (NO local report)
 
-This plugin **never renders or writes a local RCA report**. When every row is
-terminal:
+This plugin **never renders or writes a local RCA report, and never surfaces RCA
+detail in Claude.** The in-Claude output is a two-line completion notice plus the
+link — that is all. When every row is terminal:
 
-1. Print a **terse glimpse table** from the CSV (`lib/glimpse.mjs` →
-   `renderGlimpse`): one line per test — `testRunId → cluster → status →
-   confidence one-liner`. That is the entire in-Claude output.
-2. Call the MCP tool **`triggerRcaReport(buildUuid=<build id>)`** (add
-   `force=true` only to re-run over an existing completed report). It returns a
-   trimmed glimpse (`state, verdict, verdictProvisional, partial, analyzedCount,
-   totalFailedCount, totalPrs, faultyPrNumbers, failureReason, viewReport`).
+1. Print the **completion summary** from the CSV (`lib/glimpse.mjs` →
+   `renderGlimpse`): `RCA analysis complete — build <id>` + a status count line
+   (`<N> tests · <R> resolved · <P> pending · <F> failed`). **Nothing per-test.**
+2. Call **`triggerRcaReport(buildUuid=<build id>)`** (add `force=true` only to
+   re-run over an existing completed report).
 3. Print the link line, verbatim shape:
 
    ```
    Full report on the Test Observability UI: <viewReport>
    ```
 
-Humans read the real report **there**, populated by the BrowserStack agent —
-not in Claude.
+**Do NOT print** root causes, culprit/related PRs, cluster breakdowns, per-test
+analysis, confidence rationales, or a per-test table — root_cause, related_prs,
+suspect_signals and the like are for the CSV + the dashboard ONLY. If a human
+wants the "why", they open the link. Claude's job here is "analysis complete →
+report is at <link>", not to re-narrate the RCA the BrowserStack agent authored.
 
 ## Resume
 

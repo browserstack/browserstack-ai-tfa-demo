@@ -70,7 +70,7 @@ RCA batch complete — build awswx…fw2 (7 failed → 3 clusters)
 …
 
 Full report on the Test Observability UI:
-https://observability.browserstack.com/builds/awswx…fw2
+https://automation.browserstack.com/builds/awswx…fw2?tab=ai_report&subTab=aitfa
 ```
 
 State file: `<tmpdir>/bstack-rca/rca-state.awswx…fw2.csv` (resume-safe; re-run

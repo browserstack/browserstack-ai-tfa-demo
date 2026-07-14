@@ -6,7 +6,9 @@
       "status": "NEEDS_INFO",
       "confidence": "low",
       "threadId": "thr-39",
-      "questions": ["Did the buildName validator change?"],
+      "questions": [
+        "Did the buildName validator change?"
+      ],
       "asks": [
         {
           "what": "Did request-validation on POST /builds change since last green?",
@@ -29,9 +31,11 @@
       "glimpse": {
         "root_cause": "PR #7421 tightened the buildName validator to reject empty strings",
         "failure_type": "product_regression",
-        "related_prs": ["#7421"]
+        "related_prs": [
+          "#7421"
+        ]
       },
-      "viewRca": "https://observability.browserstack.com/builds/awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2"
+      "viewRca": "https://automation.browserstack.com — open the build's AI report (tab=ai_report, subTab=aitfa) to view the full RCA"
     }
   ]
 }

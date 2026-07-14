@@ -37,7 +37,7 @@ test("resolved fixture: NEEDS_INFO → evidence → RESOLVED, trimmed glimpse ca
   assert.ok(result.root_cause.length <= 220); // glimpse root_cause is trimmed server-side
   assert.equal(result.failure_type, "product_regression");
   assert.deepEqual(result.related_prs, ["#7421"]);
-  assert.match(result.view_rca, /^https:\/\/observability\.browserstack\.com\/builds\//);
+  assert.match(result.view_rca, /^https:\/\/automation\.browserstack\.com/);
   assert.deepEqual(result.asks_fulfilled, ["product_code"]);
   assert.deepEqual(result.asks_skipped, ["test_logs"]); // TFA-owned, never gathered
   assert.equal(result.turns_used, 2);

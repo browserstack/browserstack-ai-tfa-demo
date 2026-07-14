@@ -101,7 +101,6 @@ A seeded failing build exercises the full loop against real staging infra:
    `is_mcp_driven` feature and `upload.sh` to push them. The current seeded build:
    `awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2` (project "RCA Feature Fencing",
    build "VRT Build"). See `automation/README.md`.
-2. **k8s evidence harness** — `skills/k8s-rengg-tfa/` (self-contained: SKILL.md + `scripts/k8s-context.sh`)
    provide the `k8s` capability: read-only obs-api context (pod health, deployed
    image, error logs, events) from the `rengg-tfa` namespace, secrets redacted.
 3. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported and `kubectl`
@@ -109,7 +108,7 @@ A seeded failing build exercises the full loop against real staging infra:
    ```
    /rca-build awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2
    ```
-   The gate validates connectors (github via `gh`, k8s via the `k8s-rengg-tfa`
+   The gate validates connectors (github via `gh`, k8s via any k8s-capable
    skill), then the harness clusters the failures, drives `tfaRcaTurn` per
    cluster, routes `k8s` asks to the skill while `product_code`/`deploy` asks go
    to GitHub — landing per-test RCAs on the dashboard that trace back to the

@@ -4,13 +4,17 @@ One terse FYI before autonomous execution starts. Every intake field is tagged
 `given | assumed | gap`; every connector `valid | invalid | absent`. After this
 prints, the run never asks the user anything.
 
+If the product repo could not be corroborated against the failures AND no PRs
+were supplied, the gate asks ONE question (interactive only) before printing
+this summary. Headless skips it and prints `product repo: unknown (gap)`.
+
 ```
 GATE CLOSED — capability manifest:
   github ✅ valid (gh, authed) · infra ✅ valid (via <kubectl ctx …, docker, ecs, …>) · logs ❌ absent · metrics ❌ absent
 
 Intake:
   build id:        <id>                      (given)
-  product repo:    <org/repo>                (assumed — from git remote)
+  product repo:    <org/repo>                (assumed — corroborated vs failures | asked — human answered | unknown (gap))
   automation repo: <org/repo>                (assumed — cwd holds the tests)
   working branch:  <branch>                  (assumed — current branch)
   default branch:  <branch>                  (assumed — origin HEAD)

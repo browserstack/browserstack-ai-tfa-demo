@@ -88,20 +88,31 @@ hint, never an assumption**: cross-check it against the failure signatures
 (discovery runs first if needed) — do the failing area, files, or error strings
 relate to that repo's domain? If they don't (e.g. the failures are self-healing
 `healedElement is null` cases but the only named repo is an observability API),
-the product repo is a **gap**, recorded as "unknown" — the run proceeds RCA-only
-and every culprit-PR hunt reports "no culprit PR identified" rather than blaming
-an unrelated repo's PRs. Never carry a doc-sourced repo (or its PRs) into the
-manifest as a settled product repo without this corroboration.
+the doc-sourced repo is discarded — never carry it (or its PRs) into the
+manifest as a settled product repo.
+
+When corroboration leaves **no** product repo, decide by whether a human can help:
+- **PRs were supplied** → treat those as the suspect surface; product repo is
+  derived from them. No question needed.
+- **No PRs, interactive session** → the product repo is now **non-assumable AND
+  load-bearing** (without it the mandatory culprit-PR hunt is dead), so it earns
+  the single consolidated gate question below — ask it; don't silently degrade.
+- **No PRs, headless** → record the gap ("product repo: unknown") and proceed
+  RCA-only; every culprit-PR hunt reports "no culprit PR identified".
 
 Record each assumption in the gate summary (format:
 `templates/gate-summary.md`; worked example: `examples/sample-run.md`)
 ("assumed product repo =
 `org/obs-api` from git remote"). A field that cannot be assumed is recorded as
 "none" and the run proceeds RCA-only for it — **unless** it is both genuinely
-non-assumable AND load-bearing (in practice: only the build id, and rarely an
-ambiguous repo when PRs were supplied). Those, and only those, may be asked
-**ONCE, in a single consolidated question at gate close**. Never a second
-question. **Headless: skip asking entirely; record the gaps.**
+non-assumable AND load-bearing. In practice that set is: the build id; **the
+product repo when it could not be corroborated and no PRs were supplied** (see
+above — without it the culprit-PR hunt cannot run); and rarely an ambiguous repo
+when PRs were supplied. Those, and only those, may be asked **ONCE, in a single
+consolidated question at gate close** — e.g. *"Failures look like `<domain>`;
+which repo owns that code? (reply 'none' → I'll RCA without culprit-PR
+attribution)."* Never a second question. **Headless: skip asking entirely;
+record the gaps.**
 
 ### Gate close
 

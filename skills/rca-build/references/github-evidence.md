@@ -75,18 +75,12 @@ survives 1–3 is a real candidate; one that fails any is reported as ruled-out
 ## The suspect packet (structured, not free text)
 
 Each surviving/ruled-out suspect is one structured block so `related_prs`
-populates deterministically:
-
-```
-SUSPECT:
-  pr: <#number>
-  files: <changed files overlapping the failing path>
-  hunks: <the 1-3 load-bearing changed hunks — see digest size caps>
-  author: <login>
-  merged_at: <ts>   vs   last_green: <ts>   vs   started_at: <ts>
-  verdict: supported | ruled-out (<reason: no-path-overlap | shipped-after | behind-off-flag | unrelated>)
-  link: <PR permalink>
-```
+populates deterministically. **The canonical fillable format lives in
+[`../templates/suspect-packet.md`](../templates/suspect-packet.md)** (fields:
+pr, files, hunks, author, merged_at vs last_green vs started_at, verdict with
+rule-out reason, link) — copy it, don't retype it. A worked example (supported
++ ruled-out side by side) is in
+[`../examples/sample-run.md`](../examples/sample-run.md).
 
 Only `verdict: supported` suspects should end up in TFA's `related_prs`. Ruled-out
 suspects stay in the thread as disconfirming evidence so TFA (and a human) can see

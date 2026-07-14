@@ -80,7 +80,9 @@ is the point:
 - the current branch for the working branch,
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
 
-Record each assumption in the gate summary ("assumed product repo =
+Record each assumption in the gate summary (format:
+`templates/gate-summary.md`; worked example: `examples/sample-run.md`)
+("assumed product repo =
 `org/obs-api` from git remote"). A field that cannot be assumed is recorded as
 "none" and the run proceeds RCA-only for it — **unless** it is both genuinely
 non-assumable AND load-bearing (in practice: only the build id, and rarely an

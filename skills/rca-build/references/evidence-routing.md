@@ -75,15 +75,10 @@ tail or full PR diff blows both budgets and degrades TFA's reasoning. Supply the
 
 ### Per-ask block shape — `ask → found → snippet/link`
 
-```
-ASK: <verbatim `what` from the TfaAsk, ≤ 120 chars>
-TYPE: <evidenceType>
-FOUND: <yes | no | partial>
-SUMMARY: <1–3 sentences — the finding, in the agent's words. ≤ 400 chars>
-SNIPPET:
-  <the load-bearing excerpt only — see size caps. Omit if a LINK fully carries it.>
-LINK: <permalink to the source — PR/commit/log-search/metrics panel/deploy record. Omit if N/A.>
-```
+**The canonical fillable format lives in
+[`../templates/evidence-block.md`](../templates/evidence-block.md)** (fulfilled
+and unfulfillable variants) — copy it, don't retype it. Shape:
+`ASK / TYPE / FOUND: yes|no|partial / SUMMARY ≤400 / SNIPPET (caps below) / LINK`.
 
 - `SUMMARY` is the answer. `SNIPPET` is the *minimum* evidence backing it. `LINK`
   lets TFA (or a human) verify without the bytes living in the message.

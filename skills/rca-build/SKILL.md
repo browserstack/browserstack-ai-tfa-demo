@@ -81,6 +81,18 @@ is the point:
 - the current branch for the working branch,
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
 
+**Product-repo corroboration (do NOT skip).** The product repo must plausibly
+be the *system under test for THIS build's failures* — not merely a repo name
+found lying around. A repo mentioned only in workspace docs/READMEs is a **weak
+hint, never an assumption**: cross-check it against the failure signatures
+(discovery runs first if needed) — do the failing area, files, or error strings
+relate to that repo's domain? If they don't (e.g. the failures are self-healing
+`healedElement is null` cases but the only named repo is an observability API),
+the product repo is a **gap**, recorded as "unknown" — the run proceeds RCA-only
+and every culprit-PR hunt reports "no culprit PR identified" rather than blaming
+an unrelated repo's PRs. Never carry a doc-sourced repo (or its PRs) into the
+manifest as a settled product repo without this corroboration.
+
 Record each assumption in the gate summary (format:
 `templates/gate-summary.md`; worked example: `examples/sample-run.md`)
 ("assumed product repo =

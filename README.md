@@ -93,25 +93,24 @@ mandatory culprit-PR links on application bugs — is the real deliverable.
   skills your client already has. Missing ones degrade gracefully (the RCA's
   confidence band reflects what evidence was actually available).
 
-## Demo run (rengg-tfa)
+## Run
 
-A seeded failing build exercises the full loop against real staging infra:
+Point it at any red BrowserStack build — the harness discovers what it needs:
 
-1. **Seed the build** — `automation/` holds failing API cases for the rcaChat /
-   `is_mcp_driven` feature and `upload.sh` to push them. The current seeded build:
-   `awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2` (project "RCA Feature Fencing",
-   build "VRT Build"). See `automation/README.md`.
-2. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported (and, for a
-   staging build like this one, `O11Y_TFA_RCA_BASE_URL` pointed at the tenant —
-   the default is production; see `INTEGRATION.md`):
-   ```
-   /rca-build awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2
-   ```
-   The gate validates connectors (github via `gh`, infra via whatever runtime connector exists (kubectl/docker/ecs/…)
-   skill), then the harness clusters the failures, drives `tfaRcaTurn` per
-   cluster, routes `infra`/`k8s` asks to it while `product_code`/`deploy` asks go
-   to GitHub — landing per-test RCAs on the dashboard that trace back to the
-   seeded regressions, then prints the glimpse + the Test Observability link.
+```
+# BROWSERSTACK_USERNAME / BROWSERSTACK_ACCESS_KEY exported; default base is
+# production, override O11Y_TFA_RCA_BASE_URL only for a staging tenant.
+/rca-build <build-id>
+```
+
+The single gate validates connectors (github via `gh`, infra via whatever
+runtime connector exists — kubectl/docker/ecs/…) and resolves the intake
+**by inference** (product/automation repo from the cwd's git remote, branches,
+any PRs you pass). It never assumes a product repo from unrelated workspace
+docs — if it can't infer one that matches the failures, it records the gap and
+proceeds RCA-only rather than blaming the wrong repo. Then it clusters the
+failures, drives `tfaRcaTurn` per cluster, and lands per-test RCAs on the
+dashboard, printing the glimpse + the Test Observability link.
 
 ## Layout
 

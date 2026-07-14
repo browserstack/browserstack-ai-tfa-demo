@@ -7,7 +7,7 @@ description: Single-gate autonomous batch RCA over every failed test of a Browse
 
 Drives the `tfaRcaTurn` collaborative loop over **every failed test** of a build
 and lands a per-test RCA in the TRA (Test Observability) dashboard. **TFA owns
-logs; the client agent owns everything else** (product code, k8s, kibana,
+logs; the client agent owns everything else** (product code, infra/runtime, logs,
 metrics, deploy, ci) — routed by capability, generic over product and infra.
 
 This skill is the **build-level orchestrator** (`ai-tfa-orchestrator` role). It
@@ -47,8 +47,9 @@ pass. The gate has two parts; both run before any RCA work starts.
 Enumerate every connector relevant to test RCA:
 
 - from `config/rca.config.json` → `evidenceRouting`: **github**
-  (product_code/deploy/ci), **k8s**, **logs** (e.g. kibana), **metrics**,
-  **other**;
+  (product_code/deploy/ci), **infra** (whatever runtime the user has — k8s,
+  ECS, docker, Nomad, plain VMs, PM2, …), **logs** (kibana or any log store),
+  **metrics**, **other**;
 - plus any connector-shaped skills / MCP servers present in the session
   (a log-search MCP, a metrics MCP, an infra skill, …).
 
@@ -57,7 +58,7 @@ Enumerate every connector relevant to test RCA:
 | Connector | Probe |
 |---|---|
 | github | `gh auth status` (or a GitHub MCP tool listed) |
-| k8s | k8s skill present **and** `kubectl` reachable (e.g. `kubectl version --request-timeout=5s`) |
+| infra | ANY runtime connector the user has — probe what exists, never assume one: `kubectl version --request-timeout=5s`, `docker ps`, `aws ecs list-clusters`, `nomad status`, `pm2 ls`, or an infra-shaped skill/MCP tool. Record the KIND in the manifest (`via: kubectl \| docker \| ecs \| …`) |
 | logs | a log-search skill/MCP tool actually listed in the session |
 | metrics | a metrics skill/MCP tool actually listed in the session |
 | other | best-effort; default `absent` |

@@ -12,13 +12,50 @@
     "stateDir": ""
   },
   "evidenceRouting": {
-    "test_logs": { "owner": "tfa", "skip": true },
-    "product_code": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
-    "deploy": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
-    "ci": { "capability": "github", "discoveryHints": ["github-mcp", "gh"] },
-    "k8s": { "capability": "k8s", "discoveryHints": [] },
-    "kibana": { "capability": "logs", "discoveryHints": [] },
-    "metrics": { "capability": "metrics", "discoveryHints": [] },
-    "other": { "capability": "other", "discoveryHints": [] }
+    "test_logs": {
+      "owner": "tfa",
+      "skip": true
+    },
+    "product_code": {
+      "capability": "github",
+      "discoveryHints": [
+        "github-mcp",
+        "gh"
+      ]
+    },
+    "deploy": {
+      "capability": "github",
+      "discoveryHints": [
+        "github-mcp",
+        "gh"
+      ]
+    },
+    "ci": {
+      "capability": "github",
+      "discoveryHints": [
+        "github-mcp",
+        "gh"
+      ]
+    },
+    "infra": {
+      "capability": "infra",
+      "discoveryHints": []
+    },
+    "k8s": {
+      "capability": "infra",
+      "discoveryHints": []
+    },
+    "kibana": {
+      "capability": "logs",
+      "discoveryHints": []
+    },
+    "metrics": {
+      "capability": "metrics",
+      "discoveryHints": []
+    },
+    "other": {
+      "capability": "other",
+      "discoveryHints": []
+    }
   }
 }

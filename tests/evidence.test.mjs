@@ -8,7 +8,8 @@ const CONFIG = {
     test_logs: { owner: "tfa", skip: true },
     product_code: { capability: "github" },
     deploy: { capability: "github" },
-    k8s: { capability: "k8s" },
+    infra: { capability: "infra" },
+    k8s: { capability: "infra" },
     metrics: { capability: "metrics" },
     other: { capability: "other" },
   },
@@ -20,7 +21,7 @@ test("buildManifest marks discovered capabilities available with via", () => {
   ]);
   assert.equal(manifest.github.available, true);
   assert.equal(manifest.github.via, "github-mcp");
-  assert.equal(manifest.k8s.available, false);
+  assert.equal(manifest.infra.available, false);
 });
 
 test("buildManifest excludes the TFA-owned test_logs capability", () => {
@@ -38,7 +39,7 @@ test("buildManifest dedupes capabilities shared by multiple evidence types", () 
 test("unavailableCapabilities lists what the client can't get", () => {
   const manifest = buildManifest(CONFIG, [{ capability: "github" }]);
   const unavailable = unavailableCapabilities(manifest).sort();
-  assert.deepEqual(unavailable, ["k8s", "metrics", "other"]);
+  assert.deepEqual(unavailable, ["infra", "metrics", "other"]);
 });
 
 test("evidence cache computes once and reuses across calls", async () => {

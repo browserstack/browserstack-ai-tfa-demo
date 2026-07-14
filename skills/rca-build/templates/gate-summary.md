@@ -6,7 +6,7 @@ prints, the run never asks the user anything.
 
 ```
 GATE CLOSED — capability manifest:
-  github ✅ valid (gh, authed) · k8s ✅ valid (ctx <context>) · logs ❌ absent · metrics ❌ absent
+  github ✅ valid (gh, authed) · infra ✅ valid (via <kubectl ctx …, docker, ecs, …>) · logs ❌ absent · metrics ❌ absent
 
 Intake:
   build id:        <id>                      (given)

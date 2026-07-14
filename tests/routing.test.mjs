@@ -6,7 +6,8 @@ const CONFIG = {
   evidenceRouting: {
     test_logs: { owner: "tfa", skip: true },
     product_code: { capability: "github", discoveryHints: ["github-mcp", "gh"] },
-    k8s: { capability: "k8s", discoveryHints: [] },
+    infra: { capability: "infra", discoveryHints: [] },
+    k8s: { capability: "infra", discoveryHints: [] },
     other: { capability: "other", discoveryHints: [] },
   },
 };
@@ -30,10 +31,10 @@ test("available capability → gather, carrying via", () => {
 
 test("unavailable capability → gap, carrying discovery hints", () => {
   const r = routeAsk({ evidenceType: "k8s", priority: "medium" }, CONFIG, {
-    k8s: { available: false },
+    infra: { available: false },
   });
   assert.equal(r.action, "gap");
-  assert.equal(r.capability, "k8s");
+  assert.equal(r.capability, "infra");
   assert.equal(r.reason, "no-capability");
 });
 

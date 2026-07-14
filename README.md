@@ -13,7 +13,7 @@ RCA in the TRA (Test Observability) dashboard.
 > **The full RCA report lives on the Test Observability UI, not in Claude.**
 > The plugin surfaces a terse glimpse, triggers the dashboard report
 > (`triggerRcaReport`), and prints the link. It **discovers and delegates** to
-> the infra skills/tools already in your client (GitHub, k8s/EKS, kibana/other
+> the infra skills/tools already in your client (GitHub, whatever runtime you have — k8s/ECS/docker/… — kibana/other
 > logs, metrics). It does **not** install or own those connectors, and it never
 > writes a local report file.
 
@@ -56,8 +56,8 @@ Args: a build id (bare, `build_id=`, or a dashboard link) plus optional PR URLs
 The run has exactly **one gate** before execution, with two parts:
 
 1. **Connector discovery + validation** — every connector relevant to test RCA
-   (github, k8s, logs, metrics, …) is enumerated and probe-validated (`gh auth
-   status`, `kubectl` reachability, MCP tools listed). The result is a validated
+   (github, infra, logs, metrics, …) is enumerated and probe-validated (`gh auth
+   status`, an infra probe matching whatever runtime exists — kubectl/docker/ecs/… — MCP tools listed). The result is a validated
    capability manifest: `connector → valid | invalid | absent`. A gap is
    recorded and declared to the TFA agent ("I don't have logs/metrics access") —
    never a blocker.
@@ -101,16 +101,16 @@ A seeded failing build exercises the full loop against real staging infra:
    `is_mcp_driven` feature and `upload.sh` to push them. The current seeded build:
    `awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2` (project "RCA Feature Fencing",
    build "VRT Build"). See `automation/README.md`.
-   provide the `k8s` capability: read-only obs-api context (pod health, deployed
+   provide the `infra` capability: read-only runtime context (pod/instance health, deployed
    image, error logs, events) from the `rengg-tfa` namespace, secrets redacted.
 3. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported and `kubectl`
    pointed at the staging cluster:
    ```
    /rca-build awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2
    ```
-   The gate validates connectors (github via `gh`, k8s via any k8s-capable
+   The gate validates connectors (github via `gh`, infra via whatever runtime connector exists (kubectl/docker/ecs/…)
    skill), then the harness clusters the failures, drives `tfaRcaTurn` per
-   cluster, routes `k8s` asks to the skill while `product_code`/`deploy` asks go
+   cluster, routes `infra`/`k8s` asks to it while `product_code`/`deploy` asks go
    to GitHub — landing per-test RCAs on the dashboard that trace back to the
    seeded regressions, then prints the glimpse + the Test Observability link.
 

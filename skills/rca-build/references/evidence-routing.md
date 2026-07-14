@@ -42,7 +42,8 @@ An ask that cannot be fulfilled is **never silently dropped** — it becomes a
 ## Routing table (capability, not tool)
 
 `evidenceType` literals are exactly those `tfaRcaTurn` emits: `test_logs`,
-`product_code`, `k8s`, `kibana`, `metrics`, `deploy`, `ci`, `other`.
+`product_code`, `infra` (TFA may still spell it `k8s` — both route the same),
+`kibana`, `metrics`, `deploy`, `ci`, `other`.
 
 | `evidenceType` | Capability | Gathered via (discovered at runtime) |
 |---|---|---|
@@ -50,7 +51,7 @@ An ask that cannot be fulfilled is **never silently dropped** — it becomes a
 | `product_code` | `github` | the client's GitHub capability — **GitHub MCP if present, else `gh`** (see `references/github-evidence.md`) |
 | `deploy` | `github` | deploy timeline via the GitHub capability (releases/tags + deploy record) |
 | `ci` | `github` | CI config + run history via the GitHub capability |
-| `k8s` | `k8s` | whatever k8s/EKS skill the client has — discovered, not assumed |
+| `infra` / `k8s` | `infra` | **whatever runtime connector the user has** — k8s/EKS, ECS, docker, Nomad, plain VMs, PM2, … Discovered and probed at the gate, NEVER assumed to be Kubernetes; the manifest records the kind (`via`) |
 | `kibana` | `logs` | whatever log-search skill the client has (kibana or other) |
 | `metrics` | `metrics` | whatever metrics skill the client has |
 | `other` | `other` | best-effort by ask text; else a `not-found` block |
@@ -137,11 +138,11 @@ test, Gate Part A enumerates **and probe-validates** the client's connectors
 (a recorded gap):
 
 ```
-{ github: {available: true, via: "gh"}, k8s: {available: false}, ... }
+{ github: {available: true, via: "gh"}, infra: {available: true, via: "kubectl"}, logs: {available: false}, ... }
 ```
 
 - Every ask routes against this manifest — reproducible, no per-ask discovery.
-- The gate summary **declares the gaps to the user** ("k8s + metrics not
+- The gate summary **declares the gaps to the user** ("infra + metrics not
   available") and the first turn declares them to TFA so it plans asks around
   what's obtainable.
 - Frozen at gate close. A skill appearing mid-run is not picked up until the next run.

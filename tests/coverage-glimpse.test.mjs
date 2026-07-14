@@ -29,7 +29,7 @@ test("partial coverage caps a high TFA confidence at medium", () => {
 test("thin coverage (nothing fulfilled, gaps) caps at low", () => {
   const s = coverageStamp({
     asksFulfilled: [],
-    asksUnavailable: ["k8s", "metrics"],
+    asksUnavailable: ["infra", "metrics"],
     tfaConfidence: "high",
   });
   assert.equal(s.coverage, "thin");

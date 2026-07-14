@@ -109,11 +109,17 @@ listTestIds(buildId=<id>, status="failed", includeFailureDetail=true)
 (`failure.{category, error_summary, file_path, …}`) — the seed for clustering,
 so no per-test probe turns are needed.
 
+Resolve the state file with `lib/csv-state.mjs` → `csvPathFor(buildId,
+config.paths.stateDir)` — the **build id is in the filename** and the default
+directory is **OS temp** (`<tmpdir>/bstack-rca/rca-state.<buildId>.csv`), so
+different builds can never collide and the invoking workspace stays clean. Pass
+this exact path to the fan-out workflow as `csvPath`.
+
 Seed the CSV/WAL spine from the payload (`lib/csv-state.mjs` → `seed`): one row
 per failed test, every row `rca_done=pending`, signature columns populated.
 Re-running `seed` on an existing CSV is idempotent and preserves terminal rows
-(resume-safe). If `listTestIds` returns empty → write an empty CSV, report "no
-failed tests", stop.
+(resume-safe — same build id → same path). If `listTestIds` returns empty →
+write an empty CSV, report "no failed tests", stop.
 
 ## Step 3 — failure-signature clustering (see references/clustering.md)
 

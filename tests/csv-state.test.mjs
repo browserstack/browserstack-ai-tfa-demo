@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  csvPathFor,
   seed,
   readRows,
   claim,
@@ -163,4 +164,24 @@ test("CSV codec round-trips fields with commas, quotes, newlines", () => {
   );
   const row = readRows(csv).find((r) => r.testRunId === "200");
   assert.equal(row.root_cause, 'Failed: "x", got <y>\nsecond line');
+});
+
+test("csvPathFor: build id is in the filename, default dir is OS temp", () => {
+  const p = csvPathFor("abc123XYZ");
+  assert.ok(p.startsWith(join(tmpdir(), "bstack-rca")));
+  assert.ok(p.endsWith("rca-state.abc123XYZ.csv"));
+});
+
+test("csvPathFor: different builds never share a path", () => {
+  assert.notEqual(csvPathFor("build-A"), csvPathFor("build-B"));
+});
+
+test("csvPathFor: sanitizes hostile ids and handles empty", () => {
+  assert.ok(csvPathFor("../../etc/passwd").endsWith("rca-state..._.._etc_passwd.csv"));
+  assert.ok(csvPathFor("").endsWith("rca-state.unknown-build.csv"));
+});
+
+test("csvPathFor: stateDir override wins over temp", () => {
+  const p = csvPathFor("b1", "/ci/artifacts");
+  assert.equal(p, join("/ci/artifacts", "rca-state.b1.csv"));
 });

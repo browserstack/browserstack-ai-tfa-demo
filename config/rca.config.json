@@ -8,8 +8,8 @@
   "reaperHeartbeatTtlSec": 600,
   "errorSummaryMaxChars": 200,
   "paths": {
-    "stateDir": ".rca",
-    "csvFile": ".rca/rca-state.csv"
+    "$comment": "State CSV path is ALWAYS derived per build via lib/csv-state.mjs csvPathFor(buildId, stateDir): the build id is in the filename (no cross-build collisions) and the default directory is OS temp (<tmpdir>/bstack-rca/), so the harness never pollutes the invoking workspace. Set stateDir only to retain the CSV somewhere specific (e.g. a CI artifact dir).",
+    "stateDir": ""
   },
   "evidenceRouting": {
     "test_logs": { "owner": "tfa", "skip": true },

@@ -76,7 +76,7 @@ into `~/.codex/config.toml`, or:
 codex mcp add bstack \
   --env BROWSERSTACK_USERNAME=… --env BROWSERSTACK_ACCESS_KEY=… \
   --env O11Y_TFA_RCA_BASE_URL=https://api-observability-rengg-tfa.bsstag.com \
-  -- npx -y @browserstack/mcp-server
+  -- npx -y @browserstack/mcp-server@1.2.27-beta.1
 ```
 
 **Skill + agent discovery** — Codex reads `.agents/skills/` (skills) and
@@ -92,7 +92,7 @@ Then run the `rca-build` skill; the coordinator + `tfaRcaTurn` loop are identica
 
 ## Notes
 
-- The `bstack` server is **stdio** (`npx @browserstack/mcp-server`), not a remote
+- The `bstack` server is **stdio** (`npx @browserstack/mcp-server@1.2.27-beta.1`), not a remote
   OAuth server — so the configs use `command`/`args`/`env`, unlike Slack's
   `url`+`oauth`/`auth` shape.
 - Env-var interpolation (`${VAR}`) is honored by Claude Code's `.mcp.json`; on

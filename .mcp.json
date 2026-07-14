@@ -3,7 +3,7 @@
     "bstack": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@browserstack/mcp-server"],
+      "args": ["-y", "@browserstack/mcp-server@1.2.27-beta.1"],
       "env": {
         "BROWSERSTACK_USERNAME": "${BROWSERSTACK_USERNAME}",
         "BROWSERSTACK_ACCESS_KEY": "${BROWSERSTACK_ACCESS_KEY}",

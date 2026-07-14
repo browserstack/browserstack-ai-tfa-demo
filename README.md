@@ -101,10 +101,9 @@ A seeded failing build exercises the full loop against real staging infra:
    `is_mcp_driven` feature and `upload.sh` to push them. The current seeded build:
    `awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2` (project "RCA Feature Fencing",
    build "VRT Build"). See `automation/README.md`.
-   provide the `infra` capability: read-only runtime context (pod/instance health, deployed
-   image, error logs, events) from the `rengg-tfa` namespace, secrets redacted.
-3. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported and `kubectl`
-   pointed at the staging cluster:
+2. **Run** — with `BROWSERSTACK_USERNAME`/`ACCESS_KEY` exported (and, for a
+   staging build like this one, `O11Y_TFA_RCA_BASE_URL` pointed at the tenant —
+   the default is production; see `INTEGRATION.md`):
    ```
    /rca-build awswxm0t5ve7vbjnspfna4xbvjwxn92u2lwv5fw2
    ```

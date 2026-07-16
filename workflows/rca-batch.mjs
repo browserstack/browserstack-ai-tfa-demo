@@ -53,7 +53,7 @@ const RCA_SCHEMA = {
   additionalProperties: true,
 };
 
-const ctx = args ?? {};
+const ctx = (typeof args === "string" ? JSON.parse(args) : args) ?? {};
 const clusters = ctx.clusters ?? [];
 const shared = [
   `CSV state file: ${ctx.csvPath}`,

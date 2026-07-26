@@ -1,0 +1,11 @@
+{
+  "name": "tfa-rca",
+  "description": "Drive collaborative root-cause analysis over all failed tests of a build, generic across product and infra.",
+  "version": "0.1.0",
+  "author": {
+    "name": "BrowserStack",
+    "url": "https://www.browserstack.com"
+  },
+  "homepage": "https://github.com/browserstack/browserstack-ai-tfa-demo",
+  "license": "MIT"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "turn-cap — never resolves",
+  "testRunId": 99,
+  "turns": [
+    { "status": "NEEDS_INFO", "confidence": "low", "threadId": "thr-99", "asks": [{ "what": "more", "why": "x", "evidenceType": "product_code", "priority": "high" }] },
+    { "status": "NEEDS_INFO", "confidence": "low", "threadId": "thr-99", "asks": [{ "what": "more", "why": "x", "evidenceType": "product_code", "priority": "high" }] },
+    { "status": "NEEDS_INFO", "confidence": "low", "threadId": "thr-99", "asks": [{ "what": "more", "why": "x", "evidenceType": "product_code", "priority": "high" }] },
+    { "status": "NEEDS_INFO", "confidence": "low", "threadId": "thr-99", "asks": [{ "what": "more", "why": "x", "evidenceType": "product_code", "priority": "high" }] },
+    { "status": "NEEDS_INFO", "confidence": "low", "threadId": "thr-99", "asks": [{ "what": "more", "why": "x", "evidenceType": "product_code", "priority": "high" }] },
+    { "status": "NEEDS_INFO", "confidence": "low", "threadId": "thr-99", "asks": [{ "what": "more", "why": "x", "evidenceType": "product_code", "priority": "high" }] }
+  ]
+}

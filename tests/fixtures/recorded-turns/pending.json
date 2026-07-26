@@ -1,0 +1,11 @@
+{
+  "name": "soft-pending — resumable (trimmed shape: status/threadId/turnId only)",
+  "testRunId": 81,
+  "turns": [
+    {
+      "status": "PENDING",
+      "threadId": "thr-81",
+      "turnId": "turn-81-1"
+    }
+  ]
+}

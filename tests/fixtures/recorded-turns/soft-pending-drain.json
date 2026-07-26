@@ -1,0 +1,50 @@
+{
+  "name": "soft-PENDING drained via getTfaTurnResult — recorded from test run 3840238857, whose first turn finalized NEEDS_INFO at 104s (past the tool's 90s in-call poll cap), so tfaRcaTurn returned a soft PENDING while the agent was already committed",
+  "testRunId": 3840238857,
+  "turns": [
+    {
+      "status": "PENDING",
+      "threadId": "chat:3840238857",
+      "turnId": "c2e1a6fd-2243-4f93-bc69-62f298db062c"
+    },
+    {
+      "status": "RESOLVED",
+      "confidence": "medium",
+      "threadId": "chat:3840238857",
+      "glimpse": {
+        "root_cause": "#current-url was removed from html-tags.html, so the url-normalisation script threw before healing ran",
+        "failure_type": "product_regression",
+        "related_prs": ["#8814"]
+      },
+      "viewRca": "https://automation.browserstack.com/dashboard/v2/builds/x/tests/3840238857"
+    }
+  ],
+  "reads": [
+    { "status": "PENDING", "threadId": "chat:3840238857", "turnId": "c2e1a6fd-2243-4f93-bc69-62f298db062c" },
+    { "status": "PENDING", "threadId": "chat:3840238857", "turnId": "c2e1a6fd-2243-4f93-bc69-62f298db062c" },
+    {
+      "status": "NEEDS_INFO",
+      "confidence": "medium",
+      "threadId": "chat:3840238857",
+      "questions": [
+        "Was the `#current-url` element recently removed or renamed on the `htmlforms` / `html-tags.html` page?"
+      ],
+      "asks": [
+        {
+          "what": "The source code for the page html-tags.html and any recent changes to it.",
+          "why": "Logs show repeated \"Cannot set properties of null (setting 'textContent')\" on #current-url.",
+          "evidenceType": "product_code",
+          "priority": "high"
+        },
+        {
+          "what": "The run's terminal logs.",
+          "why": "To confirm the JS error ordering.",
+          "evidenceType": "test_logs",
+          "priority": "low"
+        }
+      ],
+      "suggestions": [],
+      "hypotheses": []
+    }
+  ]
+}

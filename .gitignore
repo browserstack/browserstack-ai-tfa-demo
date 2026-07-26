@@ -1,0 +1,6 @@
+node_modules/
+.env
+# Per-run RCA batch state (the CSV/WAL spine + report) is workspace-local.
+.rca/
+# Planning docs (brainstorm/ideation/plan) stay local — not pushed.
+docs/

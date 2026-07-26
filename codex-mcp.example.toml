@@ -1,0 +1,11 @@
+# Codex MCP wiring for the bstack server.
+# Codex reads ~/.codex/config.toml (no per-project MCP file), so copy this block
+# into your global config — or use the `codex mcp add` one-liner in INTEGRATION.md.
+# Replace the env values with your BrowserStack credentials.
+
+[mcp_servers.bstack]
+command = "npx"
+args = ["-y", "@browserstack/mcp-server@1.2.27-beta.1"]
+env = { "BROWSERSTACK_USERNAME" = "your-username", "BROWSERSTACK_ACCESS_KEY" = "your-access-key", "O11Y_TFA_RCA_BASE_URL" = ""  # optional: set only to target a staging tenant (default is production) }
+startup_timeout_sec = 15
+tool_timeout_sec = 120

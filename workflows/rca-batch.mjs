@@ -61,6 +61,7 @@ const shared = [
   `Build-level evidence (pre-computed once, reuse — do not re-fetch): ${JSON.stringify(ctx.buildEvidence ?? {})}`,
   `Autonomous run — on an evidence gap with no valid connector, report "unavailable" back to TFA (NEVER prompt a user). Best-effort finalize.`,
   `PRODUCT_BUG / application-bug mandate: hunt the culprit PR via the github connector (deploy timeline vs last-pass window, changed paths vs failure signature) and feed the PR link(s) to TFA so related_prs populates. No PR after digging to the turn cap → state explicitly "no culprit PR identified after <what was searched>" so the CSV row records the gap.`,
+  `Soft-PENDING is NOT an answer: tfaRcaTurn abandons its in-call poll at 90s while TFA keeps working. On status PENDING, call getTfaTurnResult(testRunId, turnId) FIRST and keep reading on the softPendingDrain budget (every 5s, <=40 reads / <=10min) until the status is RESOLVED / NEEDS_INFO / BLOCKED, then continue the loop. Reads do NOT count against the turn cap. Never submit a new message onto a turn still in flight. Only a fully spent drain budget ends the test PENDING.`,
   `Persist eagerly to the CSV: claim your row before turn 1, flip it on terminal (lib/csv-state.mjs).`,
 ].join("\n");
 

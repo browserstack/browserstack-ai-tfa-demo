@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { runRcaLoop, replaySubmit } from "../lib/loop.mjs";
+import { runRcaLoop, replaySubmit, replayRead } from "../lib/loop.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const load = (name) =>
@@ -21,6 +21,9 @@ const GITHUB_AVAILABLE = { github: { available: true, via: "gh" } };
 
 // A coordinator gather() stub: returns a one-line digest block.
 const gather = async (g) => `ASK: ${g.ask.what}\nTYPE: ${g.evidenceType}\nFOUND: yes\nSUMMARY: stub`;
+
+// Drain tests inject a no-op sleep so the 5s read interval costs no wall clock.
+const noSleep = async () => {};
 
 test("resolved fixture: NEEDS_INFO → evidence → RESOLVED, trimmed glimpse captured, test_logs skipped", async () => {
   const fx = load("resolved.json");
@@ -44,7 +47,9 @@ test("resolved fixture: NEEDS_INFO → evidence → RESOLVED, trimmed glimpse ca
   assert.equal(result.threadId, "thr-39");
 });
 
-test("pending fixture: soft-PENDING (trimmed: status/threadId/turnId) ends with turnId, no re-poll", async () => {
+test("pending fixture: soft-PENDING with NO getTfaTurnResult tool → ends resumable, never resubmits", async () => {
+  // Client lacks readTurn: the drain is impossible, so the old floor applies —
+  // report it resumable rather than busy-waiting through tfaRcaTurn resubmits.
   const fx = load("pending.json");
   let calls = 0;
   const counting = async (args) => {
@@ -55,11 +60,136 @@ test("pending fixture: soft-PENDING (trimmed: status/threadId/turnId) ends with 
     testRunId: fx.testRunId,
     submit: counting,
     config: CONFIG,
+    sleep: noSleep,
   });
   assert.equal(result.status, "PENDING");
   assert.equal(result.turnId, "turn-81-1");
   assert.equal(result.threadId, "thr-81");
-  assert.equal(calls, 1); // ended immediately, did not poll again
+  assert.equal(calls, 1); // one submit, no resubmit
+});
+
+test("soft-PENDING is DRAINED via getTfaTurnResult before the next submit, not reported", async () => {
+  // The real 3840238857 case: turn 1 finalized NEEDS_INFO at 104s, past the tool's
+  // 90s in-call cap, so submit() handed back a soft PENDING. Reading the same
+  // turnId lands the NEEDS_INFO the agent had already committed to.
+  const fx = load("soft-pending-drain.json");
+  const submits = [];
+  const submit = replaySubmit(fx.turns);
+  const read = replayRead(fx.reads);
+  let reads = 0;
+  const result = await runRcaLoop({
+    testRunId: fx.testRunId,
+    firstMessage: "Initiating collaborative RCA",
+    submit: async (args) => {
+      submits.push(args);
+      return submit(args);
+    },
+    readTurn: async (args) => {
+      reads++;
+      return read(args);
+    },
+    config: CONFIG,
+    manifest: GITHUB_AVAILABLE,
+    gather,
+    sleep: noSleep,
+  });
+
+  assert.equal(result.status, "RESOLVED");
+  assert.equal(reads, 3); // PENDING, PENDING, then the landed NEEDS_INFO
+  assert.equal(submits.length, 2); // turn 1, then the evidence turn — no submit mid-flight
+  assert.equal(result.turns_used, 2); // 3 reads did NOT consume the turn cap
+  assert.deepEqual(result.asks_fulfilled, ["product_code"]);
+  assert.deepEqual(result.asks_skipped, ["test_logs"]); // TFA owns logs, even post-drain
+  assert.match(result.root_cause, /#current-url/);
+});
+
+test("drain reads the SAME turnId, and stops resubmitting it once landed", async () => {
+  const fx = load("soft-pending-drain.json");
+  const readArgs = [];
+  const submits = [];
+  const submit = replaySubmit(fx.turns);
+  const read = replayRead(fx.reads);
+  await runRcaLoop({
+    testRunId: fx.testRunId,
+    submit: async (args) => {
+      submits.push(args);
+      return submit(args);
+    },
+    readTurn: async (args) => {
+      readArgs.push(args);
+      return read(args);
+    },
+    config: CONFIG,
+    manifest: GITHUB_AVAILABLE,
+    gather,
+    sleep: noSleep,
+  });
+  // Every read targets the turnId the soft-PENDING handed back.
+  for (const a of readArgs) {
+    assert.equal(a.turnId, "c2e1a6fd-2243-4f93-bc69-62f298db062c");
+    assert.equal(String(a.testRunId), "3840238857");
+  }
+  // The spent resume handle is dropped: the follow-up submit rides threadId only.
+  assert.equal(submits[1].turnId, undefined);
+  assert.equal(submits[1].threadId, "chat:3840238857");
+});
+
+test("drain budget is bounded: a wedged turn ends PENDING instead of hanging the batch", async () => {
+  const fx = load("soft-pending-drain.json");
+  let reads = 0;
+  const result = await runRcaLoop({
+    testRunId: fx.testRunId,
+    submit: replaySubmit([fx.turns[0]]), // always soft-PENDING
+    readTurn: async () => {
+      reads++;
+      return { status: "PENDING", turnId: "c2e1a6fd-2243-4f93-bc69-62f298db062c" };
+    },
+    config: { ...CONFIG, softPendingDrain: { maxWaitMs: 60_000, intervalMs: 1, maxReads: 4 } },
+    sleep: noSleep,
+  });
+  assert.equal(result.status, "PENDING");
+  assert.equal(reads, 4); // capped by maxReads, never unbounded
+  assert.match(result.root_cause, /soft-pending: still working after 4 read\(s\)/);
+  assert.equal(result.turnId, "c2e1a6fd-2243-4f93-bc69-62f298db062c"); // still resumable
+});
+
+test("a failed read is not a verdict — the drain keeps reading and still lands", async () => {
+  const fx = load("soft-pending-drain.json");
+  const landed = fx.reads[2];
+  let reads = 0;
+  const result = await runRcaLoop({
+    testRunId: fx.testRunId,
+    submit: replaySubmit(fx.turns),
+    readTurn: async () => {
+      reads++;
+      if (reads === 1) throw new Error("transient 502 from o11y");
+      return landed;
+    },
+    config: CONFIG,
+    manifest: GITHUB_AVAILABLE,
+    gather,
+    sleep: noSleep,
+  });
+  assert.equal(result.status, "RESOLVED");
+  assert.equal(reads, 2);
+});
+
+test("BLOCKED surfaced by a drain is terminal — no empty resubmits to the turn cap", async () => {
+  const fx = load("soft-pending-drain.json");
+  let submits = 0;
+  const result = await runRcaLoop({
+    testRunId: fx.testRunId,
+    submit: async (args) => {
+      submits++;
+      return replaySubmit(fx.turns)(args);
+    },
+    readTurn: async () => ({ status: "BLOCKED", threadId: "chat:3840238857" }),
+    config: CONFIG,
+    sleep: noSleep,
+  });
+  assert.equal(result.status, "PENDING");
+  assert.equal(result.root_cause, "blocked");
+  assert.equal(submits, 1); // BLOCKED carries no asks; never resubmitted
 });
 
 test("turn-cap fixture: ends PENDING(turn-cap) at the cap, never a 7th submit", async () => {

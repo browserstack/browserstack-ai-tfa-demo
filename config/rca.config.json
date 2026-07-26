@@ -5,6 +5,12 @@
   "turnCap": 6,
   "turnMessageMaxChars": 5000,
   "pollSoftPendingMs": 90000,
+  "$softPendingDrainComment": "tfaRcaTurn abandons its in-call poll at pollSoftPendingMs (90s) and returns a soft PENDING while the TFA agent keeps working — turns finalizing past 90s are routine. On a soft PENDING the loop READS the same turnId via getTfaTurnResult on this budget before it routes asks or submits anything further; reads do not consume turnCap. Only when the budget is spent does the run end PENDING (pending-resume row).",
+  "softPendingDrain": {
+    "maxWaitMs": 600000,
+    "intervalMs": 5000,
+    "maxReads": 40
+  },
   "reaperHeartbeatTtlSec": 600,
   "errorSummaryMaxChars": 200,
   "paths": {

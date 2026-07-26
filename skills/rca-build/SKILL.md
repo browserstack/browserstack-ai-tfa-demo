@@ -223,6 +223,12 @@ Live `threadId`/`turnId` resume the prior thread; dead threads re-run from
 pending. Resuming a run does **not** reopen the gate — no new questions.
 (In-session only — cross-session durability is deferred.)
 
+A `pending-resume` row now means the coordinator's **soft-PENDING drain budget
+was spent** (`softPendingDrain`), not merely that a turn ran past 90s — the
+common case is drained in-flight and never reaches the CSV. Resume reads such a
+row's `turnId` with `getTfaTurnResult` **before** submitting anything new on the
+thread.
+
 ## Hard rules
 
 - Exactly one gate. At most one consolidated question, at gate close. **After
@@ -230,6 +236,9 @@ pending. Resuming a run does **not** reopen the gate — no new questions.
 - An invalid/absent connector is a recorded gap, never a blocker.
 - Headless + missing build id → end immediately. Headless never asks.
 - Never call `tfaRcaTurn` from this skill — always via the `ai-tfa-coordinator`.
+- A soft-`PENDING` is never an answer: it must be drained with
+  `getTfaTurnResult(testRunId, turnId)` before any further submit on that thread.
+  Only a spent drain budget may end a test `PENDING`.
 - Every failed test must end terminal in the CSV — partial-first, no abort-on-one-failure.
 - Never gather `test_logs` — TFA owns logs.
 - Never render/write a local RCA report — glimpse table + `triggerRcaReport` +

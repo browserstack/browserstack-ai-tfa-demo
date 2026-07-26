@@ -4,7 +4,7 @@ description: 'Per-test collaborative-RCA coordinator (autonomous — never promp
 - orchestrator: Agent(subagent_type="tfa-rca:ai-tfa-coordinator", prompt="RCA testRunId=39 — error: empty buildName rejected on POST /builds") → drives the loop, returns RCA_OUTPUT
 - sibling confirm: Agent(subagent_type="tfa-rca:ai-tfa-coordinator", prompt="RCA testRunId=40 — pre-seed: cause=<rep root cause>, suspect PR=#7421") → one-turn confirm against this test logs
 - user: "run collaborative RCA on test run 39" → single-test loop to RESOLVED/PENDING'
-tools: [Bash, Read, Grep, Glob, Task, mcp__*__tfaRcaTurn, mcp__github__*]
+tools: [Bash, Read, Grep, Glob, Task, mcp__*__tfaRcaTurn, mcp__*__getTfaTurnResult, mcp__github__*]
 model: sonnet
 ---
 
@@ -51,10 +51,16 @@ call the tool.
 - `RESOLVED` → `{ status, confidence, threadId, glimpse: { root_cause (≤220
   chars), failure_type, related_prs }, viewRca }`. The `viewRca` link points at
   the Test Observability UI — pass it through to the output.
-- `PENDING` → `{ status, turnId, threadId }` (soft-pending; in-call poll
-  exceeded its wall-clock cap — resumable).
+- `PENDING` → `{ status, turnId, threadId }`. **Not an agent verdict** — the tool
+  abandoned its own in-call poll at 90s while TFA kept working. Drain it with
+  `getTfaTurnResult` (below); never treat it as an answer.
 - `NEEDS_INFO` → `questions` / `asks` / `suggestions` **verbatim** — this loop
   consumes them exactly as sent.
+- `BLOCKED` → terminal: TFA cannot proceed. No asks; stop the loop.
+
+`getTfaTurnResult(testRunId, turnId)` reads a submitted turn **once**, returning
+the same four shapes — still `PENDING` if the agent is mid-flight. It is
+read-only and has no side effects, so a read is always safe to repeat.
 
 ## Operating principles
 
@@ -68,9 +74,19 @@ call the tool.
    extra turn, never a busy-wait.
 4. **One thread per test.** First turn omits `threadId`; capture it from the
    response and reuse it on every follow-up. Never start a second thread.
-5. **Soft-PENDING ends the loop.** A tool result of `status: "PENDING"` ends the
-   loop immediately as `PENDING`, carrying `threadId` + `turnId` for a later
-   resume. Do not re-poll or sleep.
+5. **Soft-PENDING is DRAINED, not reported.** `status: "PENDING"` means the tool's
+   90s in-call poll expired, not that TFA has nothing to say — turns landing past
+   90s are routine (a first turn finalizing `NEEDS_INFO` at 104s is a real,
+   observed case). So on `PENDING`, **call `getTfaTurnResult(testRunId, turnId)`
+   FIRST** and keep reading on the `softPendingDrain` budget
+   (`config/rca.config.json`: every 5s, ≤40 reads / ≤10min) until the status is
+   `RESOLVED` / `NEEDS_INFO` / `BLOCKED`. Only then route asks and submit the next
+   message. **Reads never count against the turn cap** — a drain re-reads the
+   *same* turn. Never submit a new message onto a turn still in flight: that
+   stacks two turns on one thread. Only when the drain budget is fully spent does
+   the run end `PENDING` (note `soft-pending`), resumable via `threadId`+`turnId`.
+   If the client has no `getTfaTurnResult` tool, end `PENDING` immediately as
+   before — never busy-wait through `tfaRcaTurn` resubmits instead.
 6. **Digest, don't dump.** Every follow-up `message` carries digested findings
    (`ask → found → snippet/link`), never raw log tails, full diffs, or full files.
    Size caps + block shape live in `references/evidence-routing.md` — read it
@@ -123,8 +139,16 @@ re-fetch per test. Never fabricate a PR when the github capability is unavailabl
 1. SUBMIT turn 1: tfaRcaTurn(testRunId=<id>, message=<digest>). Capture threadId. turns_used = 1.
    (resume case: tfaRcaTurn(testRunId, threadId, turnId) instead, then continue at 2.)
 2. CLASSIFY result.status:
+     PENDING    → DRAIN FIRST, do not resubmit and do not end here:
+                    capture threadId + turnId, then loop on
+                    getTfaTurnResult(testRunId, turnId) every softPendingDrain.intervalMs
+                    until status != PENDING, or the budget (maxReads / maxWaitMs) is spent.
+                    landed  → replace `result` with it and re-CLASSIFY (turns_used UNCHANGED —
+                              a read is not a turn; drop the spent turnId).
+                    spent   → END (PENDING, note "soft-pending"), row stays resumable.
+                    no getTfaTurnResult tool → END (PENDING, note "soft-pending").
      RESOLVED   → capture glimpse + viewRca; END (RESOLVED).
-     PENDING    → capture threadId + turnId; END (PENDING, note "soft-pending").
+     BLOCKED    → END (PENDING, note "blocked") — terminal, no asks to route.
      NEEDS_INFO → go to 3.
 3. ROUTE the asks (read references/evidence-routing.md; route via lib/routing.mjs):
      For each ask, high → medium → low:
@@ -207,8 +231,10 @@ RCA_OUTPUT_END
 ```
 
 Notes:
-- `status` is one of exactly three values. `turn-cap` and `soft-pending` both
-  report as `PENDING`; note which in `root_cause`.
+- `status` is one of exactly three values. `turn-cap`, `soft-pending` (drain
+  budget spent) and `blocked` all report as `PENDING`; note which in `root_cause`.
+  A `PENDING` from a *drained* turn should never appear — a drain that lands
+  re-classifies instead.
 - `asks_skipped` always includes `test_logs` whenever TFA asked for logs.
   `asks_fulfilled` **never** includes `test_logs`.
 - `asks_unavailable` is the evidence-coverage signal the coverage stamp turns
@@ -222,7 +248,10 @@ Notes:
 - **Never** fulfill or seed a `test_logs` ask — TFA owns logs.
 - **Never** exceed `turnCap` `tfaRcaTurn` calls in one run.
 - **Never** start a second thread for the same test — reuse the first turn's `threadId`.
-- **Never** busy-wait / re-poll on a soft-`PENDING` — end and report it resumable.
+- **Never** submit a new `tfaRcaTurn` message while a turn is soft-`PENDING` —
+  drain it with `getTfaTurnResult` first; resubmitting stacks two turns on one thread.
+- **Never** let drain reads consume the turn cap, and never drain past the
+  `softPendingDrain` budget — a wedged turn must not hang the batch.
 - **Never** dump raw logs, full diffs, or full file contents into a turn message — digest only.
 - **Never** write to any repo / cluster / ticket / the run — every action is read-only.
 - **Never** editorialize a cause — pass TFA's `glimpse` through verbatim.

@@ -1,7 +1,8 @@
 {
   "$comment": "Central config for the /rca-build RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals — connectors are discovered and probe-validated at the gate into the capability manifest (see skills/rca-build/references/evidence-routing.md). No reportFile: the plugin never writes a local RCA report — the full report lives on the Test Observability UI (triggerRcaReport).",
   "mcpServerName": "bstack",
-  "concurrency": 5,
+  "$concurrencyComment": "Max coordinator subagents run in parallel during Step 5 fan-out. HONORED LITERALLY on the default path (direct Agent-tool dispatch of ai-tfa-coordinator subagents — one message, up to `concurrency` tool-use blocks per batch) and by the sequential harness (lib/loop.mjs). Only a SOFT target on the opt-in Workflow-tool path (workflows/rca-batch.mjs), which the Workflow runtime hard-caps at min(16, cpu cores - 2) regardless of this value — that cap is architectural and cannot be raised from this repo. See SKILL.md Step 5.",
+  "concurrency": 20,
   "turnCap": 6,
   "turnMessageMaxChars": 5000,
   "pollSoftPendingMs": 90000,

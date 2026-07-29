@@ -66,6 +66,7 @@ const shared = [
   `Persist eagerly to the CSV: claim your row before turn 1, flip it on terminal (lib/csv-state.mjs).`,
   `MANDATORY CONNECTOR SWEEPS (Operating Principle 0, ai-tfa-coordinator.md): before turn 1, check every available capability's connector skill for a declared compulsory check (e.g. nl2steps-infra's "kubectl app-log check is COMPULSORY — not conditional, not a fallback"). Run any that apply NOW, unconditionally, and fold the evidence block into the turn-1 message. Do NOT wait for a NEEDS_INFO ask naming that evidenceType — TFA has been observed to label deploy/infra-shaped questions "product_code", so ask-routing alone will never trigger it. Record what ran under mandatory_checks in the RCA_OUTPUT.`,
   `MINIMUM CALL BUDGET: nl2steps-infra requires AT LEAST 5 separate real kubectl invocations per RCA turn that touches it (deploy state, pod-discovery x2 as SEPARATE calls, log-sweep x2 minimum — see the skill's "Minimum call budget" section). This is a latency-instrumentation baseline so the k8s path has comparable call volume to the github connector, not busywork — never satisfy it by combining calls, batching selectors, or reusing a cached result. Report the actual count run in mandatory_checks (e.g. "kubectl: ran (5 calls) — ...").`,
+  `VICTORIALOGS COMPULSORY CHECK: whenever the grafana MCP is present in the session, nl2steps-infra ALSO requires a VictoriaLogs sweep via mcp__grafana__query_loki_logs (CG Non Prod datasource, uid bfq0jp1cji5moc) on every RCA turn that touches this skill — see the skill's "VictoriaLogs check is ALSO COMPULSORY" section. This runs ALONGSIDE the kubectl sweep, never instead of it. Emit a VICTORIALOGS: block (<N> matched lines / clean / not-onboarded / unavailable) — "clean" requires both a real query_loki_logs call AND a confirmed non-zero coverage check this turn; an unconfirmed/zero-coverage product line reports "not-onboarded", not "clean". If the grafana MCP is absent, "VICTORIALOGS: unavailable — no grafana connector this run" is sufficient. Report what ran under mandatory_checks, distinct from the kubectl entry.`,
 ].join("\n");
 
 function resumeLine(row) {
@@ -114,9 +115,11 @@ log(`Batch: ${clusters.length} cluster(s) over build ${ctx.buildId ?? "?"}`);
 
 // Pipeline: each cluster flows representative → siblings independently (no barrier
 // between stages), so a small cluster's siblings confirm while a big cluster's
-// representative is still looping. Concurrency is bounded by the workflow runtime
-// (~min(16, cores-2)) regardless of config.concurrency (50) — that value is the
-// intended soft target/upper bound; the runtime queues anything beyond its own cap.
+// representative is still looping. Concurrency is capped by the Workflow runtime
+// at min(16, cores-2) — an architectural limit of the tool itself, not something
+// this script or config.concurrency (20, see rca.config.json) can raise. That
+// config value is an intended soft target/upper bound on THIS path only; the
+// runtime queues anything beyond its own cap regardless of what this file says.
 const results = await pipeline(
   clusters,
   (cluster) =>

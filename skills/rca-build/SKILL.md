@@ -238,20 +238,36 @@ reuse it, do not re-discover):
 
 ## Step 5 — fan-out (fully autonomous)
 
-Drive the cluster work-list, **`concurrency` (default 50) at a time**:
+Drive the cluster work-list, **`concurrency` (default 20) at a time**:
 representatives deep, siblings one-turn-confirm. Eagerly persist to the CSV/WAL
-(claim → heartbeat → flip) so the run is resumable. On the Claude Code /
-Workflow-tool path, this is a soft target only — the Workflow runtime hard-caps
-actual concurrent `agent()` calls at `min(16, cpu cores - 2)` regardless of
-this config value; excess work queues and runs as slots free up rather than
-running 50-wide. The sequential harness / manual subagent-dispatch path has no
-such ceiling and will honor `concurrency` literally.
+(claim → heartbeat → flip) so the run is resumable.
 
-- Claude Code → run the dynamic workflow `workflows/rca-batch.mjs`
-  (script-orchestrated; gap → "unavailable" back to TFA → best-effort finalize).
-- Hosts without the Workflow runtime → dispatch `tfa-rca:ai-tfa-coordinator`
-  subagents ≤ `concurrency` at a time, or drive the sequential harness
-  `lib/loop.mjs` (`runRcaLoop`). Same contract, same no-prompt rule.
+> **Concurrency comes from `config/rca.config.json` — always read it from
+> there, never hardcode.** The default path (direct Agent-tool dispatch) honors
+> the JSON value literally: fan out coordinator subagents in batches of
+> `concurrency` (one message, up to `concurrency` tool-use blocks per batch).
+> The opt-in `workflows/rca-batch.mjs` path is subject to the Workflow tool's
+> architectural cap of `min(16, cpu cores - 2)` — on that path `concurrency`
+> is a soft upper bound and excess work queues rather than running N-wide.
+> If you need literal fan-out, use the default direct-dispatch path.
+
+- **Default (all hosts, including Claude Code) → direct Agent-tool dispatch.**
+  Read `concurrency` from `config/rca.config.json` and dispatch
+  `tfa-rca:ai-tfa-coordinator` subagents in batches of that size (one message,
+  up to `concurrency` tool-use blocks per batch). This path is **outside the
+  Workflow runtime**, so the `min(16, cores-2)` ceiling does not apply and the
+  JSON value is honored literally. Prefer this path whenever the machine's
+  Workflow cap (`min(16, cores-2)`) would be smaller than the configured
+  `concurrency` — e.g. an 8-core Mac caps Workflow at 6 while the JSON asks
+  for 50.
+- Opt-in `workflows/rca-batch.mjs` (Claude Code only) → use only when the
+  Workflow tool's structured `pipeline()`/`parallel()` orchestration,
+  `resumeFromRunId` resumability, or progress UI is worth the concurrency
+  trade. On this path `concurrency` is a soft target only — the runtime hard-
+  caps at `min(16, cores-2)` regardless of the JSON value.
+- Hosts without the Workflow runtime and without Agent-tool fan-out → drive
+  the sequential harness `lib/loop.mjs` (`runRcaLoop`) one test at a time.
+  Same contract, same no-prompt rule.
 
 Subagents/coordinators return compact `RCA_OUTPUT` blocks, never transcripts. A
 coordinator that dies becomes a recorded `failed` row — one stuck test never

@@ -64,9 +64,42 @@ read-only and has no side effects, so a read is always safe to repeat.
 
 ## Operating principles
 
-1. **Logs by TFA — the core contract.** Never seed logs in the first turn;
-   **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste, or
-   digest log content. Logs are TFA's job.
+0. **Mandatory connector sweeps — proactive, never ask-gated.** This is about
+   **server-side app logs** (e.g. `kubectl logs` on the llmservice/
+   testcasegeneration pods) — a different thing from the `test_logs` evidence
+   type in Principle 1 below, which is the test's own execution log (SDK
+   trace/driver output) and stays exclusively TFA's. There is no conflict
+   between the two: Principle 1 forbids you from ever fetching `test_logs`;
+   Principle 0 requires you to fetch **app logs**, a connector-owned capability
+   distinct from `test_logs`, whenever the connector declares it compulsory.
+   Before submitting turn 1, check every capability the manifest marks
+   `available` for a declared compulsory check in its connector skill (read the
+   skill's `SKILL.md` — look for language like "COMPULSORY", "not conditional",
+   "not a fallback", "every RCA that touches this skill MUST..."). If a
+   capability declares one (e.g. `nl2steps-infra`'s "kubectl app-log check is
+   COMPULSORY"), **run it now, on turn 1, unconditionally** and fold its
+   evidence block (`KUBECTL_APP_LOGS:` or the skill's equivalent) into the
+   first-turn message — do **not** wait for a `NEEDS_INFO` ask whose
+   `evidenceType` names that capability. **TFA's `evidenceType` label is not a
+   reliable gate for this**: TFA may tag a deploy/infra-shaped question
+   `product_code` (observed: "was there a recent deploy of `llmservice`?"
+   tagged `product_code`, never routed to infra) — a compulsory check must run
+   regardless of how TFA labels its asks, or it never runs at all. Re-run only
+   once per test (cache the result across turns/asks on the same thread); a
+   later ask for the same evidenceType is satisfied from the cached sweep, not
+   re-fetched. **A connector skill may also declare a minimum call-count budget**
+   (e.g. `nl2steps-infra`'s "at least 5 separate `kubectl` invocations per RCA
+   turn" — a latency-instrumentation baseline, not busywork: it exists so the
+   infra/k8s path has enough call volume to measure latency against, matching
+   the github connector's naturally higher call count). Honor a declared
+   minimum exactly — never satisfy it with fewer, batched/combined, or cached
+   calls; each counted call must be a real, individually useful invocation.
+1. **Logs by TFA — the core contract.** Never seed **test execution logs**
+   (`test_logs` evidenceType — SDK trace, driver output, screenshots) in the
+   first turn; **skip every ask with `evidenceType === "test_logs"`**. Never
+   fetch, paste, or digest test-log content. That log is TFA's job — this rule
+   does not cover the app/infra logs Principle 0 requires; those are a
+   separate, connector-owned evidence type and are never `test_logs`.
 2. **Read-only.** Every gather mechanism is read-only. Never write to a repo,
    cluster, ticket, or the run. Produce a block and stop.
 3. **Turn-cap** = `turnCap` from `config/rca.config.json` (default 6). If the cap
@@ -136,6 +169,12 @@ re-fetch per test. Never fabricate a PR when the github capability is unavailabl
         Suspect PR(s): <related_prs>. Confirm against THIS test's logs." (NO logs)
      - error_digest present → "Error: <title + endpoint>" (NO logs, NO threadId)
      - neither → "Initiating collaborative RCA for test run <id>."
+0.5. MANDATORY CONNECTOR SWEEPS (Operating Principle 0): for every `available`
+     capability, check its connector skill for a declared compulsory check. Run
+     any that apply NOW — before turn 1, regardless of pre_seed/error_digest
+     content — and append each one's evidence block to the DIGEST. Record what
+     ran in `mandatory_checks` for the final RCA_OUTPUT. This step runs exactly
+     once per test (cache across turns); do not re-run on a later matching ask.
 1. SUBMIT turn 1: tfaRcaTurn(testRunId=<id>, message=<digest>). Capture threadId. turns_used = 1.
    (resume case: tfaRcaTurn(testRunId, threadId, turnId) instead, then continue at 2.)
 2. CLASSIFY result.status:
@@ -217,6 +256,14 @@ RCA_OUTPUT_START
 
 ## turns_used
 <integer 1..turnCap>
+
+## mandatory_checks
+- <capability>: ran (<M> calls) — <one-line evidence summary, e.g. "kubectl: ran (5 calls) — clean (window=t±2m, 2 pods)">
+- <capability>: ran (<M> calls) — <N matched lines — one-line digest>
+- <capability>: not-applicable — <capability declares no compulsory check>
+"none" only if no available capability declares any compulsory check. If the
+connector declares a minimum call-count budget, `<M>` must be >= that minimum —
+report the actual count run, not the minimum itself, so a shortfall is visible.
 
 ## asks_fulfilled
 - <evidenceType>            # every non-test_logs type fulfilled; "none" if empty

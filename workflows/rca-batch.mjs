@@ -49,6 +49,7 @@ const RCA_SCHEMA = {
     asks_skipped: { type: "array", items: { type: "string" } },
     asks_unavailable: { type: "array", items: { type: "string" } },
     cluster_id: { type: "string" },
+    mandatory_checks: { type: "array", items: { type: "string" } },
   },
   additionalProperties: true,
 };
@@ -63,7 +64,22 @@ const shared = [
   `PRODUCT_BUG / application-bug mandate: hunt the culprit PR via the github connector (deploy timeline vs last-pass window, changed paths vs failure signature) and feed the PR link(s) to TFA so related_prs populates. No PR after digging to the turn cap → state explicitly "no culprit PR identified after <what was searched>" so the CSV row records the gap.`,
   `Soft-PENDING is NOT an answer: tfaRcaTurn abandons its in-call poll at 90s while TFA keeps working. On status PENDING, call getTfaTurnResult(testRunId, turnId) FIRST and keep reading on the softPendingDrain budget (every 5s, <=40 reads / <=10min) until the status is RESOLVED / NEEDS_INFO / BLOCKED, then continue the loop. Reads do NOT count against the turn cap. Never submit a new message onto a turn still in flight. Only a fully spent drain budget ends the test PENDING.`,
   `Persist eagerly to the CSV: claim your row before turn 1, flip it on terminal (lib/csv-state.mjs).`,
+  `MANDATORY CONNECTOR SWEEPS (Operating Principle 0, ai-tfa-coordinator.md): before turn 1, check every available capability's connector skill for a declared compulsory check (e.g. nl2steps-infra's "kubectl app-log check is COMPULSORY — not conditional, not a fallback"). Run any that apply NOW, unconditionally, and fold the evidence block into the turn-1 message. Do NOT wait for a NEEDS_INFO ask naming that evidenceType — TFA has been observed to label deploy/infra-shaped questions "product_code", so ask-routing alone will never trigger it. Record what ran under mandatory_checks in the RCA_OUTPUT.`,
+  `MINIMUM CALL BUDGET: nl2steps-infra requires AT LEAST 5 separate real kubectl invocations per RCA turn that touches it (deploy state, pod-discovery x2 as SEPARATE calls, log-sweep x2 minimum — see the skill's "Minimum call budget" section). This is a latency-instrumentation baseline so the k8s path has comparable call volume to the github connector, not busywork — never satisfy it by combining calls, batching selectors, or reusing a cached result. Report the actual count run in mandatory_checks (e.g. "kubectl: ran (5 calls) — ...").`,
 ].join("\n");
+
+function resumeLine(row) {
+  if (!row?.threadId || !row?.turnId) return null;
+  return [
+    `RESUME (do not start a new thread): this test already has an in-flight thread`,
+    `threadId=${row.threadId} turnId=${row.turnId}.`,
+    `Call getTfaTurnResult(testRunId, turnId) FIRST to read its current state`,
+    `(drain any soft-PENDING per the softPendingDrain budget) before submitting`,
+    `anything further — reuse this threadId for every follow-up on this test.`,
+    row.last_evidence_digest ? `Prior evidence already gathered (reuse, don't re-fetch): ${row.last_evidence_digest}` : null,
+    row.root_cause ? `Prior attempt note: ${row.root_cause}` : null,
+  ].filter(Boolean).join("\n");
+}
 
 function repPrompt(cluster) {
   const r = cluster.representative;
@@ -72,9 +88,10 @@ function repPrompt(cluster) {
     `Run the FULL collaborative RCA loop for the representative test.`,
     `testRunId=${r.testRunId}  testName=${r.testName ?? ""}`,
     `error_digest: ${r.error_summary ?? "(none)"}`,
+    resumeLine(r),
     shared,
     `Return the structured RCA_OUTPUT for this test.`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function siblingPrompt(sibling, repResult, cluster) {
@@ -87,9 +104,10 @@ function siblingPrompt(sibling, repResult, cluster) {
     `If TFA confirms in one turn → done. If it does NOT (NEEDS_INFO), fall back to the full loop — never blindly inherit.`,
     `testRunId=${sibling.testRunId}  testName=${sibling.testName ?? ""}`,
     `error_digest: ${sibling.error_summary ?? "(none)"}`,
+    resumeLine(sibling),
     shared,
     `Return the structured RCA_OUTPUT for this test.`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 log(`Batch: ${clusters.length} cluster(s) over build ${ctx.buildId ?? "?"}`);
@@ -97,7 +115,8 @@ log(`Batch: ${clusters.length} cluster(s) over build ${ctx.buildId ?? "?"}`);
 // Pipeline: each cluster flows representative → siblings independently (no barrier
 // between stages), so a small cluster's siblings confirm while a big cluster's
 // representative is still looping. Concurrency is bounded by the workflow runtime
-// (~min(16, cores-2)); config.concurrency (5) is the intended soft target.
+// (~min(16, cores-2)) regardless of config.concurrency (50) — that value is the
+// intended soft target/upper bound; the runtime queues anything beyond its own cap.
 const results = await pipeline(
   clusters,
   (cluster) =>

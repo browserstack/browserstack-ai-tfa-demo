@@ -44,7 +44,53 @@ pass. The gate has two parts; both run before any RCA work starts.
 
 ### Part A — connector discovery + validation
 
-Enumerate every connector relevant to test RCA:
+**Step 0 — enumerate connector-shaped skills FIRST (before probing raw MCP tools).**
+Run:
+
+```bash
+ls .claude/skills/ ~/.claude/skills/ 2>/dev/null
+```
+
+For each `SKILL.md` found, open it and look for a **Capability declaration**
+block (or a `capability: <name>` line in the frontmatter/body). Any skill that
+declares `capability: github | infra | logs | metrics | other` **IS** the
+connector for that capability and MUST be added to the manifest — it
+**SUPERSEDES** the raw MCP tool for that capability because it carries
+product-specific routing (repo map, cluster/namespace, branch conventions,
+falsification protocol) the raw tool does not. Record the skill name in the
+manifest entry (e.g. `github: valid, via: gh (skill=nl2steps-github)`). Skipping
+this step is the failure mode where the orchestrator dispatches coordinators
+that grep the wrong repos on the wrong branch.
+
+**Disambiguating by product (nudge / one-question rule).** Connector skills are
+product-scoped — a workspace may hold none, one, or several product families
+(e.g. `nl2steps-*`, `o11y-*`, `tcm-*`, whatever the user has). After the `ls`,
+pick the *product family* whose connector skills apply to THIS build:
+
+- **Zero families found** → **nudge the user in the gate summary**:
+  "No connector-shaped skills found under `.claude/skills/` — proceeding with
+  raw MCP tools only; culprit-PR attribution will be best-effort against
+  workspace `git remote` guesses. Add a `<product>-github` / `<product>-infra`
+  skill for higher-fidelity routing." Then proceed with raw connectors. **Do
+  NOT block.**
+- **Exactly one family** → use it. No question.
+- **Multiple families** (`nl2steps-*` AND `o11y-*` AND `tcm-*` …) → try to
+  disambiguate WITHOUT asking:
+  1. Match the build's project / build name (from `getBuildId` metadata or
+     the invocation args) against each family's SKILL.md description / product
+     hints — if one family matches unambiguously, use it.
+  2. Match the discovered failure signatures (from Step 2's `listTestIds` if it
+     has already run, else defer this to a re-visit after discovery) against
+     each family's declared file paths / error patterns — if one family owns
+     the failure surface, use it.
+  If both signals leave the choice ambiguous, this earns the **one
+  consolidated gate question** (Part B rules apply): fold it into the same
+  question as any other non-assumable field, e.g. *"Multiple product families
+  found (`nl2steps`, `o11y`, `tcm`); build/failure signatures don't uniquely
+  pick one — which family owns this build's failures?"* Headless: pick the
+  first alphabetically and record the ambiguity as a gap.
+
+Then enumerate every connector relevant to test RCA:
 
 - from `config/rca.config.json` → `evidenceRouting`: **github**
   (product_code/deploy/ci), **infra** (whatever runtime the user has — k8s,
@@ -62,6 +108,31 @@ Enumerate every connector relevant to test RCA:
 | logs | a log-search skill/MCP tool actually listed in the session |
 | metrics | a metrics skill/MCP tool actually listed in the session |
 | other | best-effort; default `absent` |
+
+**Scope validation — run the SCOPE PROBES declared by each connector skill.**
+The base probe above (`gh auth status`, `kubectl version`, …) only confirms the
+raw tool works. It does not confirm the *concrete targets* a coordinator will
+touch — specific repos, branches, clusters, namespaces, indices — are actually
+reachable. That is the connector SKILL's job: each connector skill MUST
+declare, in its `Capability declaration` section, a `Scope probes:` list
+naming what to check and how. This orchestrator's contract is generic:
+
+1. For every connector skill added to the manifest in Step 0, read its
+   `Scope probes:` list.
+2. Run each probe verbatim.
+3. Record every target's result in the manifest entry — passes go into a
+   resolved-scope field (e.g. `repos_validated: [...]`, `namespace: ok`),
+   failures go into a per-target gap (e.g. `<target>: 404 not_accessible`).
+4. A per-target failure is a scoped gap, not a connector-wide failure — the
+   connector stays `valid` for the targets that did pass.
+
+Coordinators can then act freely inside the resolved scope and must fail
+closed outside it. This closes the failure mode where a coordinator degrades
+to `unavailable` because the orchestrator didn't confirm the specific target.
+
+Skills that don't declare `Scope probes:` degrade to a manifest-time warning
+("scope probes missing — coordinator may over-degrade"). Do not invent
+product-specific probes here.
 
 Output the **validated capability manifest**: `connector → valid | invalid |
 absent` (`lib/routing.mjs` → `buildManifest`; `valid` maps to
@@ -167,9 +238,14 @@ reuse it, do not re-discover):
 
 ## Step 5 — fan-out (fully autonomous)
 
-Drive the cluster work-list, **`concurrency` (default 5) at a time**:
+Drive the cluster work-list, **`concurrency` (default 50) at a time**:
 representatives deep, siblings one-turn-confirm. Eagerly persist to the CSV/WAL
-(claim → heartbeat → flip) so the run is resumable.
+(claim → heartbeat → flip) so the run is resumable. On the Claude Code /
+Workflow-tool path, this is a soft target only — the Workflow runtime hard-caps
+actual concurrent `agent()` calls at `min(16, cpu cores - 2)` regardless of
+this config value; excess work queues and runs as slots free up rather than
+running 50-wide. The sequential harness / manual subagent-dispatch path has no
+such ceiling and will honor `concurrency` literally.
 
 - Claude Code → run the dynamic workflow `workflows/rca-batch.mjs`
   (script-orchestrated; gap → "unavailable" back to TFA → best-effort finalize).
@@ -181,6 +257,15 @@ Subagents/coordinators return compact `RCA_OUTPUT` blocks, never transcripts. A
 coordinator that dies becomes a recorded `failed` row — one stuck test never
 sinks the batch (partial-first). No path ever prompts the user (the gate is
 closed).
+
+**Coordinator prompts MUST name every connector-shaped skill on the manifest.**
+Each dispatch prompt lists, per capability, the resolved connector skill from
+Gate Part A Step 0 — e.g. *"Use `nl2steps-github` for every product_code /
+deploy / ci ask (canonical repos + branch live in the skill; do NOT grep other
+repos). Use `nl2steps-infra` for every infra ask."* A coordinator prompt that
+omits a manifest-listed connector skill — and that therefore lets the
+coordinator infer repos from workspace `git remote` or cwd — is a bug: the
+coordinator will land plausible-but-wrong PR attributions on adjacent repos.
 
 **Application bugs need a culprit PR.** Whenever a test's RCA classifies as
 PRODUCT_BUG / application bug, the coordinator MUST hunt the culprit PR via the
@@ -245,3 +330,10 @@ thread.
   the Test Observability UI link only.
 - A PRODUCT_BUG RCA without a GitHub PR link is incomplete — dig until the turn
   cap, else state what was searched and record the gap.
+- A connector skill's own compulsory mandate (e.g. `nl2steps-infra`'s "kubectl
+  app-log check is COMPULSORY") is honored **proactively on turn 1** — never
+  gated on TFA naming that evidenceType in an ask. TFA is observed to mislabel
+  deploy/infra-shaped questions as `product_code`, so ask-routing alone cannot
+  be trusted to trigger a compulsory check; the coordinator runs it unconditionally
+  (`agents/ai-tfa-coordinator.md` Operating Principle 0) and records it under
+  `mandatory_checks` in the RCA_OUTPUT.

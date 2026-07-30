@@ -58,13 +58,13 @@ connector for that capability and MUST be added to the manifest — it
 **SUPERSEDES** the raw MCP tool for that capability because it carries
 product-specific routing (repo map, cluster/namespace, branch conventions,
 falsification protocol) the raw tool does not. Record the skill name in the
-manifest entry (e.g. `github: valid, via: gh (skill=nl2steps-github)`). Skipping
+manifest entry (e.g. `github: valid, via: gh (skill=<product>-github)`). Skipping
 this step is the failure mode where the orchestrator dispatches coordinators
 that grep the wrong repos on the wrong branch.
 
 **Disambiguating by product (nudge / one-question rule).** Connector skills are
 product-scoped — a workspace may hold none, one, or several product families
-(e.g. `nl2steps-*`, `o11y-*`, `tcm-*`, whatever the user has). After the `ls`,
+(e.g. `<product-a>-*`, `<product-b>-*`, whatever the user has). After the `ls`,
 pick the *product family* whose connector skills apply to THIS build:
 
 - **Zero families found** → **nudge the user in the gate summary**:
@@ -74,7 +74,7 @@ pick the *product family* whose connector skills apply to THIS build:
   skill for higher-fidelity routing." Then proceed with raw connectors. **Do
   NOT block.**
 - **Exactly one family** → use it. No question.
-- **Multiple families** (`nl2steps-*` AND `o11y-*` AND `tcm-*` …) → try to
+- **Multiple families** (e.g. `<product-a>-*` AND `<product-b>-*` …) → try to
   disambiguate WITHOUT asking:
   1. Match the build's project / build name (from `getBuildId` metadata or
      the invocation args) against each family's SKILL.md description / product
@@ -86,9 +86,9 @@ pick the *product family* whose connector skills apply to THIS build:
   If both signals leave the choice ambiguous, this earns the **one
   consolidated gate question** (Part B rules apply): fold it into the same
   question as any other non-assumable field, e.g. *"Multiple product families
-  found (`nl2steps`, `o11y`, `tcm`); build/failure signatures don't uniquely
-  pick one — which family owns this build's failures?"* Headless: pick the
-  first alphabetically and record the ambiguity as a gap.
+  found (`<product-a>`, `<product-b>`); build/failure signatures don't
+  uniquely pick one — which family owns this build's failures?"* Headless:
+  pick the first alphabetically and record the ambiguity as a gap.
 
 Then enumerate every connector relevant to test RCA:
 
@@ -259,7 +259,7 @@ representatives deep, siblings one-turn-confirm. Eagerly persist to the CSV/WAL
   JSON value is honored literally. Prefer this path whenever the machine's
   Workflow cap (`min(16, cores-2)`) would be smaller than the configured
   `concurrency` — e.g. an 8-core Mac caps Workflow at 6 while the JSON asks
-  for 50.
+  for 20.
 - Opt-in `workflows/rca-batch.mjs` (Claude Code only) → use only when the
   Workflow tool's structured `pipeline()`/`parallel()` orchestration,
   `resumeFromRunId` resumability, or progress UI is worth the concurrency
@@ -276,10 +276,11 @@ closed).
 
 **Coordinator prompts MUST name every connector-shaped skill on the manifest.**
 Each dispatch prompt lists, per capability, the resolved connector skill from
-Gate Part A Step 0 — e.g. *"Use `nl2steps-github` for every product_code /
-deploy / ci ask (canonical repos + branch live in the skill; do NOT grep other
-repos). Use `nl2steps-infra` for every infra ask."* A coordinator prompt that
-omits a manifest-listed connector skill — and that therefore lets the
+Gate Part A Step 0 — e.g. *"Use `<resolved-github-skill>` for every
+product_code / deploy / ci ask (canonical repos + branch live in the skill; do
+NOT grep other repos). Use `<resolved-infra-skill>` for every infra ask."* A
+coordinator prompt that omits a manifest-listed connector skill — and that
+therefore lets the
 coordinator infer repos from workspace `git remote` or cwd — is a bug: the
 coordinator will land plausible-but-wrong PR attributions on adjacent repos.
 
@@ -346,8 +347,8 @@ thread.
   the Test Observability UI link only.
 - A PRODUCT_BUG RCA without a GitHub PR link is incomplete — dig until the turn
   cap, else state what was searched and record the gap.
-- A connector skill's own compulsory mandate (e.g. `nl2steps-infra`'s "kubectl
-  app-log check is COMPULSORY") is honored **proactively on turn 1** — never
+- A connector skill's own compulsory mandate (e.g. an infra connector marking
+  its app-log check "COMPULSORY") is honored **proactively on turn 1** — never
   gated on TFA naming that evidenceType in an ask. TFA is observed to mislabel
   deploy/infra-shaped questions as `product_code`, so ask-routing alone cannot
   be trusted to trigger a compulsory check; the coordinator runs it unconditionally

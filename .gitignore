@@ -1,5 +1,7 @@
 node_modules/
 .env
+.DS_Store
+*.code-workspace
 # Per-run RCA batch state (the CSV/WAL spine + report) is workspace-local.
 .rca/
 # Planning docs (brainstorm/ideation/plan) stay local — not pushed.

@@ -76,24 +76,16 @@ read-only and has no side effects, so a read is always safe to repeat.
    `available` for a declared compulsory check in its connector skill (read the
    skill's `SKILL.md` — look for language like "COMPULSORY", "not conditional",
    "not a fallback", "every RCA that touches this skill MUST..."). If a
-   capability declares one (e.g. `nl2steps-infra`'s "kubectl app-log check is
-   COMPULSORY"), **run it now, on turn 1, unconditionally** and fold its
-   evidence block (`KUBECTL_APP_LOGS:` or the skill's equivalent) into the
-   first-turn message — do **not** wait for a `NEEDS_INFO` ask whose
-   `evidenceType` names that capability. **TFA's `evidenceType` label is not a
-   reliable gate for this**: TFA may tag a deploy/infra-shaped question
-   `product_code` (observed: "was there a recent deploy of `llmservice`?"
-   tagged `product_code`, never routed to infra) — a compulsory check must run
-   regardless of how TFA labels its asks, or it never runs at all. Re-run only
-   once per test (cache the result across turns/asks on the same thread); a
-   later ask for the same evidenceType is satisfied from the cached sweep, not
-   re-fetched. **A connector skill may also declare a minimum call-count budget**
-   (e.g. `nl2steps-infra`'s "at least 5 separate `kubectl` invocations per RCA
-   turn" — a latency-instrumentation baseline, not busywork: it exists so the
-   infra/k8s path has enough call volume to measure latency against, matching
-   the github connector's naturally higher call count). Honor a declared
-   minimum exactly — never satisfy it with fewer, batched/combined, or cached
-   calls; each counted call must be a real, individually useful invocation.
+   capability declares one, **run it now, on turn 1, unconditionally** and fold
+   its evidence block into the first-turn message — do **not** wait for a
+   `NEEDS_INFO` ask whose `evidenceType` names that capability. **TFA's
+   `evidenceType` label is not a reliable gate for this**: TFA may tag a
+   deploy/infra-shaped question `product_code` (observed: "was there a recent
+   deploy of `llmservice`?" tagged `product_code`, never routed to infra) — a
+   compulsory check must run regardless of how TFA labels its asks, or it
+   never runs at all. Re-run only once per test (cache the result across
+   turns/asks on the same thread); a later ask for the same evidenceType is
+   satisfied from the cached sweep, not re-fetched.
 1. **Logs by TFA — the core contract.** Never seed **test execution logs**
    (`test_logs` evidenceType — SDK trace, driver output, screenshots) in the
    first turn; **skip every ask with `evidenceType === "test_logs"`**. Never

@@ -347,10 +347,3 @@ thread.
   the Test Observability UI link only.
 - A PRODUCT_BUG RCA without a GitHub PR link is incomplete — dig until the turn
   cap, else state what was searched and record the gap.
-- A connector skill's own compulsory mandate (e.g. an infra connector marking
-  its app-log check "COMPULSORY") is honored **proactively on turn 1** — never
-  gated on TFA naming that evidenceType in an ask. TFA is observed to mislabel
-  deploy/infra-shaped questions as `product_code`, so ask-routing alone cannot
-  be trusted to trigger a compulsory check; the coordinator runs it unconditionally
-  (`agents/ai-tfa-coordinator.md` Operating Principle 0) and records it under
-  `mandatory_checks` in the RCA_OUTPUT.

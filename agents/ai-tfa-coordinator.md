@@ -39,6 +39,12 @@ it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
 - `resume` — optional `{ threadId, turnId }` from a prior PENDING run.
 - `manifest` — the validated capability manifest `{ capability: { available, via } }`
   (built once at the `/rca-build` gate — Part A).
+- `evidenceFile` — optional. Absolute path to the build-level pre-fetch
+  artifact (`lib/evidence-file.mjs`, `/rca-build` Step 4). Holds pre-digested
+  `github` (PR window, deploy state) and `logs`/`infra` (app-side sweep)
+  evidence, keyed by repo and by workload — gathered ONCE by the orchestrator
+  for every repo/workload this build's failures implicate. `Read` it before
+  any live gather call (see Operating Principle 0).
 
 If `testRunId` is missing or not parseable as an integer, emit a `failed`
 `RCA_OUTPUT` block with `root_cause: "no testRunId provided"` and stop — do not
@@ -64,6 +70,20 @@ read-only and has no side effects, so a read is always safe to repeat.
 
 ## Operating principles
 
+0. **Read the pre-fetch first.** If `evidenceFile` is present, `Read` it
+   before considering any live github/infra/logs call. It holds build-level
+   evidence (PR window, deploy state, log sweeps) already gathered once by the
+   orchestrator for the repos/workloads this build's failures implicate. Use
+   what it covers directly — its entries are already digest-shaped (an
+   `evidence-block.md`-style `block`); paste, don't re-digest. Only make a live
+   call for what it does NOT cover: a repo/workload it doesn't name, an entry
+   marked with a `gap` (a `gap` is never coverage — treat it exactly as if the
+   file didn't have that entry), or evidence genuinely specific to this one
+   test that a build-wide sweep window could plausibly have missed. For a
+   sibling (`pre_seed` present): the file's data about YOUR OWN test's
+   workload/repo is real evidence, not inheritance — reading it is fine; the
+   CONFIRMATION judgment against it must still be independently yours (see
+   principle 1 and the sibling note in "The loop").
 1. **Logs by TFA — the core contract.** Never seed logs in the first turn;
    **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste,
    or digest log content. Logs are TFA's job.
@@ -125,8 +145,10 @@ each candidate suspect **try to disprove it** (path overlap? shipped before the
 failure window? behind an OFF flag?). Feed both supporting *and* disconfirming
 evidence back as a structured suspect packet; only `verdict: supported` suspects
 belong in `related_prs`. Reuse the pre-computed build-level evidence — do not
-re-fetch per test. Never fabricate a PR when the github capability is unavailable
-— emit an `unavailable` block.
+re-fetch per test (the `evidenceFile`'s `github` section, if present and not
+`gap`-marked for this repo; otherwise the live github connector). Never
+fabricate a PR when the github capability is unavailable — emit an
+`unavailable` block.
 
 ## The loop
 
@@ -153,8 +175,13 @@ re-fetch per test. Never fabricate a PR when the github capability is unavailabl
 3. ROUTE the asks (read references/evidence-routing.md; route via lib/routing.mjs):
      For each ask, high → medium → low:
        skip   → record in asks_skipped, emit nothing.
-       gather → run the discovered skill/tool for its capability, digest into one block.
-                Record evidenceType in asks_fulfilled (dedupe).
+       gather → FIRST check `evidenceFile` (if present) for this ask's scope —
+                repo for a github ask, workload for an infra/logs ask. Covered
+                (present, `gap` falsy) → paste its `block` straight in, no
+                re-digesting, no live call. Not named in the file, or its
+                entry has a `gap`, or no `evidenceFile` at all → run the
+                discovered skill/tool live, exactly as before.
+                Digest into one block. Record evidenceType in asks_fulfilled (dedupe).
        gap    → emit an `unavailable` block (record in asks_unavailable). NEVER prompt.
      PRODUCT_BUG in play + no supported PR yet → widen the github hunt this turn.
      Concatenate per-ask blocks into the next-turn MESSAGE (respect size caps).
@@ -244,6 +271,8 @@ Notes:
 
 ## Hard limits
 
+- **Never** treat a `gap`-marked `evidenceFile` entry as coverage — a `gap`
+  means attempt a live call exactly as if the file didn't have that entry.
 - **Never** prompt, ask, or wait on a user — the gate is closed; gaps degrade to `unavailable`.
 - **Never** fulfill or seed a `test_logs` ask — TFA owns logs.
 - **Never** exceed `turnCap` `tfaRcaTurn` calls in one run.

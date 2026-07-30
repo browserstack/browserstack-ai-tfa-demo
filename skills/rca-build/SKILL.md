@@ -226,15 +226,54 @@ Each cluster gets one **representative** (full multi-turn loop) and `N−1`
 the expensive evidence hunt to O(distinct causes) while every test still lands a
 per-test RCA. Singleton clusters are just plain per-test loops.
 
-## Step 4 — build-evidence pre-compute (see references/evidence-routing.md)
+## Step 4 — build-evidence pre-fetch (see references/evidence-routing.md and lib/evidence-file.mjs)
 
-Once, before fan-out (the capability manifest already exists from Gate Part A —
-reuse it, do not re-discover):
+Once, after clustering (Step 3) and before fan-out — the capability manifest
+already exists from Gate Part A, reuse it, do not re-discover. This step
+replaces each coordinator's own turn-1 evidence sweep with ONE pre-fetch:
+it does not remove the requirement that turn-1 evidence exists, only *who
+gathers it*.
 
-- **Build-level evidence** — compute the last-green→this-build delta (diff,
-  deploy timeline, suspect-PR window) **once** and pre-seed every coordinator
-  with the same grounded window. Cache by `(repo, commit-range)`. No "last green"
-  baseline (never-green suite) → fall back to a configured baseline ref and log it.
+1. Resolve the evidence-file path: `lib/evidence-file.mjs` →
+   `evidencePathFor(buildId, config.paths.stateDir)` —
+   `<tmpdir>/bstack-rca/rca-evidence.<buildId>.json`, alongside the state CSV.
+   `initEvidenceFile(path, buildId, nowMs)`.
+2. **Scope the pre-fetch to the full union, never a single guess:**
+   - **Repos** — every repo in Gate Part A's scope-probe-validated
+     `repos_validated` list (e.g. a VRT-lane build validates `frontend` +
+     `railsApp`; an nl2steps build validates `misc-services` + `ai-sdk-node`).
+   - **Workloads** — the union of workloads every cluster's **representative**
+     implicates, via the active connector skill's failure-signature→workload
+     routing table (never one workload guessed from the first failing test).
+3. For each repo: run the connector skill's PR-window-search + deploy-state
+   recipes **once**, using `lib/evidence-cache.mjs`'s `compute(repo, range,
+   evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
+   Digest the result into the `evidence-block.md` shape, then persist via
+   `setGithubEvidence(path, repo, {deployState, prsInWindow, gap}, nowMs)`.
+   A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
+   the rest of the pre-fetch.
+4. For each workload: run the connector skill's compulsory kubectl +
+   VictoriaLogs sweep **once**, scoped to the build's own failure window
+   (`started_at`..`finished_at`, not "now" — see the connector skill's window
+   guidance). Persist via `setLogsEvidence(path, workload,
+   {clusterIds, kubectlSweep, victorialogs, gap}, nowMs)`.
+5. `resolveBaseline(lastGreenRef, fallbackRef)` (from `lib/evidence-cache.mjs`)
+   → `setBaseline(path, baseline, suspectWindow, nowMs)`. No "last green"
+   baseline (never-green suite) → fall back to a configured baseline ref and
+   note the weaker grounding — this note travels into the file, not just a
+   spoken log line, so every coordinator sees it.
+6. `recomputeCoverage(path, {repos, workloads}, nowMs)` and declare the
+   resulting path in the gate summary alongside the capability manifest, so
+   a human re-reading the run can find it.
+
+**Size discipline is enforced at write time, not just at submit time.** Every
+leaf (`deployState`, each PR, each log sweep) must already be a digested
+`block` per `evidence-routing.md`'s caps (`SUMMARY≤400`, `SNIPPET≤20/40 lines`,
+link over diff) — never a raw dump. Cap `prsInWindow` to the top ~30 candidates
+by path-overlap relevance, not every PR in the window.
+
+Pass `evidencePathFor(...)`'s path to Step 5's fan-out as `evidenceFilePath` —
+every dispatch (representative and sibling) must be told to read it first.
 
 ## Step 5 — fan-out (fully autonomous)
 
@@ -283,6 +322,19 @@ coordinator prompt that omits a manifest-listed connector skill — and that
 therefore lets the
 coordinator infer repos from workspace `git remote` or cwd — is a bug: the
 coordinator will land plausible-but-wrong PR attributions on adjacent repos.
+
+**Coordinator prompts MUST also name the Step 4 evidence file.** Every
+dispatch prompt (representative and sibling alike) includes the absolute
+`evidenceFilePath` from Step 4 with the instruction: *"Read `<path>` (via the
+Read tool) before making any live github/infra/logs gather call. It's a
+pre-fetch, not a hard dependency — a repo/workload it doesn't name, or marks
+with a `gap`, is a genuine gap: fall back to the capability manifest above
+exactly as if no file existed."* For a sibling, add: *"The file's data about
+your OWN test's workload is real evidence, not inheritance — reading it is
+fine. What must stay independent is the CONFIRMATION judgment: never adopt the
+representative's verdict just because the file already has the answer in
+it."* A dispatch prompt that omits this path forces its coordinator back into
+a full independent sweep — exactly the redundancy Step 4 exists to remove.
 
 **Application bugs need a culprit PR.** Whenever a test's RCA classifies as
 PRODUCT_BUG / application bug, the coordinator MUST hunt the culprit PR via the

@@ -23,7 +23,13 @@ export const meta = {
 // {
 //   csvPath, buildId,
 //   manifest: { capability: { available, via } },
-//   buildEvidence: { baselineRef, suspectWindow, ... },   // pre-computed once
+//   evidenceFilePath,                                     // NEW — lib/evidence-file.mjs artifact for this build
+//   buildEvidence: { baselineRef, isFallback, suspectWindow, reposCovered, workloadsCovered, gaps },
+//     // ^ SHRUNK to a cheap summary/pointer only — the full PR list / log
+//     //   sweeps live in the file at evidenceFilePath, read via each
+//     //   coordinator's own Read tool. Repeating the full detail in every
+//     //   dispatch prompt (as before) is exactly the duplication this file
+//     //   removes.
 //   clusters: [
 //     { cluster_id, representative: { testRunId, testName, error_summary },
 //       siblings: [ { testRunId, testName, error_summary } ] }
@@ -58,7 +64,9 @@ const clusters = ctx.clusters ?? [];
 const shared = [
   `CSV state file: ${ctx.csvPath}`,
   `Capability manifest: ${JSON.stringify(ctx.manifest ?? {})}`,
-  `Build-level evidence (pre-computed once, reuse — do not re-fetch): ${JSON.stringify(ctx.buildEvidence ?? {})}`,
+  `Pre-fetched build-evidence file — READ THIS FIRST (via the Read tool) before making ANY live github/infra/logs gather call: ${ctx.evidenceFilePath}`,
+  `Build-evidence summary (full detail is in the file above; this is only a pointer — do not re-fetch what the file already covers): ${JSON.stringify(ctx.buildEvidence ?? {})}`,
+  `If the file's github/logs sections do not name a repo/workload/ask you need, or record a "gap" for it, that is a genuine gap — fall back to a live gather via the capability manifest above exactly as if no file existed. The file is an optimization, never a hard dependency.`,
   `Autonomous run — on an evidence gap with no valid connector, report "unavailable" back to TFA (NEVER prompt a user). Best-effort finalize.`,
   `PRODUCT_BUG / application-bug mandate: hunt the culprit PR via the github connector (deploy timeline vs last-pass window, changed paths vs failure signature) and feed the PR link(s) to TFA so related_prs populates. No PR after digging to the turn cap → state explicitly "no culprit PR identified after <what was searched>" so the CSV row records the gap.`,
   `Soft-PENDING is NOT an answer: tfaRcaTurn abandons its in-call poll at 90s while TFA keeps working. On status PENDING, call getTfaTurnResult(testRunId, turnId) FIRST and keep reading on the softPendingDrain budget (every 5s, <=40 reads / <=10min) until the status is RESOLVED / NEEDS_INFO / BLOCKED, then continue the loop. Reads do NOT count against the turn cap. Never submit a new message onto a turn still in flight. Only a fully spent drain budget ends the test PENDING.`,
@@ -98,6 +106,7 @@ function siblingPrompt(sibling, repResult, cluster) {
     `  root_cause: ${repResult?.root_cause ?? "(representative did not resolve)"}`,
     `  related_prs: ${JSON.stringify(repResult?.related_prs ?? [])}`,
     `State this hypothesis on turn 1 and ask TFA to CONFIRM it against THIS test's own logs.`,
+    `The pre-fetched evidence file's data about your OWN workload is real evidence about YOUR OWN test — reading it is NOT blind inheritance. What must stay independent is the CONFIRMATION judgment: never adopt the representative's verdict just because the file already has the answer in it.`,
     `If TFA confirms in one turn → done. If it does NOT (NEEDS_INFO), fall back to the full loop — never blindly inherit.`,
     `testRunId=${sibling.testRunId}  testName=${sibling.testName ?? ""}`,
     `error_digest: ${sibling.error_summary ?? "(none)"}`,

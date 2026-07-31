@@ -253,10 +253,29 @@ gathers it*.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 4. For each workload: run the connector skill's compulsory kubectl +
-   VictoriaLogs sweep **once**, scoped to the build's own failure window
-   (`started_at`..`finished_at`, not "now" — see the connector skill's window
-   guidance). Persist via `setLogsEvidence(path, workload,
+   VictoriaLogs sweep **once**, anchored to the build's own clock — never
+   "now". **PAD the window: `started_at − 2m` .. `finished_at + 10m`.**
+   `finished_at` is when the build was *marked* finished, which is not when
+   the failing behaviour stopped: on one real build an upstream outage began
+   at 06:12:00 and ran to 06:15:51, while `finished_at` was 06:12:21 — a
+   sweep scoped strictly to `started_at..finished_at` saw 21 seconds of a
+   4-minute outage and would have missed the cause entirely. Label every
+   finding with whether it falls inside or outside the strict window so a
+   coordinator can weigh it; do NOT silently widen to an arbitrary window
+   (that is the separate, opposite failure of matching a coincidence from
+   unrelated traffic). Persist via `setLogsEvidence(path, workload,
    {clusterIds, kubectlSweep, victorialogs, gap}, nowMs)`.
+
+   Two query mechanics that cost real calls when missed:
+   - **`direction` defaults to newest-first**, so a limited query always
+     returns the END of the window. To find when something *started* — the
+     first request after a gap, the onset of an error burst — pass
+     `direction: "forward"`. A gap "confirmed" from a backward query is not
+     confirmed at all; it is just the tail of the range.
+   - **Absence needs a control.** A zero-result query is indistinguishable
+     from a wrong selector. Before reporting "no traffic", prove the logger
+     was alive in the same window with a query you expect to be non-empty
+     (e.g. readiness probes from a named pod). Only then is silence evidence.
 5. `resolveBaseline(lastGreenRef, fallbackRef)` (from `lib/evidence-cache.mjs`)
    → `setBaseline(path, baseline, suspectWindow, nowMs)`. No "last green"
    baseline (never-green suite) → fall back to a configured baseline ref and

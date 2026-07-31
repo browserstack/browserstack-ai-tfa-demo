@@ -336,6 +336,18 @@ representative's verdict just because the file already has the answer in
 it."* A dispatch prompt that omits this path forces its coordinator back into
 a full independent sweep — exactly the redundancy Step 4 exists to remove.
 
+**The file is read-write, not just read-only.** When a coordinator has to
+gather live (a genuine gap), tell it to write the result back —
+`mergeGithubEvidence`/`mergeLogsEvidence` (`lib/evidence-file.mjs`) — before
+finishing, not just answer TFA and move on. A representative's deep dive (a
+full diff, a downstream trace, a PR the pre-fetch never named) then benefits
+its own siblings and any other cluster sharing the same repo/workload, instead
+of every one of them re-running the same live search. This is already baked
+into `agents/ai-tfa-coordinator.md`'s Operating Principle 0 for any dispatch
+of that agent type — no need to repeat the mechanics in the prompt, just don't
+omit `evidenceFilePath` (above), since write-back has nothing to write to
+without it.
+
 **Application bugs need a culprit PR.** Whenever a test's RCA classifies as
 PRODUCT_BUG / application bug, the coordinator MUST hunt the culprit PR via the
 github connector (deploy timeline vs last-pass window, changed paths vs failure

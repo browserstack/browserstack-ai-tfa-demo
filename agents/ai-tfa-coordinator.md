@@ -44,7 +44,11 @@ it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
   `github` (PR window, deploy state) and `logs`/`infra` (app-side sweep)
   evidence, keyed by repo and by workload — gathered ONCE by the orchestrator
   for every repo/workload this build's failures implicate. `Read` it before
-  any live gather call (see Operating Principle 0).
+  any live gather call (see Operating Principle 0) — and treat it as
+  read-WRITE: a live gather that fills a gap or goes deeper is written back
+  via `mergeGithubEvidence`/`mergeLogsEvidence` so later dispatches (this
+  test's own siblings, or another cluster sharing the same repo/workload)
+  benefit too.
 
 If `testRunId` is missing or not parseable as an integer, emit a `failed`
 `RCA_OUTPUT` block with `root_cause: "no testRunId provided"` and stop — do not
@@ -84,6 +88,21 @@ read-only and has no side effects, so a read is always safe to repeat.
    workload/repo is real evidence, not inheritance — reading it is fine; the
    CONFIRMATION judgment against it must still be independently yours (see
    principle 1 and the sibling note in "The loop").
+
+   **Write back what you gather live.** A live call that fills a gap, or goes
+   deeper than the file already had (a full diff instead of a summary, a PR
+   the pre-fetch never named, a log sweep that succeeded where the file
+   recorded one as gapped) is exactly the kind of build-level fact this file
+   exists to share — not just this test's own answer. Persist it via
+   `mergeGithubEvidence(evidenceFilePath, repo, patch, nowMs)` or
+   `mergeLogsEvidence(evidenceFilePath, workload, patch, nowMs)`
+   (`lib/evidence-file.mjs`) before finishing this test, so a sibling
+   dispatched after you (or any other cluster that turns out to share the
+   same repo/workload) reads the enriched entry instead of re-fetching what
+   you just fetched. Only write back genuinely new/deeper findings — don't
+   write back a no-op read of an already-covered entry. This has the same
+   informal-locking caveat as the CSV: it's a best-effort optimization, not a
+   correctness dependency, so never block or retry on it.
 1. **Logs by TFA — the core contract.** Never seed logs in the first turn;
    **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste,
    or digest log content. Logs are TFA's job.
@@ -160,8 +179,12 @@ failure window? behind an OFF flag?). Feed both supporting *and* disconfirming
 evidence back as a structured suspect packet; only `verdict: supported` suspects
 belong in `related_prs`. Reuse the pre-computed build-level evidence — do not
 re-fetch per test (the `evidenceFile`'s `github` section, if present and not
-`gap`-marked for this repo; otherwise the live github connector). Never
-fabricate a PR when the github capability is unavailable — emit an
+`gap`-marked for this repo; otherwise the live github connector). A culprit
+hunt often needs to go deeper than the file's summary — a full diff, a
+downstream consumer of a changed flag — write that depth back via
+`mergeGithubEvidence` once found, so a sibling confirming the same suspect PR
+doesn't re-run the same diff/search. Never fabricate a PR when the github
+capability is unavailable — emit an
 `unavailable` block.
 
 ## The loop
@@ -194,7 +217,10 @@ fabricate a PR when the github capability is unavailable — emit an
                 (present, `gap` falsy) → paste its `block` straight in, no
                 re-digesting, no live call. Not named in the file, or its
                 entry has a `gap`, or no `evidenceFile` at all → run the
-                discovered skill/tool live, exactly as before.
+                discovered skill/tool live, exactly as before — THEN write the
+                result back via `mergeGithubEvidence`/`mergeLogsEvidence`
+                (Operating Principle 0) so this fills the gap for whoever
+                reads the file next.
                 Digest into one block. Record evidenceType in asks_fulfilled (dedupe).
        gap    → emit an `unavailable` block (record in asks_unavailable). NEVER prompt.
      PRODUCT_BUG in play + no supported PR yet → widen the github hunt this turn.

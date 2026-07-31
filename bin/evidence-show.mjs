@@ -31,6 +31,32 @@ if (mode === "--repo") {
   process.exit(0);
 }
 
+// `--prs` prints the one table that does the most falsification work per byte:
+// mergedAt | #num | title. A coordinator compares mergedAt against the build's
+// start_at and disqualifies everything merged after it — no diffs fetched. On
+// one real run that removed 11 of 22 candidates before a single `gh pr view`,
+// and getting there previously required piping --repo's raw JSON through an
+// ad-hoc node one-liner.
+if (mode === "--prs") {
+  const repos = arg ? [arg] : Object.keys(folded.github ?? {});
+  for (const repo of repos) {
+    const e = folded.github?.[repo];
+    if (!e) { console.log(`${repo}: (not in evidence file)`); continue; }
+    const prs = e.prsInWindow ?? [];
+    const trust = e.prsSearched === true || prs.length > 0 ? "" : "  [LIST NOT TRUSTWORTHY — never searched]";
+    console.log(`\n${repo}  (${prs.length} PR(s))${trust}`);
+    for (const p of prs.sort((a, b) => String(a.mergedAt).localeCompare(String(b.mergedAt)))) {
+      console.log(`  ${p.mergedAt ?? "?".padEnd(24)}  ${String(p.pr).padEnd(7)} ${String(p.title ?? "").slice(0, 88)}`);
+    }
+  }
+  const w = folded.suspectWindow;
+  if (w?.startedAt) {
+    console.log(`\nbuild started_at: ${w.startedAt}`);
+    console.log("  → anything merged AFTER that could not have shipped in this build (window guard).");
+  }
+  process.exit(0);
+}
+
 if (mode !== "--summary") {
   console.log(JSON.stringify(folded, null, 2));
   process.exit(0);

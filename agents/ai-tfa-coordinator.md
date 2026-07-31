@@ -165,6 +165,23 @@ read-only and has no side effects, so a read is always safe to repeat.
    extra turn, never a busy-wait.
 4. **One thread per test.** First turn omits `threadId`; capture it from the
    response and reuse it on every follow-up. Never start a second thread.
+4b. **A drain ERROR kills the TURN, not the THREAD — resubmit, don't give up.**
+   `getTfaTurnResult` returning `TFA agent run failed` (or the submit itself
+   throwing it) is a dead turn, not a dead thread: observed repeatedly, a
+   fresh submit on the SAME `threadId` succeeds immediately and resolves at
+   high confidence. So when the drain fast-fails on consecutive hard errors,
+   the next move is to resubmit on that same thread (counting it as a turn) —
+   NOT to mint a new thread and not to end the run `PENDING`. Ending PENDING
+   here throws away a resolvable test. Only stop once the turn cap is spent.
+
+4c. **Keep every turn message under `turnMessageMaxChars` (1000).** The
+   turn-2 wedge above correlates with message size: submits of ~1400 and
+   ~1350 chars failed back-to-back on one thread while a ~940-char retry was
+   accepted and resolved. Treat the configured cap as a hard budget, not a
+   soft target — trim the digest (drop `low`-priority blocks first, link
+   instead of quoting) rather than sending an oversized message and burning
+   turns on a failure that looks like a server fault.
+
 5. **Soft-PENDING is DRAINED, not reported.** `status: "PENDING"` means the tool's
    90s in-call poll expired, not that TFA has nothing to say — turns landing past
    90s are routine (a first turn finalizing `NEEDS_INFO` at 104s is a real,

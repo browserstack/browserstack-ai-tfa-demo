@@ -59,6 +59,50 @@ test("redact leaves ordinary output untouched", () => {
   assert.equal(redact("just some log output"), "just some log output");
 });
 
+// Regression, found by a live coordinator. Redaction used to consume the REST
+// OF THE LINE after a secret-ish key. GitHub's file API returns SINGLE-LINE
+// JSON whose download_url always carries `?token=…`, so a 214KB response was
+// silently cached as 816 bytes with the content field gone — every
+// private-repo file fetch was corrupted, with no warning.
+test("redact bounds the value and does NOT eat the rest of a single-line JSON", () => {
+  const json = '{"name":"F.java","download_url":"https://raw.example/F.java?token=BRFIJBHPIG5IILHZ",'
+    + '"type":"file","content":"' + "A".repeat(5000) + '"}';
+  const out = redact(json);
+  assert.ok(!out.includes("BRFIJBHPIG5IILHZ"), "the token itself must be redacted");
+  assert.ok(out.includes('"type":"file"'), "structure after the token must survive");
+  assert.ok(out.includes("A".repeat(5000)), "the content payload must survive");
+  assert.ok(out.length > 5000, `expected full payload, got ${out.length} bytes`);
+});
+
+test("redact still catches a bare Bearer token and a key=value secret", () => {
+  assert.equal(redact("Authorization: Bearer abc123SECRET"), "Authorization: <redacted>");
+  assert.equal(redact("api_key=zzz999"), "api_key=<redacted>");
+  assert.ok(!redact("Bearer eyJhbGciOiJIUzI1NiJ9").includes("eyJhbGciOiJIUzI1NiJ9"));
+});
+
+// Regression, found by two live coordinators. Neither tokenize nor
+// splitPipeline handled backslash escapes, so `\"` read as a closing quote.
+// That mangled jq's two most common idioms: string equality and, because the
+// parser then believed it was outside quotes, regex alternation got split as
+// a shell pipe.
+test("escaped double quotes survive tokenization for jq", () => {
+  const argv = tokenize(String.raw`gh api x --jq .[]|select(.filename==\"a/b.json\")`);
+  assert.equal(argv[argv.length - 1], '.[]|select(.filename=="a/b.json")');
+});
+
+test("a pipe inside an escaped-quote jq regex is NOT a shell pipe", () => {
+  const cmd = String.raw`gh pr view 51044 --json files | jq -c "select(test(\"vite|env|s3\";\"i\"))"`;
+  assert.deepEqual(splitPipeline(cmd).length, 2, "must split into fetch + one filter only");
+  const g = isRunnable(cmd);
+  assert.equal(g.ok, true, g.reason);
+  assert.deepEqual(g.fetch, ["gh", "pr", "view", "51044", "--json", "files"]);
+  assert.equal(g.filters[0][2], 'select(test("vite|env|s3";"i"))');
+});
+
+test("single quotes suppress escape processing, POSIX-style", () => {
+  assert.deepEqual(tokenize(String.raw`gh api 'a\nb'`), ["gh", "api", String.raw`a\nb`]);
+});
+
 test("oversized payloads are truncated and flagged", () => {
   const k = cacheKey("gh api big");
   const rec = cachePut(dir, k, { command: "gh api big", stdout: "x".repeat(400 * 1024) }, 1000);

@@ -121,6 +121,28 @@ test("pendingRows returns only pending work", () => {
   assert.equal(pend[0].testRunId, "102");
 });
 
+// Regression: `flip` used to accept ONLY the lowercase CSV vocabulary and
+// return a bare `false` for anything else — including `RESOLVED`, the exact
+// value the RCA_OUTPUT contract mandates. A whole batch of coordinator results
+// was lost that way: they called flip, got a silent no-op, and the rows stayed
+// `pending` looking un-run.
+test("flip accepts the RCA_OUTPUT vocabulary and normalizes it", () => {
+  seed(csv, "build-1", TESTS);
+  assert.equal(flip(csv, 101, { rca_done: "RESOLVED", root_cause: "x" }, 1000), true);
+  assert.equal(readRows(csv).find((r) => r.testRunId === "101").rca_done, "resolved");
+
+  assert.equal(flip(csv, 102, { status: "PENDING" }, 1000), true);
+  assert.equal(readRows(csv).find((r) => r.testRunId === "102").rca_done, "pending-resume");
+});
+
+test("flip maps the output block's field names onto real columns", () => {
+  seed(csv, "build-1", TESTS);
+  flip(csv, 101, { rca_done: "resolved", thread_id: "chat:101", turn_id: "t-7" }, 1000);
+  const row = readRows(csv).find((r) => r.testRunId === "101");
+  assert.equal(row.threadId, "chat:101");
+  assert.equal(row.turnId, "t-7");
+});
+
 test("flip rejects a missing/non-terminal rca_done without mutating the row", () => {
   seed(csv, "build-1", TESTS);
   claim(csv, 101, "w1", 1000);

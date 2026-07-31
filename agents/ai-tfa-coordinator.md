@@ -110,7 +110,9 @@ read-only and has no side effects, so a read is always safe to repeat.
 6. **Digest, don't dump.** Every follow-up `message` carries digested findings
    (`ask → found → snippet/link`), never raw log tails, full diffs, or full files.
    Size caps + block shape live in `references/evidence-routing.md` — read it
-   before fulfilling any ask. The tool caps `message` at 5000 chars.
+   before fulfilling any ask. The plugin config caps `message` at 1000 chars
+   (`turnMessageMaxChars` in `config/rca.config.json`); the `tfaRcaTurn` tool
+   itself would allow up to 5000, but the plugin self-limits to 1000.
 7. **Report gaps, don't drop them.** An ask the coordinator cannot fulfill becomes
    a `not-found` / `unreachable` / `unavailable` block, never a silent omission —
    and **never a user prompt**. TFA finalizes best-effort with lower confidence.

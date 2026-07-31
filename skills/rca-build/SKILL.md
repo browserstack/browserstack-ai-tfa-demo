@@ -268,7 +268,7 @@ gathers it*.
 
 **Size discipline is enforced at write time, not just at submit time.** Every
 leaf (`deployState`, each PR, each log sweep) must already be a digested
-`block` per `evidence-routing.md`'s caps (`SUMMARY≤400`, `SNIPPET≤20/40 lines`,
+`block` per `evidence-routing.md`'s caps (`SUMMARY≤80`, `SNIPPET≤4/8 lines`,
 link over diff) — never a raw dump. Cap `prsInWindow` to the top ~30 candidates
 by path-overlap relevance, not every PR in the window.
 

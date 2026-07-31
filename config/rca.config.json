@@ -4,7 +4,7 @@
   "$concurrencyComment": "Max coordinator subagents run in parallel during Step 5 fan-out. HONORED LITERALLY on the default path (direct Agent-tool dispatch of ai-tfa-coordinator subagents — one message, up to `concurrency` tool-use blocks per batch) and by the sequential harness (lib/loop.mjs). Only a SOFT target on the opt-in Workflow-tool path (workflows/rca-batch.mjs), which the Workflow runtime hard-caps at min(16, cpu cores - 2) regardless of this value — that cap is architectural and cannot be raised from this repo. See SKILL.md Step 5.",
   "concurrency": 20,
   "turnCap": 6,
-  "turnMessageMaxChars": 5000,
+  "turnMessageMaxChars": 1000,
   "pollSoftPendingMs": 90000,
   "$softPendingDrainComment": "tfaRcaTurn abandons its in-call poll at pollSoftPendingMs (90s) and returns a soft PENDING while the TFA agent keeps working — turns finalizing past 90s are routine. On a soft PENDING the loop READS the same turnId via getTfaTurnResult on this budget before it routes asks or submits anything further; reads do not consume turnCap. Only when the budget is spent does the run end PENDING (pending-resume row).",
   "softPendingDrain": {

@@ -349,6 +349,21 @@ that agent type — no need to repeat the mechanics in the prompt, just don't
 omit `evidenceFilePath` (above), since write-back has nothing to write to
 without it.
 
+**Pre-seed the MCP cache with the queries you just ran.** Step 4's log sweeps
+are MCP calls, and a coordinator will often want the same ones. Deposit each
+result under the key it would compute — `mcpCacheKey(tool, args)` then
+`cachePut(toolCacheDirFor(buildId), key, {…, writerId: "orchestrator"}, nowMs)`
+from `lib/tool-cache.mjs` — storing the DIGEST, not the raw rows.
+
+This is not optional polish; without it the MCP cache goes unused. Measured
+across every live run before this was added: **zero MCP entries ever stored**,
+because an agent's check-then-call-then-store costs three calls on a miss to
+save one later, so skipping it is the rational choice for a one-off query.
+Pre-seeding inverts that — the agent's `get` is a single call that usually
+hits. Store the same digest you put in the evidence file; the two are
+complementary (the file is read wholesale at turn 1, the cache answers a
+specific repeat query later).
+
 **Also hand every dispatch the tool cache.** The evidence file shares digested
 *findings*; `bin/cached-exec.mjs` / `bin/cached-mcp.mjs` share raw *call
 results*, which is where most duplicate work actually hides — on one measured

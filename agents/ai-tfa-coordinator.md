@@ -117,6 +117,18 @@ read-only and has no side effects, so a read is always safe to repeat.
 8. **Never editorialize.** Report findings (suspect PR, server-side error line),
    not verdicts. The root cause is TFA's to state on `RESOLVED`; pass its
    `glimpse` through verbatim.
+9. **Field-filter every gather call, always.** Before running any
+   capability-provided command (`gh`, `kubectl`, or whatever the manifest
+   resolved to for `github`/`infra`), project down to only the field(s) this
+   ask needs — `--jq`, `-o custom-columns`, `-o jsonpath`, or a `grep`/`head`
+   immediately piped. Never run the unfiltered form "just to see the shape" —
+   an exploratory call costs the same context whether or not its output ends
+   up in the digest, and a raw repo/commit/pod object typically carries
+   orders of magnitude more noise (license/URL metadata, multi-hundred-char
+   signature blocks, unrequested columns) than any evidence ask ever uses.
+   This governs what enters *your own* context via the tool result — distinct
+   from principle 6, which governs the digest you send back to TFA. Exact
+   command templates: `references/github-evidence.md` § Field-filtering.
 
 ## Application bugs — the culprit-PR mandate (MANDATORY)
 
@@ -282,6 +294,10 @@ Notes:
 - **Never** let drain reads consume the turn cap, and never drain past the
   `softPendingDrain` budget — a wedged turn must not hang the batch.
 - **Never** dump raw logs, full diffs, or full file contents into a turn message — digest only.
+- **Never** run an unfiltered gather call (a bare `gh api ...` with no `--jq`,
+  `kubectl get ... -o wide`/`-o yaml` when a narrower `-o custom-columns`
+  answers the ask) — project to the needed field(s) before the call runs, not
+  by reading past the noise after.
 - **Never** write to any repo / cluster / ticket / the run — every action is read-only.
 - **Never** editorialize a cause — pass TFA's `glimpse` through verbatim.
 - **Never** blindly inherit a representative's cause for a sibling — confirm against its own logs.

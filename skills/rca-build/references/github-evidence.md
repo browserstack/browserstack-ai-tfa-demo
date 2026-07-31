@@ -55,6 +55,35 @@ Scope everything by the failing test's `file_path` + the error summary. The
 build-level evidence (diff-since-last-green, PR window) is **pre-computed once**
 and passed in — reuse it; do not re-fetch per test.
 
+## Field-filtering — project before you pull, every call
+
+The single most common way a gather call wastes context: pulling a full
+object when the ask only needs one or two fields from it. This applies to
+whichever connector resolved for `github` (most commonly the `gh` CLI today,
+or a GitHub MCP tool) — every call should already be filtered to the field(s)
+the ask needs, not filtered after the fact by reading past the noise. The
+same discipline applies to `infra` gather calls (`kubectl` or whatever the
+manifest resolved to), since the failure mode is identical.
+
+| Need | Don't — pulls the whole object | Do — projects to the field(s) the ask needs |
+|---|---|---|
+| Repo exists / default branch | `gh api repos/OWNER/REPO` | `gh api repos/OWNER/REPO --jq '.default_branch'` |
+| Branch exists on the shipping branch | `gh api repos/OWNER/REPO/branches/BRANCH` | `gh api repos/OWNER/REPO/branches/BRANCH --jq '.name'` |
+| Commit history / PR-window search | `gh api "repos/OWNER/REPO/commits?sha=BRANCH&per_page=100"` | add `--jq '[.[] | {sha: .sha[0:8], date: .commit.committer.date, msg: (.commit.message | split("\n")[0])}]'` |
+| PR metadata | `gh pr view N --repo OWNER/REPO` (full payload) | `gh pr view N --repo OWNER/REPO --json state,mergedAt,baseRefName,headRefOid,files,author` — `--json` is itself a field allowlist; list only the fields this ask uses |
+| Pod / workload listing | `kubectl get pods -n NS -o wide` | `kubectl get pods -n NS -o custom-columns='NAME:.metadata.name,STATUS:.status.phase'` |
+| Deploy / image state | `kubectl get deploy -n NS -o yaml` | `kubectl get deploy -n NS -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image'` |
+| Log sweep | a raw `--tail` dump | `kubectl logs POD --since=<window> --tail=2000 \| grep -E '<correlation token>\|ERROR\|Exception'` — filter by the correlation token, never a raw tail |
+
+**Never run the unfiltered form "to see the shape first."** An exploratory
+raw call costs the same context whether or not its output ends up in the
+digest — a bare repo or commit object routinely carries license/URL metadata
+and a multi-hundred-character signature block that no evidence ask ever
+consults. If the exact field path is genuinely unknown, learn the shape from
+one throwaway call against a cheap target, then filter every real call from
+that point on — never repeat the unfiltered form per repo, per PR, or per
+test.
+
 ## Falsification protocol — rule out, don't just rule in
 
 For **each** candidate suspect PR, try to **break** the hypothesis:

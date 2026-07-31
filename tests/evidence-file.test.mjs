@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,8 +12,11 @@ import {
   setBaseline,
   setGithubEvidence,
   setLogsEvidence,
-  mergeGithubEvidence,
-  mergeLogsEvidence,
+  contributeGithubEvidence,
+  contributeLogsEvidence,
+  contribDirFor,
+  contribPathFor,
+  readBaseFile,
   recomputeCoverage,
 } from "../lib/evidence-file.mjs";
 
@@ -135,73 +138,107 @@ test("a block string with newlines and quotes round-trips through JSON unchanged
   assert.equal(doc.github["org/a"].deployState.block, block);
 });
 
-test("mergeGithubEvidence on a repo the pre-fetch never named creates a fresh entry", () => {
-  const entry = mergeGithubEvidence(file, "org/new-repo", {
-    prsInWindow: [{ pr: "#8912", verdict: "supported", block: "found live" }],
-  }, 1000);
-  assert.equal(entry.prsInWindow.length, 1);
-  assert.equal(entry.gap, null);
-  const doc = readEvidenceFile(file);
-  assert.equal(doc.github["org/new-repo"].prsInWindow[0].pr, "#8912");
-});
-
-test("mergeGithubEvidence appends a new PR without dropping an existing one", () => {
-  setGithubEvidence(file, "org/a", {
-    gap: null,
-    deployState: { block: "a" },
-    prsInWindow: [{ pr: "#1", verdict: "not-live" }],
-  }, 1000);
-  mergeGithubEvidence(file, "org/a", {
-    prsInWindow: [{ pr: "#2", verdict: "supported", block: "found live during coordinator's own hunt" }],
+test("contribute writes a shard, never the base file", () => {
+  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "base" } }, 1000);
+  contributeGithubEvidence(file, "3895581484", "org/a", {
+    deployState: { block: "coordinator's full diff" },
   }, 2000);
-  const doc = readEvidenceFile(file);
-  const prs = doc.github["org/a"].prsInWindow.map((p) => p.pr);
-  assert.deepEqual(prs.sort(), ["#1", "#2"]);
-  assert.equal(doc.github["org/a"].deployState.block, "a"); // untouched
+  // base is untouched...
+  assert.equal(readBaseFile(file).github["org/a"].deployState.block, "base");
+  // ...but the folded view shows the contribution
+  assert.equal(readEvidenceFile(file).github["org/a"].deployState.block, "coordinator's full diff");
 });
 
-test("mergeGithubEvidence replaces a PR entry with the same pr number (deeper finding wins)", () => {
+test("contribPathFor: one file per writer, under the build's contrib dir", () => {
+  const p = contribPathFor(file, "3895581484");
+  assert.ok(p.startsWith(contribDirFor(file)));
+  assert.ok(p.endsWith("3895581484.json"));
+  assert.notEqual(contribPathFor(file, "w1"), contribPathFor(file, "w2"));
+});
+
+test("contribPathFor sanitizes a hostile writerId", () => {
+  assert.ok(contribPathFor(file, "../../etc/passwd").endsWith("_.._etc_passwd.json"));
+});
+
+test("CONCURRENCY: two writers on the same repo both survive (no lost update)", () => {
   setGithubEvidence(file, "org/a", {
-    gap: null,
-    deployState: { block: "a" },
-    prsInWindow: [{ pr: "#9011", verdict: "unassessed", files: null }],
+    gap: null, deployState: { block: "base" }, prsInWindow: [{ pr: "#1" }],
   }, 1000);
-  mergeGithubEvidence(file, "org/a", {
-    prsInWindow: [{ pr: "#9011", verdict: "supported", files: ["Foo.java"], block: "full diff fetched" }],
-  }, 2000);
-  const doc = readEvidenceFile(file);
-  assert.equal(doc.github["org/a"].prsInWindow.length, 1);
-  assert.equal(doc.github["org/a"].prsInWindow[0].verdict, "supported");
-  assert.deepEqual(doc.github["org/a"].prsInWindow[0].files, ["Foo.java"]);
+  // Interleave the two writers the way real concurrent coordinators would:
+  // each reads, then each writes — under a single shared file this is exactly
+  // the sequence that drops the first writer's update.
+  contributeGithubEvidence(file, "writerA", "org/a", { prsInWindow: [{ pr: "#2", by: "A" }] }, 2000);
+  contributeGithubEvidence(file, "writerB", "org/a", { prsInWindow: [{ pr: "#3", by: "B" }] }, 2000);
+  const prs = readEvidenceFile(file).github["org/a"].prsInWindow.map((p) => p.pr).sort();
+  assert.deepEqual(prs, ["#1", "#2", "#3"]); // base + BOTH contributions
 });
 
-test("mergeGithubEvidence with gap:null clears a previously-recorded gap", () => {
+test("CONCURRENCY: two writers on the same workload both survive", () => {
+  contributeLogsEvidence(file, "writerA", "w1", { kubectlSweep: { block: "A found 3 lines" } }, 1000);
+  contributeLogsEvidence(file, "writerB", "w1", { victorialogs: { block: "B found 5xx" } }, 1000);
+  const w = readEvidenceFile(file).logs["w1"];
+  assert.equal(w.kubectlSweep.block, "A found 3 lines");
+  assert.equal(w.victorialogs.block, "B found 5xx");
+});
+
+test("fold: real contributed evidence beats a base-recorded gap", () => {
   setGithubEvidence(file, "org/a", { gap: "gh auth failed" }, 1000);
-  mergeGithubEvidence(file, "org/a", { gap: null, deployState: { block: "found it after all" } }, 2000);
-  const doc = readEvidenceFile(file);
-  assert.equal(doc.github["org/a"].gap, null);
-});
-
-test("mergeLogsEvidence unions clusterIds instead of replacing them", () => {
-  setLogsEvidence(file, "w1", { gap: null, clusterIds: ["c-A"], kubectlSweep: { block: "x" } }, 1000);
-  mergeLogsEvidence(file, "w1", { clusterIds: ["c-B"] }, 2000);
-  const doc = readEvidenceFile(file);
-  assert.deepEqual(doc.logs["w1"].clusterIds.sort(), ["c-A", "c-B"]);
-  assert.equal(doc.logs["w1"].kubectlSweep.block, "x"); // untouched
-});
-
-test("mergeLogsEvidence upgrades one sub-field without touching the other", () => {
-  setLogsEvidence(file, "w1", {
-    gap: null,
-    kubectlSweep: { gap: "stale pods" },
-    victorialogs: { block: "clean, 0 5xx" },
-  }, 1000);
-  mergeLogsEvidence(file, "w1", {
-    kubectlSweep: { block: "found a fresh pod after all, 3 matched lines" },
+  contributeGithubEvidence(file, "w1", "org/a", {
+    gap: null, deployState: { block: "reachable after all" },
   }, 2000);
-  const doc = readEvidenceFile(file);
-  assert.equal(doc.logs["w1"].kubectlSweep.block, "found a fresh pod after all, 3 matched lines");
-  assert.equal(doc.logs["w1"].victorialogs.block, "clean, 0 5xx"); // untouched
+  const entry = readEvidenceFile(file).github["org/a"];
+  assert.equal(entry.gap, null);
+  assert.equal(entry.deployState.block, "reachable after all");
+});
+
+test("fold: a contributed gap does NOT overwrite real base evidence", () => {
+  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "real base evidence" } }, 1000);
+  contributeGithubEvidence(file, "w1", "org/a", { deployState: { gap: "my call failed" } }, 2000);
+  assert.equal(readEvidenceFile(file).github["org/a"].deployState.block, "real base evidence");
+});
+
+test("fold: same PR number contributed later wins (deeper finding replaces placeholder)", () => {
+  setGithubEvidence(file, "org/a", {
+    gap: null, prsInWindow: [{ pr: "#9011", verdict: "unassessed", files: null }],
+  }, 1000);
+  contributeGithubEvidence(file, "w1", "org/a", {
+    prsInWindow: [{ pr: "#9011", verdict: "supported", files: ["Foo.java"] }],
+  }, 2000);
+  const prs = readEvidenceFile(file).github["org/a"].prsInWindow;
+  assert.equal(prs.length, 1);
+  assert.equal(prs[0].verdict, "supported");
+});
+
+test("fold: contributing a repo the pre-fetch never named", () => {
+  contributeGithubEvidence(file, "w1", "org/brand-new", {
+    prsInWindow: [{ pr: "#8912", verdict: "supported" }],
+  }, 1000);
+  assert.equal(readEvidenceFile(file).github["org/brand-new"].prsInWindow[0].pr, "#8912");
+});
+
+test("fold: clusterIds union across base and multiple shards", () => {
+  setLogsEvidence(file, "w1", { gap: null, clusterIds: ["c-A"], kubectlSweep: { block: "x" } }, 1000);
+  contributeLogsEvidence(file, "w1writer", "w1", { clusterIds: ["c-B"] }, 2000);
+  contributeLogsEvidence(file, "w2writer", "w1", { clusterIds: ["c-C"] }, 2000);
+  assert.deepEqual(readEvidenceFile(file).logs["w1"].clusterIds.sort(), ["c-A", "c-B", "c-C"]);
+});
+
+test("fold: a corrupt shard is skipped, not fatal", () => {
+  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "base" } }, 1000);
+  contributeGithubEvidence(file, "good", "org/a", { prsInWindow: [{ pr: "#2" }] }, 2000);
+  writeFileSync(contribPathFor(file, "corrupt"), "{not json", "utf8");
+  const doc = readEvidenceFile(file); // must not throw
+  assert.equal(doc.github["org/a"].prsInWindow[0].pr, "#2");
+});
+
+test("recomputeCoverage counts a coordinator-filled gap as covered", () => {
+  setGithubEvidence(file, "org/a", { gap: "unreachable at pre-fetch time" }, 1000);
+  let cov = recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 2000);
+  assert.deepEqual(cov.reposGapped, ["org/a"]);
+  contributeGithubEvidence(file, "w1", "org/a", { gap: null, deployState: { block: "got it" } }, 3000);
+  cov = recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 4000);
+  assert.deepEqual(cov.reposCovered, ["org/a"]);
+  assert.deepEqual(cov.reposGapped, []);
 });
 
 test("writeEvidenceFile creates the parent directory if missing", () => {

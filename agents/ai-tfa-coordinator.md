@@ -46,8 +46,9 @@ it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
   for every repo/workload this build's failures implicate. `Read` it before
   any live gather call (see Operating Principle 0) — and treat it as
   read-WRITE: a live gather that fills a gap or goes deeper is written back
-  via `mergeGithubEvidence`/`mergeLogsEvidence` so later dispatches (this
-  test's own siblings, or another cluster sharing the same repo/workload)
+  via `contributeGithubEvidence`/`contributeLogsEvidence` (writing your own
+  per-writer shard, keyed by your `testRunId`) so later dispatches — this
+  test's own siblings, or another cluster sharing the same repo/workload —
   benefit too.
 
 If `testRunId` is missing or not parseable as an integer, emit a `failed`
@@ -94,15 +95,19 @@ read-only and has no side effects, so a read is always safe to repeat.
    the pre-fetch never named, a log sweep that succeeded where the file
    recorded one as gapped) is exactly the kind of build-level fact this file
    exists to share — not just this test's own answer. Persist it via
-   `mergeGithubEvidence(evidenceFilePath, repo, patch, nowMs)` or
-   `mergeLogsEvidence(evidenceFilePath, workload, patch, nowMs)`
-   (`lib/evidence-file.mjs`) before finishing this test, so a sibling
-   dispatched after you (or any other cluster that turns out to share the
-   same repo/workload) reads the enriched entry instead of re-fetching what
-   you just fetched. Only write back genuinely new/deeper findings — don't
-   write back a no-op read of an already-covered entry. This has the same
-   informal-locking caveat as the CSV: it's a best-effort optimization, not a
-   correctness dependency, so never block or retry on it.
+   `contributeGithubEvidence(evidenceFilePath, writerId, repo, patch, nowMs)`
+   or `contributeLogsEvidence(evidenceFilePath, writerId, workload, patch,
+   nowMs)` (`lib/evidence-file.mjs`), where **`writerId` is your own
+   `testRunId`** — that is what keeps writes safe. Each coordinator writes only
+   its own shard file under `<evidenceFilePath minus .json>.contrib/`, so
+   concurrent coordinators can never clobber each other or the orchestrator's
+   base pre-fetch; readers fold base + every shard back into one view
+   automatically. Write back before finishing this test, so a sibling
+   dispatched after you (or any other cluster sharing the same repo/workload)
+   reads the enriched entry instead of re-fetching what you just fetched.
+   Only write back genuinely new/deeper findings — never a no-op re-write of
+   an already-covered entry. It's a best-effort optimization, not a
+   correctness dependency: never block or retry on it.
 1. **Logs by TFA — the core contract.** Never seed logs in the first turn;
    **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste,
    or digest log content. Logs are TFA's job.
@@ -182,8 +187,8 @@ re-fetch per test (the `evidenceFile`'s `github` section, if present and not
 `gap`-marked for this repo; otherwise the live github connector). A culprit
 hunt often needs to go deeper than the file's summary — a full diff, a
 downstream consumer of a changed flag — write that depth back via
-`mergeGithubEvidence` once found, so a sibling confirming the same suspect PR
-doesn't re-run the same diff/search. Never fabricate a PR when the github
+`contributeGithubEvidence` once found, so a sibling confirming the same
+suspect PR doesn't re-run the same diff/search. Never fabricate a PR when the github
 capability is unavailable — emit an
 `unavailable` block.
 
@@ -218,7 +223,8 @@ capability is unavailable — emit an
                 re-digesting, no live call. Not named in the file, or its
                 entry has a `gap`, or no `evidenceFile` at all → run the
                 discovered skill/tool live, exactly as before — THEN write the
-                result back via `mergeGithubEvidence`/`mergeLogsEvidence`
+                result back via `contributeGithubEvidence`/
+                `contributeLogsEvidence` with your own testRunId as writerId
                 (Operating Principle 0) so this fills the gap for whoever
                 reads the file next.
                 Digest into one block. Record evidenceType in asks_fulfilled (dedupe).

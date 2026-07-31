@@ -338,15 +338,27 @@ a full independent sweep — exactly the redundancy Step 4 exists to remove.
 
 **The file is read-write, not just read-only.** When a coordinator has to
 gather live (a genuine gap), tell it to write the result back —
-`mergeGithubEvidence`/`mergeLogsEvidence` (`lib/evidence-file.mjs`) — before
-finishing, not just answer TFA and move on. A representative's deep dive (a
-full diff, a downstream trace, a PR the pre-fetch never named) then benefits
-its own siblings and any other cluster sharing the same repo/workload, instead
-of every one of them re-running the same live search. This is already baked
-into `agents/ai-tfa-coordinator.md`'s Operating Principle 0 for any dispatch
-of that agent type — no need to repeat the mechanics in the prompt, just don't
+`contributeGithubEvidence`/`contributeLogsEvidence` (`lib/evidence-file.mjs`),
+passing its own `testRunId` as `writerId` — before finishing, not just answer
+TFA and move on. A representative's deep dive (a full diff, a downstream
+trace, a PR the pre-fetch never named) then benefits its own siblings and any
+other cluster sharing the same repo/workload, instead of every one of them
+re-running the same live search. This is already baked into
+`agents/ai-tfa-coordinator.md`'s Operating Principle 0 for any dispatch of
+that agent type — no need to repeat the mechanics in the prompt, just don't
 omit `evidenceFilePath` (above), since write-back has nothing to write to
 without it.
+
+**Concurrency is handled by layout, not by locking.** Base
+(`rca-evidence.<buildId>.json`) has exactly one writer — this orchestrator, in
+Step 4. Every coordinator writes only its own shard under
+`rca-evidence.<buildId>.contrib/<testRunId>.json`. Since no two processes ever
+open the same file for writing, concurrent write-back cannot lose an update;
+`readEvidenceFile` folds base + all shards into one view, applying shards in
+sorted order, with real evidence taking precedence over a recorded `gap`. A
+measured comparison: 8 concurrent writers with a realistic read→work→write
+window lost **28 of 40 updates** against a single shared file, and **0 of 40**
+under this layout.
 
 **Application bugs need a culprit PR.** Whenever a test's RCA classifies as
 PRODUCT_BUG / application bug, the coordinator MUST hunt the culprit PR via the

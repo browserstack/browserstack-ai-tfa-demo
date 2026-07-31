@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +17,7 @@ import {
   contribDirFor,
   contribPathFor,
   readBaseFile,
+  hasTrustworthyPrList,
   recomputeCoverage,
 } from "../lib/evidence-file.mjs";
 
@@ -239,6 +240,48 @@ test("recomputeCoverage counts a coordinator-filled gap as covered", () => {
   cov = recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 4000);
   assert.deepEqual(cov.reposCovered, ["org/a"]);
   assert.deepEqual(cov.reposGapped, []);
+});
+
+// Regression: an empty prsInWindow with gap:null used to read as "searched,
+// found none" when it may simply never have been populated. Observed live —
+// a file asserted 0 PRs for a repo that actually had 21, which would have let
+// a coordinator conclude "no culprit PR" with false confidence.
+test("empty prsInWindow is NOT coverage unless the search is recorded", () => {
+  setGithubEvidence(file, "org/never-searched", { gap: null, deployState: { block: "d" }, prsInWindow: [] }, 1000);
+  setGithubEvidence(file, "org/searched-empty", { gap: null, deployState: { block: "d" }, prsInWindow: [], prsSearched: true }, 1000);
+  const cov = recomputeCoverage(file, { repos: ["org/never-searched", "org/searched-empty"], workloads: [] }, 2000);
+  // Both repos ARE covered (each has deploy state) — but only one has a PR
+  // list safe to read as "no PRs in window".
+  assert.deepEqual(cov.reposCovered.sort(), ["org/never-searched", "org/searched-empty"]);
+  assert.deepEqual(cov.reposWithUntrustedPrList, ["org/never-searched"]);
+});
+
+test("hasTrustworthyPrList distinguishes searched-empty from never-populated", () => {
+  setGithubEvidence(file, "org/a", { gap: null, prsInWindow: [] }, 1000);
+  setGithubEvidence(file, "org/b", { gap: null, prsInWindow: [], prsSearched: true }, 1000);
+  setGithubEvidence(file, "org/c", { gap: null, prsInWindow: [{ pr: "#1" }] }, 1000);
+  const doc = readEvidenceFile(file);
+  assert.equal(hasTrustworthyPrList(doc, "org/a"), false);
+  assert.equal(hasTrustworthyPrList(doc, "org/b"), true);
+  assert.equal(hasTrustworthyPrList(doc, "org/c"), true);
+});
+
+test("contributing a PR list records that the search actually ran", () => {
+  contributeGithubEvidence(file, "w1", "org/a", { prsInWindow: [] }, 1000);
+  assert.equal(hasTrustworthyPrList(readEvidenceFile(file), "org/a"), true);
+});
+
+test("prsSearched is sticky — a later non-searching contributor cannot downgrade it", () => {
+  setGithubEvidence(file, "org/a", { gap: null, prsInWindow: [{ pr: "#1" }], prsSearched: true }, 1000);
+  contributeGithubEvidence(file, "w1", "org/a", { deployState: { block: "just deploy info" } }, 2000);
+  assert.equal(readEvidenceFile(file).github["org/a"].prsSearched, true);
+});
+
+test("a pre-existing loose-mode file is tightened to 0600 on the next write", () => {
+  writeEvidenceFile(file, emptyEvidenceFile("b", 0));
+  chmodSync(file, 0o644); // simulate a file left by a pre-hardening run
+  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "x" } }, 1000);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
 });
 
 test("evidence file and contribution shards are owner-only (0600)", () => {

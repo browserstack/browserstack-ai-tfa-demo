@@ -136,6 +136,25 @@ read-only and has no side effects, so a read is always safe to repeat.
      they are stateful, and the cache refuses them outright.
    - Don't re-probe a connector the gate already validated (`gh auth status`,
      `kubectl version`); the manifest above is the answer.
+   - Two wrapper gotchas, both hit in real use: **(i)** hit/miss banners go to
+     stderr so `| jq` works, but `2>&1 | jq` merges the banner into the pipe
+     and jq dies on it — don't redirect stderr into a pipe. **(ii)** a command
+     containing its own single quotes (e.g. `--jq '.[] | "\(.number)"'`) can't
+     be nested inside a single-quoted argument; pipe it in on stdin instead:
+     `printf '%s' '<command>' | node .../cached-exec.mjs <buildId> <writerId> -`.
+     Metacharacters *inside* a quoted argument are fine — only a standalone
+     shell operator is refused, and a pipe belongs outside the wrapper anyway.
+
+   **Never read an empty `prsInWindow` as "no PRs in the window."** An empty
+   list means "no PRs" ONLY when the entry also has `prsSearched: true`;
+   otherwise it was never populated and the two are indistinguishable in the
+   data. Check `coverage.reposWithUntrustedPrList` (or call
+   `hasTrustworthyPrList(doc, repo)`) before concluding anything from an empty
+   list — and when it is untrusted, run the PR search live. This is not
+   hypothetical: a pre-fetch once asserted 0 PRs for a repo that had 21,
+   which would have produced a confident "no culprit PR identified." When you
+   do run the search, contribute the result back — that records
+   `prsSearched` and spares everyone else the same trap.
 1. **Logs by TFA — the core contract.** Never seed logs in the first turn;
    **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste,
    or digest log content. Logs are TFA's job.

@@ -92,12 +92,30 @@ test("isRunnable enforces an allowlisted read-only leader", () => {
   assert.equal(isRunnable("sh -c 'echo hi'").ok, false);
 });
 
-test("isRunnable rejects chaining, substitution and redirects", () => {
-  assert.equal(isRunnable("gh api a; rm -rf /").ok, false);
+test("isRunnable rejects shell operators as standalone tokens", () => {
+  assert.equal(isRunnable("gh api a ; rm -rf /").ok, false);
   assert.equal(isRunnable("gh api a && kubectl delete pod x").ok, false);
-  assert.equal(isRunnable("gh api $(whoami)").ok, false);
   assert.equal(isRunnable("gh api a > /etc/passwd").ok, false);
-  assert.equal(isRunnable("gh api a `id`").ok, false);
+  assert.equal(isRunnable("gh api a | jq .x").ok, false); // pipe belongs outside
+});
+
+// Regression: the old raw-string guard refused these legitimate read-only
+// calls, which is what pushed a coordinator into slower workarounds.
+test("isRunnable ALLOWS metacharacters inside quoted arguments", () => {
+  const jqSemicolon = `gh api repos/o/r/git/trees/main --jq '[.tree[].path|select(test("rcaThree";"i"))]'`;
+  assert.equal(isRunnable(jqSemicolon).ok, true, "; inside a jq expression is not a shell operator");
+
+  const urlAmp = "gh api 'search/code?q=foo&per_page=20'";
+  assert.equal(isRunnable(urlAmp).ok, true, "& inside a quoted URL is not a shell operator");
+
+  const jqPipe = `gh pr list -R o/r --json number --jq '.[] | .number'`;
+  assert.equal(isRunnable(jqPipe).ok, true, "| inside a quoted jq expression is not a shell pipe");
+});
+
+test("a quoted metacharacter survives tokenization as ONE literal argument", () => {
+  const argv = tokenize(`gh api repos/o/r --jq '[.tree[]|select(test("x";"i"))]'`);
+  assert.equal(argv.length, 5);
+  assert.equal(argv[4], '[.tree[]|select(test("x";"i"))]');
 });
 
 test("tokenize splits like a shell for quoted args, without a shell", () => {

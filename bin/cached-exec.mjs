@@ -21,8 +21,9 @@
 //  1. Hit/miss banners go to STDERR, so stdout stays byte-identical to the raw
 //     command and `| jq` works. But `2>&1 | jq` merges the banner back into
 //     the pipe and jq dies on it ("Invalid literal at line 1, column 12").
-//     Don't redirect stderr into a pipe; if you must silence it, `2>/dev/null`
-//     — though that also hides whether you got a hit.
+//     Don't redirect stderr into a pipe. If you silence it with `2>/dev/null`
+//     you also lose the hit/miss signal — so set `TOOLCACHE_LOG=<path>` and
+//     the banners are teed there too: `grep -c HIT <path>` still works.
 //
 //  2. Nested single quotes. A command containing its own `'…'` (typically
 //     `--jq '.[] | "\(.number)"'`) cannot be passed inside a single-quoted
@@ -32,7 +33,7 @@
 //         | node bin/cached-exec.mjs "$B" 3895 -
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync } from "node:fs";
 import {
   toolCacheDirFor, cacheKey, cacheGet, cachePut, cacheStats, isRunnable, tokenize,
 } from "../lib/tool-cache.mjs";
@@ -61,6 +62,24 @@ if (!buildId || (writerOrFlag !== "--stats" && !command)) {
 }
 
 const dir = toolCacheDirFor(buildId, process.env.RCA_STATE_DIR ?? "");
+
+// Where hit/miss banners go. Default stderr keeps stdout byte-identical to the
+// wrapped command. But callers pipe stdout into jq/sed and silence stderr with
+// `2>/dev/null` to keep the tool chatter out — which also throws away the
+// banner, so the run's own hit-rate becomes unmeasurable. Setting
+// TOOLCACHE_LOG=<path> tees banners to a file, letting a caller suppress
+// stderr and still count hits afterwards (`grep -c HIT <path>`).
+const logPath = process.env.TOOLCACHE_LOG ?? "";
+function banner(line) {
+  console.error(line);
+  if (logPath) {
+    try {
+      appendFileSync(logPath, line + "\n", { encoding: "utf8", mode: 0o600 });
+    } catch {
+      /* logging must never break the fetch */
+    }
+  }
+}
 
 if (writerOrFlag === "--stats") {
   const s = cacheStats(dir);
@@ -107,7 +126,7 @@ function run(argv, input) {
 let fetched;
 const hit = cacheGet(dir, key);
 if (hit) {
-  console.error(`[tool-cache HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B]`);
+  banner(`[tool-cache HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B]`);
   fetched = hit.stdout;
 } else {
   const res = run(gate.fetch, undefined);
@@ -115,19 +134,19 @@ if (hit) {
   if (res.exitCode !== 0) {
     // Preserve the real behaviour. Deliberately NOT cached — a transient
     // failure (rate limit, expired token) must not become a permanent answer.
-    console.error(`[tool-cache MISS ${key} — fetch exited ${res.exitCode}, NOT cached]`);
+    banner(`[tool-cache MISS ${key} — fetch exited ${res.exitCode}, NOT cached]`);
     process.stdout.write(fetched);
     process.exit(res.exitCode);
   }
   if (fetched.trim() === "") {
     // An empty result is usually a wrong selector or a silently failed lookup;
     // caching it creates a sticky, invisible negative for every later reader.
-    console.error(`[tool-cache MISS ${key} — empty result, NOT cached]`);
+    banner(`[tool-cache MISS ${key} — empty result, NOT cached]`);
   } else {
     // nowMs is read here, at the process edge — lib/ keeps its no-clock
     // discipline so it stays sandbox-safe.
     cachePut(dir, key, { command: gate.fetchText, writerId: writerOrFlag, stdout: fetched, exitCode: 0 }, Date.now());
-    console.error(`[tool-cache MISS ${key} — stored ${fetched.length}B]`);
+    banner(`[tool-cache MISS ${key} — stored ${fetched.length}B]`);
   }
 }
 

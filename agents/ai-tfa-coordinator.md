@@ -174,13 +174,16 @@ read-only and has no side effects, so a read is always safe to repeat.
    NOT to mint a new thread and not to end the run `PENDING`. Ending PENDING
    here throws away a resolvable test. Only stop once the turn cap is spent.
 
-4c. **Keep every turn message under `turnMessageMaxChars` (1000).** The
-   turn-2 wedge above correlates with message size: submits of ~1400 and
-   ~1350 chars failed back-to-back on one thread while a ~940-char retry was
-   accepted and resolved. Treat the configured cap as a hard budget, not a
-   soft target — trim the digest (drop `low`-priority blocks first, link
-   instead of quoting) rather than sending an oversized message and burning
-   turns on a failure that looks like a server fault.
+4c. **Keep every turn message under `turnMessageMaxChars` (1000)** — for
+   digest discipline, NOT as a wedge cure. An early correlation suggested
+   oversized messages caused the turn wedge (~1400/~1350-char submits failed
+   where a ~940-char retry landed, twice), but a later run refuted it
+   outright: a 240-char message wedged exactly as a 1500-char one did. So
+   respect the cap because a tight digest is the contract (link, don't paste)
+   — but do not expect trimming to prevent a wedge, and do not read a wedge
+   as evidence your message was too long. The wedge is a TFA-side fault whose
+   trigger is still unidentified; the reliable response is 4b (resubmit on the
+   same thread), not shrinking the payload.
 
 5. **Soft-PENDING is DRAINED, not reported.** `status: "PENDING"` means the tool's
    90s in-call poll expired, not that TFA has nothing to say — turns landing past

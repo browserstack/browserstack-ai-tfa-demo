@@ -174,6 +174,24 @@ read-only and has no side effects, so a read is always safe to repeat.
    NOT to mint a new thread and not to end the run `PENDING`. Ending PENDING
    here throws away a resolvable test. Only stop once the turn cap is spent.
 
+4b-i. **Two DIFFERENT TFA failures, don't confuse them.**
+   - `TFA agent run failed` — the wedge. Unrelated to message size (a
+     240-char message wedged like a 1500-char one). Fix: resubmit on the same
+     thread, per 4b.
+   - `turn expired or not found` — observed on an over-cap (~2000-char)
+     submit. The text names a thread/turn problem, which reads as a wedge and
+     sends you down the wrong path; it is really a size rejection. If you see
+     this, shorten and resend before assuming the thread is broken.
+
+4b-ii. **Size-check any large fetch before trusting a negative result.** A
+   truncated payload turns "grep found nothing" into a false negative, and it
+   is silent. A coordinator nearly concluded a manifest didn't contain an
+   entry when the file had simply been cut at ~64KB — its own `wc -l` check
+   is what caught it (1042 lines vs 1518 real). The tool cache does not do
+   this (it truncates only past 256KB, and marks it), but the surrounding
+   tool plumbing can. So on any fetch of a big file: verify size or line
+   count first, and only then treat an absent match as evidence of absence.
+
 4c. **Keep every turn message under `turnMessageMaxChars` (1000)** — for
    digest discipline, NOT as a wedge cure. An early correlation suggested
    oversized messages caused the turn wedge (~1400/~1350-char submits failed

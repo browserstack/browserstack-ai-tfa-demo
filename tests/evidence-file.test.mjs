@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -239,6 +239,13 @@ test("recomputeCoverage counts a coordinator-filled gap as covered", () => {
   cov = recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 4000);
   assert.deepEqual(cov.reposCovered, ["org/a"]);
   assert.deepEqual(cov.reposGapped, []);
+});
+
+test("evidence file and contribution shards are owner-only (0600)", () => {
+  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "private PR detail" } }, 1000);
+  contributeGithubEvidence(file, "w1", "org/a", { prsInWindow: [{ pr: "#1" }] }, 2000);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal(statSync(contribPathFor(file, "w1")).mode & 0o777, 0o600);
 });
 
 test("writeEvidenceFile creates the parent directory if missing", () => {

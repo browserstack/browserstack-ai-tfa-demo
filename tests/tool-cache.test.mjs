@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, statSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -141,6 +141,22 @@ test("an MCP result round-trips through the shared store", () => {
   const k = mcpCacheKey("mcp__grafana__query_loki_logs", { ns: "regression", limit: 50 });
   cachePut(dir, k, { command: "grafana query", writerId: "3889074893", stdout: "0 rows, clean" }, 1000);
   assert.equal(cacheGet(dir, k).stdout, "0 rows, clean");
+});
+
+test("cache files are owner-only (0600) and the dir owner-only (0700)", () => {
+  const sub = join(dir, "nested-cache");
+  const k = cacheKey("gh api repos/a");
+  cachePut(sub, k, { command: "gh api repos/a", stdout: "private repo source" }, 1000);
+  // The cache sits in a world-readable OS temp dir and holds raw gh/kubectl
+  // output; redaction is best-effort, so the mode is the real control.
+  assert.equal(statSync(join(sub, `${k}.json`)).mode & 0o777, 0o600);
+  assert.equal(statSync(sub).mode & 0o777, 0o700);
+});
+
+test("no temp file is left behind after an atomic put", () => {
+  const k = cacheKey("gh api repos/a");
+  cachePut(dir, k, { command: "gh api repos/a", stdout: "x" }, 1000);
+  assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith(".tmp")), []);
 });
 
 test("CONCURRENCY: same key written twice stays readable and consistent", () => {

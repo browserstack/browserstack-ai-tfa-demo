@@ -7,10 +7,12 @@
   "turnMessageMaxChars": 1000,
   "pollSoftPendingMs": 90000,
   "$softPendingDrainComment": "tfaRcaTurn abandons its in-call poll at pollSoftPendingMs (90s) and returns a soft PENDING while the TFA agent keeps working — turns finalizing past 90s are routine. On a soft PENDING the loop READS the same turnId via getTfaTurnResult on this budget before it routes asks or submits anything further; reads do not consume turnCap. Only when the budget is spent does the run end PENDING (pending-resume row).",
+  "$maxErrorReadsComment": "A soft PENDING is drained on the full budget below, but a HARD read failure (a thrown error, or a result whose status/message says the TFA agent run failed) is a different signal: it will not resolve by asking again. After this many CONSECUTIVE failed reads the drain stops early and the row ends PENDING with a `tfa-error` note, still resumable. A single good read clears the streak. Measured motivation: on one real build, drain reads plus their sleeps were 23% of all coordinator tool calls, and the four tests that wedged this way were the four slowest in the batch.",
   "softPendingDrain": {
     "maxWaitMs": 600000,
     "intervalMs": 5000,
-    "maxReads": 40
+    "maxReads": 40,
+    "maxErrorReads": 3
   },
   "reaperHeartbeatTtlSec": 600,
   "errorSummaryMaxChars": 200,

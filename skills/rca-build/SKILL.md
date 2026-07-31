@@ -349,6 +349,17 @@ that agent type — no need to repeat the mechanics in the prompt, just don't
 omit `evidenceFilePath` (above), since write-back has nothing to write to
 without it.
 
+**Also hand every dispatch the tool cache.** The evidence file shares digested
+*findings*; `bin/cached-exec.mjs` / `bin/cached-mcp.mjs` share raw *call
+results*, which is where most duplicate work actually hides — on one measured
+build `gh` was 37% of all coordinator tool calls and 46 were byte-identical
+commands re-run by different coordinators. Include the plugin root in each
+dispatch prompt so coordinators can invoke the wrappers, and tell them to pass
+their own `testRunId` as `writerId`. The cache lives at
+`<tmpdir>/bstack-rca/rca-toolcache.<buildId>/`, one file per call key, shared
+by shell and MCP alike. Read `node bin/cached-exec.mjs <buildId> --stats` at
+the end of the run to report how much it actually saved rather than assuming.
+
 **Concurrency is handled by layout, not by locking.** Base
 (`rca-evidence.<buildId>.json`) has exactly one writer — this orchestrator, in
 Step 4. Every coordinator writes only its own shard under

@@ -108,6 +108,34 @@ read-only and has no side effects, so a read is always safe to repeat.
    Only write back genuinely new/deeper findings — never a no-op re-write of
    an already-covered entry. It's a best-effort optimization, not a
    correctness dependency: never block or retry on it.
+
+   **Route read-only lookups through the tool cache.** The evidence file
+   shares *digested findings*; the cache below shares *raw call results*, which
+   is where most duplicate work actually hides (measured on one real build:
+   `gh` was 37% of all coordinator tool calls, 46 of them byte-identical
+   commands re-run by different coordinators — one spec file fetched 12
+   times). Given `buildId` and your own `testRunId` as `writerId`:
+
+   - **Shell (`gh`/`kubectl`/`curl`/`git`)** — prefix the fetch with the
+     wrapper; it behaves exactly like the raw command (same stdout, same exit
+     code) but only executes on a miss:
+     `node <pluginRoot>/bin/cached-exec.mjs <buildId> <testRunId> '<command>'`
+     Wrap ONLY the fetch and pipe *outside* it, so different downstream
+     filters share one cached fetch:
+     `node .../cached-exec.mjs "$B" 3895 'gh api repos/o/r/contents/f' | jq -r .content | head -40`
+     One fetch per call — the wrapper refuses `;`/`&&`/backticks/redirects.
+   - **MCP data queries** (grafana/VictoriaLogs, `listTestIds`,
+     `getFailureLogs`) — check first, and store your digest on a miss:
+     `node <pluginRoot>/bin/cached-mcp.mjs <buildId> get <tool> '<argsJson>'`
+     (exit 0 = hit, use it and skip the MCP call; exit 1 = miss, make the call
+     then `... put <tool> '<argsJson>' <testRunId>` with the digest on stdin).
+     Worth it for expensive build-level queries several coordinators would
+     each re-run; skip it for a one-off only this test needs, since a miss
+     costs two extra calls.
+   - **NEVER cache `tfaRcaTurn` / `getTfaTurnResult` / `triggerRcaReport`** —
+     they are stateful, and the cache refuses them outright.
+   - Don't re-probe a connector the gate already validated (`gh auth status`,
+     `kubectl version`); the manifest above is the answer.
 1. **Logs by TFA — the core contract.** Never seed logs in the first turn;
    **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste,
    or digest log content. Logs are TFA's job.

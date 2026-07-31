@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   toolCacheDirFor, cacheKey, mcpCacheKey, cacheGet, cachePut, cacheStats,
-  isCacheable, isCacheableMcp, isRunnable, redact, tokenize,
+  isCacheable, isCacheableMcp, isRunnable, redact, tokenize, splitPipeline,
 } from "../lib/tool-cache.mjs";
 
 let dir;
@@ -92,11 +92,54 @@ test("isRunnable enforces an allowlisted read-only leader", () => {
   assert.equal(isRunnable("sh -c 'echo hi'").ok, false);
 });
 
-test("isRunnable rejects shell operators as standalone tokens", () => {
+test("isRunnable rejects chaining and redirects, but ACCEPTS pipelines", () => {
   assert.equal(isRunnable("gh api a ; rm -rf /").ok, false);
   assert.equal(isRunnable("gh api a && kubectl delete pod x").ok, false);
   assert.equal(isRunnable("gh api a > /etc/passwd").ok, false);
-  assert.equal(isRunnable("gh api a | jq .x").ok, false); // pipe belongs outside
+  // `2>&1` is stderr plumbing the wrapper already owns — stripped, not refused.
+  // Refusing it rejected 134 of 223 real recorded calls and zeroed the hit rate.
+  assert.equal(isRunnable("gh api a 2>&1").ok, true, "stderr plumbing is normalized away");
+  assert.equal(isRunnable("gh api a 2>/dev/null | jq .x").ok, true);
+  // Pipelines are supported now: refusing them meant the cache applied to
+  // almost no real traffic, since most fetches are written inline with a filter.
+  assert.equal(isRunnable("gh api a | jq .x").ok, true);
+});
+
+test("a FILE redirect is reported as a redirect, not as a mutation", () => {
+  const r = isRunnable("gh api repos/x > out.json");
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /redirect/i);
+  assert.doesNotMatch(r.reason, /mutating/i);
+});
+
+test("stderr plumbing does not change the cache key", () => {
+  const a = isRunnable("gh api repos/x | jq .a");
+  const b = isRunnable("gh api repos/x 2>&1 | jq .b");
+  assert.equal(cacheKey(a.fetchText), cacheKey(b.fetchText));
+});
+
+test("pipeline plan: only the FETCH is keyed, filters are separate", () => {
+  const a = isRunnable("gh api repos/x | jq -r .name");
+  const b = isRunnable("gh api repos/x | jq -r .branch | tr a-z A-Z");
+  assert.equal(a.ok && b.ok, true);
+  // Same underlying fetch -> same cache key -> one network call serves both.
+  assert.equal(cacheKey(a.fetchText), cacheKey(b.fetchText));
+  assert.deepEqual(a.fetch, ["gh", "api", "repos/x"]);
+  assert.equal(a.filters.length, 1);
+  assert.equal(b.filters.length, 2);
+});
+
+test("only pure text filters may follow the fetch", () => {
+  assert.equal(isRunnable("gh api repos/x | jq .a").ok, true);
+  assert.equal(isRunnable("gh api repos/x | grep foo").ok, true);
+  assert.equal(isRunnable("gh api repos/x | sh").ok, false);
+  assert.equal(isRunnable("gh api repos/x | bash -c 'x'").ok, false);
+  assert.equal(isRunnable("gh api repos/x | kubectl delete pod y").ok, false);
+});
+
+test("splitPipeline ignores a pipe inside quotes", () => {
+  assert.deepEqual(splitPipeline(`gh pr list --jq '.[] | .number' | head -5`),
+    ["gh pr list --jq '.[] | .number'", "head -5"]);
 });
 
 // Regression: the old raw-string guard refused these legitimate read-only

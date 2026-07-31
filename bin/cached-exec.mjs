@@ -68,16 +68,7 @@ if (writerOrFlag === "--stats") {
   process.exit(0);
 }
 
-const key = cacheKey(command);
-const hit = cacheGet(dir, key);
-
-if (hit) {
-  console.error(`[tool-cache HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B]`);
-  process.stdout.write(hit.stdout);
-  process.exit(0);
-}
-
-// Gate before running anything (allowlisted read-only leader, no chaining).
+// Parse into a fetch + filter chain before anything runs.
 const gate = isRunnable(command);
 if (!gate.ok) {
   console.error(`[tool-cache REFUSED] ${gate.reason}`);
@@ -85,51 +76,69 @@ if (!gate.ok) {
   process.exit(2);
 }
 
-// No shell: tokenize ourselves and execFile the binary directly, so shell
-// metacharacters inside arguments (a --jq expression, an XPath, a LogsQL
-// filter) are passed through literally and cannot start a second command.
-let argv;
-try {
-  argv = tokenize(command);
-} catch (err) {
-  console.error(`[tool-cache REFUSED] ${err.message}`);
-  process.exit(2);
+// Key on the FETCH ONLY. Downstream filters are pure text transforms, so two
+// agents filtering the same fetch differently share one cached network call.
+const key = cacheKey(gate.fetchText);
+
+// Run one argv with `input` on stdin, no shell. Returns { stdout, exitCode }.
+function run(argv, input) {
+  try {
+    return {
+      stdout: execFileSync(argv[0], argv.slice(1), {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+        // Capture stderr rather than let it inherit: execFileSync otherwise
+        // BOTH inherits and captures, so relaying it ourselves printed
+        // failures three times.
+        stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+        ...(input === undefined ? {} : { input }),
+      }),
+      exitCode: 0,
+    };
+  } catch (err) {
+    if (err.stderr) process.stderr.write(err.stderr.toString()); // the only copy
+    return {
+      stdout: (err.stdout ?? "").toString(),
+      exitCode: typeof err.status === "number" ? err.status : 1,
+    };
+  }
 }
 
-let stdout = "";
-let exitCode = 0;
-try {
-  stdout = execFileSync(argv[0], argv.slice(1), {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    // Capture stderr instead of letting it inherit. Default execFileSync
-    // BOTH inherits stderr to the parent AND captures it on the error, so
-    // relaying `err.stderr` ourselves printed everything three times.
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-} catch (err) {
-  // Preserve the real behaviour of the wrapped command: emit whatever it
-  // produced and exit non-zero. Deliberately NOT cached — a transient
-  // failure (rate limit, expired token) must not become a permanent answer.
-  stdout = (err.stdout ?? "").toString();
-  exitCode = typeof err.status === "number" ? err.status : 1;
-  if (err.stderr) process.stderr.write(err.stderr.toString()); // now the only copy
-  console.error(`[tool-cache MISS ${key} — command exited ${exitCode}, NOT cached]`);
-  process.stdout.write(stdout);
-  process.exit(exitCode);
+let fetched;
+const hit = cacheGet(dir, key);
+if (hit) {
+  console.error(`[tool-cache HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B]`);
+  fetched = hit.stdout;
+} else {
+  const res = run(gate.fetch, undefined);
+  fetched = res.stdout;
+  if (res.exitCode !== 0) {
+    // Preserve the real behaviour. Deliberately NOT cached — a transient
+    // failure (rate limit, expired token) must not become a permanent answer.
+    console.error(`[tool-cache MISS ${key} — fetch exited ${res.exitCode}, NOT cached]`);
+    process.stdout.write(fetched);
+    process.exit(res.exitCode);
+  }
+  if (fetched.trim() === "") {
+    // An empty result is usually a wrong selector or a silently failed lookup;
+    // caching it creates a sticky, invisible negative for every later reader.
+    console.error(`[tool-cache MISS ${key} — empty result, NOT cached]`);
+  } else {
+    // nowMs is read here, at the process edge — lib/ keeps its no-clock
+    // discipline so it stays sandbox-safe.
+    cachePut(dir, key, { command: gate.fetchText, writerId: writerOrFlag, stdout: fetched, exitCode: 0 }, Date.now());
+    console.error(`[tool-cache MISS ${key} — stored ${fetched.length}B]`);
+  }
 }
 
-// An empty result is not stored. It is usually a wrong selector or a silently
-// failed lookup, and caching it makes a sticky, invisible negative that every
-// later reader inherits — the expensive kind of wrong.
-if (stdout.trim() === "") {
-  console.error(`[tool-cache MISS ${key} — empty result, NOT cached]`);
-  process.stdout.write(stdout);
-  process.exit(0);
+// Apply the filter chain to whatever the fetch produced (cached or fresh).
+let out = fetched;
+let finalExit = 0;
+for (const f of gate.filters) {
+  const res = run(f, out);
+  out = res.stdout;
+  if (res.exitCode !== 0) { finalExit = res.exitCode; break; }
 }
 
-// nowMs is read here, at the process edge, rather than inside lib/ — the
-// library keeps its no-clock discipline so it stays sandbox-safe.
-cachePut(dir, key, { command, writerId: writerOrFlag, stdout, exitCode }, Date.now());
-console.error(`[tool-cache MISS ${key} — stored ${stdout.length}B]`);
-process.stdout.write(stdout);
+process.stdout.write(out);
+process.exit(finalExit);

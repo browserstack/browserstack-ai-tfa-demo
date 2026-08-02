@@ -366,3 +366,42 @@ test("deployShas prefers the explicit field and falls back to the summary", asyn
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+// Observed live: a coordinator wrote back a 6-PR window and the file kept ONE,
+// with `pr: undefined`, while still flagging the search trustworthy. Cause:
+// String(undefined) is the constant "undefined", so every numberless PR
+// collided on a single dedupe key.
+test("numberless PRs do not collapse into one another", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-prkey-"));
+  const { evidencePathFor, initEvidenceFile, contributeGithubEvidence, readEvidenceFile } =
+    await import("../lib/evidence-file.mjs");
+  const p = evidencePathFor("b-prkey", dir);
+  initEvidenceFile(p, "b-prkey", 1);
+
+  contributeGithubEvidence(p, "w1", "org/r", {
+    prsSearched: true,
+    prsInWindow: [{ title: "first" }, { title: "second" }, { title: "third" }],
+  }, 2);
+  const got = readEvidenceFile(p).github["org/r"].prsInWindow;
+  assert.equal(got.length, 3, "three distinct unnumbered PRs must all survive");
+  assert.deepEqual(got.map((x) => x.title), ["first", "second", "third"]);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("numbered PRs still merge across writers, string or numeric", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-prnum-"));
+  const { evidencePathFor, initEvidenceFile, contributeGithubEvidence, readEvidenceFile } =
+    await import("../lib/evidence-file.mjs");
+  const p = evidencePathFor("b-prnum", dir);
+  initEvidenceFile(p, "b-prnum", 1);
+
+  contributeGithubEvidence(p, "w1", "org/r", { prsInWindow: [{ pr: "#10", title: "a" }] }, 2);
+  contributeGithubEvidence(p, "w2", "org/r", { prsInWindow: [{ pr: 10, title: "a-updated" }] }, 3);
+
+  const got = readEvidenceFile(p).github["org/r"].prsInWindow;
+  assert.equal(got.length, 1, "'#10' and 10 are the same PR");
+  assert.equal(got[0].title, "a-updated", "later writer wins");
+
+  rmSync(dir, { recursive: true, force: true });
+});

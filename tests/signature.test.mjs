@@ -106,3 +106,36 @@ test("clusterAndPersist writes cluster_id back to the CSV", async () => {
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+// Siblings are only cheap because they confirm someone else's hypothesis.
+// Dispatched without one they re-investigate from scratch — measured at 22.7
+// calls vs 8.0 for the representative they were meant to be a fraction of.
+test("siblingPreSeed refuses to seed from an unfinished representative", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-seed-"));
+  const csvState = await import("../lib/csv-state.mjs");
+  const { siblingPreSeed } = await import("../lib/signature.mjs");
+  const csv = join(dir, "s.csv");
+  csvState.seed(csv, "b", [
+    { test_id: 1, test_name: "rep", failure: { error_summary: "boom" } },
+    { test_id: 2, test_name: "sib", failure: { error_summary: "boom" } },
+  ]);
+
+  const early = siblingPreSeed(csv, csvState, "c-1", 1);
+  assert.equal(early.ok, false, "rep is still pending — must block");
+  assert.match(early.reason, /not resolved/);
+
+  // Resolved but with no root_cause is equally useless to a sibling.
+  csvState.flip(csv, 1, { rca_done: "resolved" }, 1000);
+  const empty = siblingPreSeed(csv, csvState, "c-1", 1);
+  assert.equal(empty.ok, false);
+  assert.match(empty.reason, /no root_cause/);
+
+  csvState.flip(csv, 1, { rca_done: "resolved", root_cause: "PR #42 broke seeding", failure_type: "PRODUCT_BUG" }, 2000);
+  const ok = siblingPreSeed(csv, csvState, "c-1", 1);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.pre_seed.cause, "PR #42 broke seeding");
+  assert.equal(ok.pre_seed.failure_type, "PRODUCT_BUG");
+  assert.match(ok.pre_seed.instruction, /Do not adopt it/, "independence must travel with the seed");
+
+  rmSync(dir, { recursive: true, force: true });
+});

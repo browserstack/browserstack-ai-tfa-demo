@@ -400,6 +400,27 @@ every dispatch (representative and sibling) must be told to read it first.
 
 ## Step 5 — fan-out (fully autonomous)
 
+**ORDER MATTERS: representative first, siblings only after it lands.** For each
+cluster, dispatch the representative, wait for its row to go terminal, then
+dispatch its siblings carrying `pre_seed` from
+`siblingPreSeed(csvPath, csvState, clusterId, representativeId)`. Clusters are
+independent, so they still run concurrently *with each other* — the barrier is
+per cluster, not global.
+
+A sibling is only cheap because it confirms a hypothesis someone else already
+established. Dispatch one without that hypothesis and "one-turn confirm"
+degenerates into a full independent investigation *with the sibling framing on
+top*, so it costs MORE than the representative it was meant to be a fraction of.
+Measured on a real run: siblings averaged **22.7 tool calls and 2.2 turns**
+against **8.0 and 2.0** for the representative, and one burned **60 calls over
+17 minutes**. Nothing ordered them after their rep and nothing refused to
+dispatch without a seed, so it degraded silently.
+
+`siblingPreSeed` returns `{ok:false, reason}` when the representative is not
+resolved or recorded no `root_cause` — **do not dispatch that sibling yet**.
+Never hand-roll the seed: the guard is the only thing standing between a
+clustered run and O(tests) cost.
+
 Drive the cluster work-list, **`concurrency` (default 20) at a time**:
 representatives deep, siblings one-turn-confirm. Eagerly persist to the CSV/WAL
 (claim → heartbeat → flip) so the run is resumable.

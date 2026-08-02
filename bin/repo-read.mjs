@@ -22,7 +22,7 @@
 // clone degrades to exactly the previous behaviour.
 
 import { execFileSync } from "node:child_process";
-import { readFileAt } from "../lib/repo-source.mjs";
+import { readFileAt, discoverWorkspaceRoot } from "../lib/repo-source.mjs";
 import { toolCacheDirFor, cacheKey, cacheGet, cachePut } from "../lib/tool-cache.mjs";
 
 const [, , buildId, writerId, repo, sha, path, ...flags] = process.argv;
@@ -32,29 +32,49 @@ if (!buildId || !writerId || !repo || !sha || !path) {
   process.exit(2);
 }
 
-// NO DEFAULTS for either of these. The plugin is generic over product and
-// infra: which repos exist, where they are checked out, and what branch ships
-// are facts the CONNECTOR SKILL owns and the gate resolves — never something
-// this plugin should assume. Baking in a workspace path or a branch name would
-// silently make the plugin work for exactly one product on exactly one
-// machine, which is the failure mode the whole capability-manifest design
-// exists to avoid.
-const workspaceRoot = process.env.RCA_WORKSPACE_ROOT;
+// NO HARDCODED WORKSPACE OR BRANCH. Which repos exist, where they are checked
+// out, and what branch ships are facts the CONNECTOR SKILL owns and the gate
+// resolves. Baking either in would make the plugin work for exactly one
+// product on one machine — the coupling the capability-manifest design exists
+// to avoid.
+//
+// Resolution order, cheapest and most authoritative first:
+//   1. the evidence file's `localRepos` — resolved ONCE at the gate, so a
+//      coordinator does no filesystem probing at all;
+//   2. RCA_WORKSPACE_ROOT, if the caller set it;
+//   3. a bounded structural guess (this dir, its parent, grandparent),
+//      accepted only if it actually contains the repo being asked for.
+// Anything else: give up and use the network. Guessing harder risks reading
+// an unrelated checkout, which is silently wrong rather than merely slow.
+let workspaceRoot = process.env.RCA_WORKSPACE_ROOT;
+let rootSource = workspaceRoot ? "RCA_WORKSPACE_ROOT" : null;
+
+const evidencePath = process.env.RCA_EVIDENCE_FILE;
+if (!workspaceRoot && evidencePath) {
+  try {
+    const { readEvidenceFile } = await import("../lib/evidence-file.mjs");
+    const lr = readEvidenceFile(evidencePath)?.localRepos;
+    if (lr?.workspaceRoot) { workspaceRoot = lr.workspaceRoot; rootSource = "evidence-file (resolved at gate)"; }
+  } catch { /* evidence file optional */ }
+}
+
 if (!workspaceRoot) {
-  console.error("[repo-read] RCA_WORKSPACE_ROOT is not set.");
-  console.error("  It must come from the gate/connector skill — the plugin does not assume a workspace layout.");
-  console.error("  Set it to the directory holding the local clones, e.g. RCA_WORKSPACE_ROOT=$(pwd)/..");
-  process.exit(2);
+  const here = new URL("..", import.meta.url).pathname;
+  const d = discoverWorkspaceRoot({ repos: [repo], from: here, maxTries: 3 });
+  if (d.root) { workspaceRoot = d.root; rootSource = `auto-discovered (${d.tried.length} tr${d.tried.length === 1 ? "y" : "ies"})`; }
+  else console.error(`[repo-read] no local workspace found — ${d.reason}`);
 }
 // Only needed to widen a fetch on a miss; a sha-only fetch is attempted when
 // absent. Supplied by the connector skill, which knows the shipping branch.
 const branch = process.env.RCA_SHIPPING_BRANCH || undefined;
 const allowFetch = flags.includes("--fetch");
 
-const local = readFileAt({ repo, sha, path, workspaceRoot, branch, allowFetch });
+const local = workspaceRoot
+  ? readFileAt({ repo, sha, path, workspaceRoot, branch, allowFetch })
+  : { ok: false, source: "remote-needed", reason: "no local workspace resolved" };
 
 if (local.ok) {
-  console.error(`[repo-read LOCAL ${repo}@${sha.slice(0, 8)} ${local.content.length}B — no network]`);
+  console.error(`[repo-read LOCAL ${repo}@${sha.slice(0, 8)} ${local.content.length}B — no network, root via ${rootSource}]`);
   process.stdout.write(local.content);
   process.exit(0);
 }

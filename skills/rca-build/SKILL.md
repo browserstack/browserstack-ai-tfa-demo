@@ -48,7 +48,13 @@ pass. The gate has two parts; both run before any RCA work starts.
 Run:
 
 ```bash
-ls .claude/skills/ ~/.claude/skills/ 2>/dev/null
+# cwd, the WORKSPACE ROOT above it, and the user dir. The middle one matters:
+# when this plugin is itself a repo inside the workspace, cwd is the plugin and
+# the product's connector skills sit one or two levels UP, so a bare
+# `ls .claude/skills/` finds nothing and the run silently degrades to raw MCP
+# tools with best-effort repo guesses. Measured: it missed all three real
+# connectors on this workspace.
+ls .claude/skills/ ../.claude/skills/ ../../.claude/skills/ ~/.claude/skills/ 2>/dev/null
 ```
 
 For each `SKILL.md` found, open it and look for a **Capability declaration**
@@ -332,8 +338,9 @@ gathers it*.
 
    ```js
    const d = discoverWorkspaceRoot({ repos: reposValidated, from: pluginRoot });
+   const { pins } = deployShas(path);          // structured, not prose
    const localRepos = d.root
-     ? resolveLocalRepos({ repos: reposValidated, pins: deployStateShas, workspaceRoot: d.root })
+     ? resolveLocalRepos({ repos: reposValidated, pins, workspaceRoot: d.root })
      : {};
    setLocalRepos(path, { workspaceRoot: d.root, repos: localRepos }, nowMs);
    ```
@@ -344,6 +351,12 @@ gathers it*.
    because guessing harder risks reading an unrelated checkout, which is
    silently wrong rather than merely slow. Finding nothing is a fine outcome:
    every read falls back to the cached `gh` path.
+
+   Set `deployState.sha` explicitly when you write each repo's entry.
+   `deployShas()` falls back to parsing the prose `summary`, but that is a
+   safety net, not the contract: when the wording drifts it returns an empty
+   map, and every read silently degrades to the network while still looking
+   like it worked.
 
    `pins` must be the **build-time commit shas** from `deployState`, never
    branch names. A developer's clone is routinely stale (12 commits, measured),

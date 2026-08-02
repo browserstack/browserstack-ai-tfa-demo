@@ -337,3 +337,32 @@ test("stalenessOf refuses to call a future timestamp fresh", async () => {
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+// The sha lived only in prose, so the one consumer that needs it structurally
+// got an empty map — silently downgrading every local read to a network call.
+test("deployShas prefers the explicit field and falls back to the summary", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-pins-"));
+  const { evidencePathFor, initEvidenceFile, setGithubEvidence, deployShas } =
+    await import("../lib/evidence-file.mjs");
+  const p = evidencePathFor("b-pins", dir);
+  initEvidenceFile(p, "b-pins", 1);
+
+  setGithubEvidence(p, "org/explicit", { deployState: { sha: "abc1234", summary: "" } }, 2);
+  setGithubEvidence(p, "org/prose", {
+    deployState: { summary: "Branch tip on main at build start = cd88535b (deploy proxy). Redeploy stamped 260731135020Z." },
+  }, 3);
+  setGithubEvidence(p, "org/none", { deployState: { summary: "no sha here" } }, 4);
+
+  const { pins, source } = deployShas(p);
+  assert.equal(pins["org/explicit"], "abc1234");
+  assert.equal(source["org/explicit"], "field");
+  assert.equal(pins["org/prose"], "cd88535b", "must recover the sha from prose");
+  assert.equal(source["org/prose"], "parsed-from-summary");
+  assert.equal(pins["org/none"], undefined, "absent must stay absent, not guess");
+
+  // The timestamp 260731135020Z is hex-ish and long — anchoring on the
+  // build-start phrase is what stops it being mistaken for a commit.
+  assert.notEqual(pins["org/prose"], "260731135020");
+
+  rmSync(dir, { recursive: true, force: true });
+});

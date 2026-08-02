@@ -206,6 +206,20 @@ listTestIds(buildId=<id>, status="failed", includeFailureDetail=true)
 (`failure.{category, error_summary, file_path, …}`) — the seed for clustering,
 so no per-test probe turns are needed.
 
+**First, sweep the state directory** (`lib/state-dir.mjs` → `hardenStateDir(dir)`).
+Per-write hardening only tightens the file being written, so artifacts from a
+build analysed before that landed keep their old permissions forever — a
+completed build is never rewritten. Found in practice: the directory itself was
+`drwxr-xr-x` with six `0644` files inside, holding root causes, culprit PRs and
+log excerpts in a shared OS temp dir. The sweep is cheap and idempotent, so run
+it unconditionally; it never throws, skipping anything it cannot chmod.
+
+Nothing deletes these artifacts when a run finishes, and that is deliberate —
+resume is keyed on `buildId` → same path, so cleaning up on completion would
+break `pending-resume`. `pruneStateDir(dir, nowMs)` exists for growth (default
+7 days, far longer than any run) but is **not** automatic: these files *are* the
+resume state. Call it explicitly, with `dryRun: true` first.
+
 Resolve the state file with `lib/csv-state.mjs` → `csvPathFor(buildId,
 config.paths.stateDir)` — the **build id is in the filename** and the default
 directory is **OS temp** (`<tmpdir>/bstack-rca/rca-state.<buildId>.csv`), so

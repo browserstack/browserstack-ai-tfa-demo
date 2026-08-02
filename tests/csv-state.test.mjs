@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -206,4 +206,34 @@ test("csvPathFor: sanitizes hostile ids and handles empty", () => {
 test("csvPathFor: stateDir override wins over temp", () => {
   const p = csvPathFor("b1", "/ci/artifacts");
   assert.equal(p, join("/ci/artifacts", "rca-state.b1.csv"));
+});
+
+// A foreign header must fail loudly, because writeRows only emits COLUMNS and
+// would silently drop anything it didn't recognise. A real legacy 10-column
+// file lost test_id and test_name this way while reporting success.
+test("readRows refuses a foreign schema instead of silently dropping columns", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-legacy-"));
+  const p = join(dir, "legacy.csv");
+  writeFileSync(p, "test_id,test_name,rca_done\nt1,login spec,pending\n", "utf8");
+
+  assert.throws(() => readRows(p), /unrecognised column/i,
+    "must name the problem rather than mangle the file");
+  assert.throws(() => readRows(p), /test_id/, "must say WHICH columns");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Known legacy spellings are still accepted — the guard is for genuinely
+// foreign schemas, not for every older name.
+test("readRows maps aliased header names rather than rejecting them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-alias-"));
+  const p = join(dir, "aliased.csv");
+  writeFileSync(p, "test_run_id,status,thread_id\n42,pending,th-1\n", "utf8");
+
+  const rows = readRows(p);
+  assert.equal(rows[0].testRunId, "42");
+  assert.equal(rows[0].rca_done, "pending");
+  assert.equal(rows[0].threadId, "th-1");
+
+  rmSync(dir, { recursive: true, force: true });
 });

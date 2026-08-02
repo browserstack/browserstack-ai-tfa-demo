@@ -14,6 +14,10 @@
 // reasoning about code that never shipped. Get the sha from the evidence
 // file's `deployState` (branch tip at build start), which Step 4 records.
 //
+// Generic by construction: the workspace root and shipping branch are INPUTS
+// (RCA_WORKSPACE_ROOT / RCA_SHIPPING_BRANCH) supplied by the gate and the
+// product's connector skill. This file names no repo, no branch and no path.
+//
 // Remote results still go through the tool cache, so a repo with no local
 // clone degrades to exactly the previous behaviour.
 
@@ -28,8 +32,23 @@ if (!buildId || !writerId || !repo || !sha || !path) {
   process.exit(2);
 }
 
-const workspaceRoot = process.env.RCA_WORKSPACE_ROOT ?? "/Users/harshitm/Desktop/browserstack";
-const branch = process.env.RCA_SHIPPING_BRANCH ?? "observability_pre_prod";
+// NO DEFAULTS for either of these. The plugin is generic over product and
+// infra: which repos exist, where they are checked out, and what branch ships
+// are facts the CONNECTOR SKILL owns and the gate resolves — never something
+// this plugin should assume. Baking in a workspace path or a branch name would
+// silently make the plugin work for exactly one product on exactly one
+// machine, which is the failure mode the whole capability-manifest design
+// exists to avoid.
+const workspaceRoot = process.env.RCA_WORKSPACE_ROOT;
+if (!workspaceRoot) {
+  console.error("[repo-read] RCA_WORKSPACE_ROOT is not set.");
+  console.error("  It must come from the gate/connector skill — the plugin does not assume a workspace layout.");
+  console.error("  Set it to the directory holding the local clones, e.g. RCA_WORKSPACE_ROOT=$(pwd)/..");
+  process.exit(2);
+}
+// Only needed to widen a fetch on a miss; a sha-only fetch is attempted when
+// absent. Supplied by the connector skill, which knows the shipping branch.
+const branch = process.env.RCA_SHIPPING_BRANCH || undefined;
 const allowFetch = flags.includes("--fetch");
 
 const local = readFileAt({ repo, sha, path, workspaceRoot, branch, allowFetch });

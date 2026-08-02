@@ -1,12 +1,13 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, chmodSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   csvPathFor,
   seed,
   readRows,
+  writeRows,
   claim,
   heartbeat,
   flip,
@@ -234,6 +235,23 @@ test("readRows maps aliased header names rather than rejecting them", () => {
   assert.equal(rows[0].testRunId, "42");
   assert.equal(rows[0].rca_done, "pending");
   assert.equal(rows[0].threadId, "th-1");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// mkdirSync's `mode` applies on CREATE only, so a directory made before the
+// hardening landed keeps 0755 forever — with root causes and culprit PRs in it.
+test("writeRows tightens a pre-existing world-readable state dir", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-perm-"));
+  const loose = join(dir, "loose");
+  mkdirSync(loose, { mode: 0o755 });
+  chmodSync(loose, 0o755); // as an older version would have left it
+
+  const csv = join(loose, "rca-state.b.csv");
+  writeRows(csv, []);
+
+  assert.equal(statSync(loose).mode & 0o777, 0o700, "existing dir must be tightened, not left open");
+  assert.equal(statSync(csv).mode & 0o777, 0o600);
 
   rmSync(dir, { recursive: true, force: true });
 });

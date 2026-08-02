@@ -209,7 +209,21 @@ read-only and has no side effects, so a read is always safe to repeat.
    - `TFA agent run failed` — the wedge. Unrelated to message size (a
      240-char message wedged like a 1500-char one). Fix: resubmit on the same
      thread, per 4b.
-   - `turn expired or not found` — observed on an over-cap (~2000-char)
+   - **`turnId` exists ONLY on a soft-`PENDING` turn.** TFA returns
+`{status, threadId, turnId}` for PENDING and omits `turnId` entirely on
+`RESOLVED` / `NEEDS_INFO` — so reporting `turn_id: not available` on a resolved
+turn is correct, not a gap. What matters: if you end the test
+`pending-resume`, you MUST carry the `turnId` from the PENDING response into
+`flip()`, because the resume path drains that exact turn with
+`getTfaTurnResult(testRunId, turnId)` before submitting anything new. Without
+it the resume submits blind onto a thread that still has a turn in flight.
+
+**`viewRca` comes back from TFA as a generic hostname**, not a per-build deep
+link. Pass through whatever TFA returns; do NOT hand-build a link that looks
+more specific than the data supports. The real per-build report URL is produced
+once at the end of the run by `triggerRcaReport`, not per test.
+
+`turn expired or not found` — observed on an over-cap (~2000-char)
      submit. The text names a thread/turn problem, which reads as a wedge and
      sends you down the wrong path; it is really a size rejection. If you see
      this, shorten and resend before assuming the thread is broken.

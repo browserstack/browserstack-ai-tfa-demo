@@ -255,3 +255,32 @@ test("writeRows tightens a pre-existing world-readable state dir", () => {
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+// turnId only exists on a soft-PENDING turn, which is exactly the case that
+// produces pending-resume. Without it the resume path submits blind onto a
+// thread that still has a turn in flight — and the row looks healthy in the CSV.
+test("flipping to pending-resume without a turnId warns loudly", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-resume-"));
+  const csv = join(dir, "s.csv");
+  seed(csv, "b", [{ test_id: 1, test_name: "t" }, { test_id: 2, test_name: "u" }]);
+
+  const warnings = [];
+  const orig = console.warn;
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    flip(csv, 1, { rca_done: "pending-resume" }, 1000);
+    flip(csv, 2, { rca_done: "pending-resume", turnId: "abc-123" }, 1000);
+  } finally {
+    console.warn = orig;
+  }
+
+  const noTurn = warnings.filter((w) => /NO turnId/.test(w));
+  assert.equal(noTurn.length, 1, "exactly the seedless row must warn");
+  assert.match(noTurn[0], /submit blind/);
+  assert.equal(readRows(csv).find((r) => r.testRunId === "2").turnId, "abc-123");
+
+  // Still resumable either way — warning, not rejection.
+  assert.equal(readRows(csv).find((r) => r.testRunId === "1").rca_done, "pending-resume");
+
+  rmSync(dir, { recursive: true, force: true });
+});

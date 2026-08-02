@@ -405,3 +405,46 @@ test("numbered PRs still merge across writers, string or numeric", async () => {
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+// Prompting agents to use evidence-show wasn't enough: 21 of 25 reads on a real
+// run were raw cat/grep/Read against the base path, each silently missing every
+// contribution shard. The file now announces that in its own first bytes.
+test("a raw read of the base file announces that it is partial", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-warn-"));
+  const { evidencePathFor, initEvidenceFile, setGithubEvidence, readEvidenceFile, readBaseFile } =
+    await import("../lib/evidence-file.mjs");
+  const { readFileSync } = await import("node:fs");
+  const p = evidencePathFor("b-warn", dir);
+  initEvidenceFile(p, "b-warn", 1);
+  setGithubEvidence(p, "org/r", { deployState: { sha: "abc1234" } }, 2);
+
+  const raw = readFileSync(p, "utf8");
+  const head = raw.slice(0, 400);
+  assert.match(head, /PARTIAL VIEW/, "warning must be in the first bytes a cat/head shows");
+  assert.match(raw, /evidence-show\.mjs/, "must name the command that gives the real view");
+
+  // Markers are documentation, never data — nothing downstream should see them.
+  for (const doc of [readBaseFile(p), readEvidenceFile(p)]) {
+    assert.equal(doc._READ_ME_FIRST, undefined);
+    assert.equal(doc._USE_INSTEAD, undefined);
+    assert.equal(doc._WHY, undefined);
+  }
+  // And the real content still round-trips.
+  assert.equal(readEvidenceFile(p).github["org/r"].deployState.sha, "abc1234");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("markers survive repeated writes without accumulating", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-warn2-"));
+  const { evidencePathFor, initEvidenceFile, setGithubEvidence } = await import("../lib/evidence-file.mjs");
+  const { readFileSync } = await import("node:fs");
+  const p = evidencePathFor("b-w2", dir);
+  initEvidenceFile(p, "b-w2", 1);
+  for (let i = 0; i < 3; i++) setGithubEvidence(p, `org/r${i}`, { deployState: { sha: "abc1234" } }, i + 2);
+
+  const raw = readFileSync(p, "utf8");
+  assert.equal(raw.split("_READ_ME_FIRST").length - 1, 1, "exactly one marker, not one per write");
+
+  rmSync(dir, { recursive: true, force: true });
+});

@@ -24,6 +24,85 @@ anything again.**
 Config (concurrency, turn-cap, paths, evidence registry) lives in
 `config/rca.config.json`. State lives in the CSV/WAL spine (`lib/csv-state.mjs`).
 
+## API reference — read THIS, do not grep the source
+
+Every signature this run needs, in one place. Measured reason it exists: on one
+run **92 of 407 tool calls (23%, 5.1 per test)** were agents re-deriving this —
+`grep -n "^export function" lib/…`, `cat config/…`, repeated `ls .claude/skills/`.
+The previous run spent 13. The jump came from adding helpers faster than the
+docs described them, so the plugin taxed every agent to learn itself.
+
+Everything below is product-neutral: build ids, repos, branches, workloads and
+paths are all **inputs**, supplied by the gate and the connector skills.
+
+**State spine — `lib/csv-state.mjs`**
+```
+csvPathFor(buildId, stateDir="")            → <stateDir|tmpdir>/bstack-rca/rca-state.<buildId>.csv
+seed(csvPath, buildId, tests)               → rows; idempotent, preserves terminal rows
+readRows(csvPath) / writeRows(csvPath,rows) throws on a foreign header rather than dropping columns
+claim(csvPath, testRunId, worker, nowMs)    → false if already claimed
+heartbeat(csvPath, testRunId, worker, nowMs)
+flip(csvPath, testRunId, fields, nowMs)     → false if rca_done missing/non-terminal
+reaper(csvPath, ttlSec, nowMs)              → reclaimed ids
+pendingRows(csvPath)                        → pending + pending-resume
+```
+
+**Clustering — `lib/signature.mjs`**
+```
+clusterAndPersist(csvPath, csvStateModule)          → clusters; WRITES cluster_id back. Use this.
+siblingPreSeed(csvPath, csvState, clusterId, repId) → {ok, pre_seed} | {ok:false, reason}
+clusterRows(rows)                                   → {rows, clusters}; mutates, does NOT persist
+```
+
+**Shared evidence — `lib/evidence-file.mjs`**
+```
+evidencePathFor(buildId, stateDir="")   initEvidenceFile(path, buildId, nowMs)
+setGithubEvidence(path, repo, entry, nowMs)      setLogsEvidence(path, workload, entry, nowMs)
+setBaseline(path, baseline, suspectWindow, nowMs) setLocalRepos(path, localRepos, nowMs)
+contributeGithubEvidence(path, writerId, repo, patch, nowMs)   ← coordinators write HERE
+contributeLogsEvidence(path, writerId, workload, patch, nowMs)
+deployShas(pathOrDoc) → {pins:{repo:sha}, source}   recomputeCoverage(path, {repos,workloads}, nowMs)
+readEvidenceFile(path) folds base+shards · readBaseFile(path) is base ONLY
+```
+
+**Local repo reads — `lib/repo-source.mjs`**
+```
+discoverWorkspaceRoot({repos, from, explicit, maxTries=3}) → {root, matched, tried, reason}
+resolveLocalRepos({repos, pins, workspaceRoot})            → {repo:{usable, sha|reason}}
+readFileAt({repo, sha, path, workspaceRoot})               → sha ONLY; a branch name is refused
+```
+
+**Housekeeping — `lib/state-dir.mjs`**
+```
+hardenStateDir(dir)                       run once at gate start; idempotent
+pruneStateDir(dir, nowMs, {maxAgeMs, dryRun})   NOT automatic — these files are the resume state
+```
+
+**Routing / output — `lib/routing.mjs`, `lib/glimpse.mjs`, `lib/evidence-cache.mjs`**
+```
+loadConfig(configPath)  buildManifest(config, discovered)  routeAsks(asks, config, manifest)
+renderGlimpseFromCsv(csvPath, {buildId})    resolveBaseline(lastGreenRef, fallbackRef)
+```
+
+**Commands — `bin/`**
+```
+node bin/evidence-show.mjs <evidenceFile> [--summary | --prs | --repo <org/repo>]
+node bin/repo-read.mjs <buildId> <writerId> <org/repo> <sha> <path> [--fetch]
+node bin/cached-exec.mjs <buildId> <writerId> '<command>'      (pipe OUTSIDE the wrapper)
+node bin/cached-mcp.mjs <buildId> get|put <tool> '<argsJson>'
+```
+
+**Constants worth knowing**
+```
+csv-state.COLUMNS    the canonical column set; writeRows emits exactly these
+csv-state.RESUMABLE  "pending-resume" — a SOFT terminal: claim released, row still picked up
+routing.TEST_LOGS    the ask type TFA owns; never gather it, always skip
+```
+
+**Config** — `config/rca.config.json`: `concurrency`, `turnCap`, `softPendingDrain`,
+`reaperHeartbeatTtlSec`, `paths.stateDir`, `evidenceRouting`. Read it once at the
+gate and pass the values down; a coordinator should never need to open it.
+
 ## Step 0 — input
 
 Parse the build id from the invocation args. Accepted forms: a bare build id, a

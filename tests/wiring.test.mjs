@@ -74,3 +74,44 @@ test("gate-critical lib exports are actually invoked outside tests", () => {
     assert.ok(uses >= 2, `${fn} appears ${uses}x outside tests — defined but never driven`);
   }
 });
+
+// The root cause of the 23% discovery tax was DRIFT: helpers were added faster
+// than the docs described them, so agents grepped lib/ at runtime to learn the
+// API. Documenting it once fixes today; this test keeps it fixed.
+test("every exported lib helper appears in the SKILL's API reference", () => {
+  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+
+  // Internal-by-convention: replay/test seams and trivial helpers a coordinator
+  // never calls. Anything NOT listed here must be documented.
+  const INTERNAL = new Set([
+    "emptyEvidenceFile", "writeEvidenceFile", "contribDirFor", "contribPathFor",
+    "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache",
+    "replaySubmit", "replayRead", "normalize", "computeSignature",
+    "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
+    "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
+    "unavailableCapabilities", "renderGlimpse", "toolCacheDirFor", "cacheKey",
+    "isCacheable", "splitPipeline",
+    // tool-cache module internals — agents drive the cache through
+    // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
+    "isRunnable", "tokenize", "isCacheableMcp", "redact", "cacheGet",
+    "cachePut", "cacheStats", "mcpCacheKey",
+  ]);
+
+  const undocumented = [];
+  for (const f of readdirSync(join(ROOT, "lib")).filter((f) => f.endsWith(".mjs"))) {
+    const src = readFileSync(join(ROOT, "lib", f), "utf8");
+    for (const m of src.matchAll(/^export (?:function|const) ([A-Za-z0-9_]+)/gm)) {
+      const name = m[1];
+      if (INTERNAL.has(name)) continue;
+      if (!skill.includes(name)) undocumented.push(`${f}:${name}`);
+    }
+  }
+
+  assert.deepEqual(
+    undocumented,
+    [],
+    `undocumented helper(s): ${undocumented.join(", ")}. Add them to the SKILL's ` +
+      `"API reference" section — an agent that can't find a signature there greps ` +
+      `lib/ at runtime, which cost 92 of 407 tool calls on one measured run.`,
+  );
+});

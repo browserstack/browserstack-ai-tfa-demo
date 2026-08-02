@@ -240,6 +240,26 @@ write an empty CSV, report "no failed tests", stop.
 
 ## Step 3 — failure-signature clustering (see references/clustering.md)
 
+Use **`clusterAndPersist(csvPath, csvStateModule)`** (`lib/signature.mjs`), not
+`clusterRows` directly:
+
+```js
+const clusters = clusterAndPersist(csvPath, await import("./lib/csv-state.mjs"));
+```
+
+`clusterRows` assigns `cluster_id` **in place** and returns `{rows, clusters}`,
+so `const { clusters } = clusterRows(rows)` gives you working cluster objects
+while every `cluster_id` is silently discarded — the CSV keeps empty cluster
+columns and the run degrades to **one coordinator per test**, losing the whole
+representative/sibling collapse. That is measured, not theoretical: a real run
+went 12 tests → 26 subagents and 30 minutes with the clustering "done" but
+never written. `clusterAndPersist` writes back and verifies the count, so it
+cannot forget.
+
+Then verify before fan-out: **if `cluster_id` is empty on any row, Step 3 did
+not take effect** — do not proceed, the run would silently cost O(tests)
+instead of O(causes).
+
 Compute a failure signature per row and assign `cluster_id` (`lib/signature.mjs`).
 Each cluster gets one **representative** (full multi-turn loop) and `N−1`
 **siblings** (pre-seeded one-turn confirm against their own logs). This collapses

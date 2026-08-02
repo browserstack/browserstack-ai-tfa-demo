@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   normalize,
   computeSignature,
@@ -76,4 +79,30 @@ test("clusterRows stamps cluster_id onto every row", () => {
   clusterRows(rows);
   assert.ok(rows.every((r) => r.cluster_id));
   assert.notEqual(rows[0].cluster_id, rows[1].cluster_id);
+});
+
+// clusterRows mutates its input; a caller that destructures only `clusters`
+// silently loses every cluster_id. Two independent callers did exactly that on
+// the same day, collapsing a clustered run into one coordinator per test.
+test("clusterAndPersist writes cluster_id back to the CSV", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-cap-"));
+  const csvState = await import("../lib/csv-state.mjs");
+  const { clusterAndPersist } = await import("../lib/signature.mjs");
+  const csv = join(dir, "s.csv");
+  csvState.seed(csv, "b", [
+    { test_id: 1, test_name: "a", failure: { error_summary: "boom" } },
+    { test_id: 2, test_name: "b", failure: { error_summary: "boom" } },
+    { test_id: 3, test_name: "c", failure: { error_summary: "other" } },
+  ]);
+
+  const clusters = clusterAndPersist(csv, csvState);
+  assert.equal(clusters.length, 2, "two distinct signatures");
+
+  // The whole point: re-READ from disk, don't trust the in-memory rows.
+  const reread = csvState.readRows(csv);
+  assert.ok(reread.every((r) => r.cluster_id), "every row must have a persisted cluster_id");
+  assert.equal(reread[0].cluster_id, reread[1].cluster_id, "same signature → same cluster");
+  assert.notEqual(reread[0].cluster_id, reread[2].cluster_id);
+
+  rmSync(dir, { recursive: true, force: true });
 });

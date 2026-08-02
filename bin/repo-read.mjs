@@ -49,10 +49,13 @@ if (!buildId || !writerId || !repo || !sha || !path) {
 let workspaceRoot = process.env.RCA_WORKSPACE_ROOT;
 let rootSource = workspaceRoot ? "RCA_WORKSPACE_ROOT" : null;
 
-const evidencePath = process.env.RCA_EVIDENCE_FILE;
-if (!workspaceRoot && evidencePath) {
+// Derived from the buildId we already have, so there is no env var for a
+// dispatch prompt to forget; an explicit override still wins.
+if (!workspaceRoot) {
   try {
-    const { readEvidenceFile } = await import("../lib/evidence-file.mjs");
+    const { readEvidenceFile, evidencePathFor } = await import("../lib/evidence-file.mjs");
+    const evidencePath = process.env.RCA_EVIDENCE_FILE
+      || evidencePathFor(buildId, process.env.RCA_STATE_DIR ?? "");
     const lr = readEvidenceFile(evidencePath)?.localRepos;
     if (lr?.workspaceRoot) { workspaceRoot = lr.workspaceRoot; rootSource = "evidence-file (resolved at gate)"; }
   } catch { /* evidence file optional */ }

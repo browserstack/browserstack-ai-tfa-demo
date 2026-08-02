@@ -124,6 +124,16 @@ read-only and has no side effects, so a read is always safe to repeat.
      filters share one cached fetch:
      `node .../cached-exec.mjs "$B" 3895 'gh api repos/o/r/contents/f' | jq -r .content | head -40`
      One fetch per call — the wrapper refuses `;`/`&&`/backticks/redirects.
+   - **Repo file contents** — use the repo reader instead of `gh api
+     .../contents/...` directly. It serves the file from a local clone at the
+     pinned commit when the gate found one (~37ms, no network), and otherwise
+     falls through to the same cached `gh` call, so it is never worse:
+     `node <pluginRoot>/bin/repo-read.mjs <buildId> <testRunId> <org/repo> <sha> <path>`
+     The `<sha>` MUST be the commit sha from the evidence file's `deployState`
+     — a **branch name is refused**, because local clones are routinely stale
+     and would hand you code that never shipped while looking perfectly fine.
+     Check `localRepos` in the evidence file to see which repos are local; you
+     do not need to probe the filesystem, the gate already resolved it.
    - **MCP data queries** (grafana/VictoriaLogs, `listTestIds`,
      `getFailureLogs`) — check first, and store your digest on a miss:
      `node <pluginRoot>/bin/cached-mcp.mjs <buildId> get <tool> '<argsJson>'`

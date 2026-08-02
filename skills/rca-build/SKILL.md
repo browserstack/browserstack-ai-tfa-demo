@@ -310,7 +310,35 @@ gathers it*.
    baseline (never-green suite) → fall back to a configured baseline ref and
    note the weaker grounding — this note travels into the file, not just a
    spoken log line, so every coordinator sees it.
-6. `recomputeCoverage(path, {repos, workloads}, nowMs)` and declare the
+6. **Resolve local clones ONCE** (`lib/repo-source.mjs`). File *contents* are
+   the largest remaining slice of github traffic (31%), and most of it can be
+   served with no network at all when the machine already has the repos
+   checked out — measured `git show` ~37ms vs `gh api` ~1022ms for the same
+   file, byte-identical.
+
+   ```js
+   const d = discoverWorkspaceRoot({ repos: reposValidated, from: pluginRoot });
+   const localRepos = d.root
+     ? resolveLocalRepos({ repos: reposValidated, pins: deployStateShas, workspaceRoot: d.root })
+     : {};
+   setLocalRepos(path, { workspaceRoot: d.root, repos: localRepos }, nowMs);
+   ```
+
+   `discoverWorkspaceRoot` takes the **validated repo list** and accepts a
+   candidate directory only if it actually contains one of *this run's* repos —
+   that check is what keeps the plugin generic, and it is bounded to ~3 tries
+   because guessing harder risks reading an unrelated checkout, which is
+   silently wrong rather than merely slow. Finding nothing is a fine outcome:
+   every read falls back to the cached `gh` path.
+
+   `pins` must be the **build-time commit shas** from `deployState`, never
+   branch names. A developer's clone is routinely stale (12 commits, measured),
+   and reading a branch locally returned different bytes than the real head —
+   for RCA that is a confident wrong answer about code that never shipped.
+
+   Doing this at the gate is the point: every coordinator then reads a map
+   instead of probing the filesystem itself.
+7. `recomputeCoverage(path, {repos, workloads}, nowMs)` and declare the
    resulting path in the gate summary alongside the capability manifest, so
    a human re-reading the run can find it.
 

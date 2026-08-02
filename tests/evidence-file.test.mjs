@@ -296,3 +296,44 @@ test("writeEvidenceFile creates the parent directory if missing", () => {
   writeEvidenceFile(nested, emptyEvidenceFile("build-1", 0));
   assert.deepEqual(readEvidenceFile(nested).buildId, "build-1");
 });
+
+// Staleness: the resume-path analogue of refusing a branch name.
+test("stalenessOf flags an old pre-fetch but never invalidates it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-stale-"));
+  const { evidencePathFor, initEvidenceFile, stalenessOf, readEvidenceFile } =
+    await import("../lib/evidence-file.mjs");
+  const t0 = 1_700_000_000_000;
+  const p = evidencePathFor("b-stale", dir);
+  initEvidenceFile(p, "b-stale", t0);
+
+  const fresh = stalenessOf(p, t0 + 5 * 60 * 1000);
+  assert.equal(fresh.stale, false, "5m into a run is fresh");
+  assert.equal(fresh.known, true);
+
+  const old = stalenessOf(p, t0 + 20 * 60 * 60 * 1000);
+  assert.equal(old.stale, true, "an overnight resume must be flagged");
+  assert.match(old.note, /re-verify/, "must say what to do, not just that it is old");
+
+  // Crucially it is a SIGNAL, not an expiry — the data is still there, because
+  // stale build-level context still beats none and the failure window is fixed.
+  assert.ok(readEvidenceFile(p), "file must remain readable when stale");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// The clamp-to-zero trap: a future timestamp must not read as "fresh".
+test("stalenessOf refuses to call a future timestamp fresh", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-skew-"));
+  const { evidencePathFor, initEvidenceFile, stalenessOf } = await import("../lib/evidence-file.mjs");
+  const t0 = 1_700_000_000_000;
+  const p = evidencePathFor("b-skew", dir);
+  initEvidenceFile(p, "b-skew", t0);
+
+  // Coordinator's clock is behind the gate's, or the stamp was seeded by hand.
+  const s = stalenessOf(p, t0 - 11 * 60 * 60 * 1000);
+  assert.equal(s.stale, true, "unknown age must fail closed, not report fresh");
+  assert.equal(s.known, false, "we genuinely cannot compute an age here");
+  assert.match(s.note, /future/);
+
+  rmSync(dir, { recursive: true, force: true });
+});

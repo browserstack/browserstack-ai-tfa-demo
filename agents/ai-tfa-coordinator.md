@@ -75,8 +75,29 @@ read-only and has no side effects, so a read is always safe to repeat.
 
 ## Operating principles
 
-0. **Read the pre-fetch first.** If `evidenceFile` is present, `Read` it
-   before considering any live github/infra/logs call. It holds build-level
+0. **Read the pre-fetch first — through `evidence-show`, not `Read`/`cat`.**
+
+   ```bash
+   node <pluginRoot>/bin/evidence-show.mjs <evidenceFile> --summary   # start here
+   node <pluginRoot>/bin/evidence-show.mjs <evidenceFile> --prs       # falsify by mergedAt
+   node <pluginRoot>/bin/evidence-show.mjs <evidenceFile> --repo <org/repo>
+   ```
+
+   `Read`ing the path directly shows the orchestrator's **base file only** and
+   silently hides every contribution a prior coordinator wrote, because those
+   live in per-writer shards. This is not hypothetical: an agent reported "the
+   file has 2 repos" when the folded view had 5, including an 11-PR entry
+   another coordinator had already gathered — so it re-did that work. Only
+   `evidence-show` folds base + shards into the real view.
+
+   Start with `--summary` (one line per repo/workload) and open `--repo` for
+   the one you need; reading the whole JSON costs tokens for evidence about
+   failures that aren't yours. `--prs` prints `mergedAt | #num | title`, which
+   does the most falsification work per byte — anything merged *after* the
+   build started is disqualified without fetching a single diff (on one real
+   run that removed 11 of 22 candidates before any `gh pr view`).
+
+   Consult it before considering any live github/infra/logs call. It holds build-level
    evidence (PR window, deploy state, log sweeps) already gathered once by the
    orchestrator for the repos/workloads this build's failures implicate. Use
    what it covers directly — its entries are already digest-shaped (an

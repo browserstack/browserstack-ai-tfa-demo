@@ -15,7 +15,7 @@
 //   node bin/evidence-show.mjs <evidenceFilePath> --summary  # one line per repo/workload
 //   node bin/evidence-show.mjs <evidenceFilePath> --repo <name>
 
-import { readEvidenceFile, readBaseFile, contribDirFor, hasTrustworthyPrList } from "../lib/evidence-file.mjs";
+import { readEvidenceFile, readBaseFile, contribDirFor, hasTrustworthyPrList, stalenessOf } from "../lib/evidence-file.mjs";
 import { existsSync, readdirSync } from "node:fs";
 
 const [, , filePath, mode, arg] = process.argv;
@@ -25,6 +25,15 @@ if (!filePath) {
 }
 
 const folded = readEvidenceFile(filePath);
+
+// Warn on EVERY view, not just --summary. A resumed run reuses this file by
+// buildId alone, and deployState/PR-window data keeps moving after it was
+// written — the same silent-wrong-answer risk we refuse branch names over.
+// stderr, so it never pollutes JSON piped into jq.
+{
+  const s = stalenessOf(filePath, Date.now());
+  if (s.stale || !s.known) console.error(`[evidence-show STALE] ${s.note}`);
+}
 
 if (mode === "--repo") {
   console.log(JSON.stringify(folded.github?.[arg] ?? null, null, 2));

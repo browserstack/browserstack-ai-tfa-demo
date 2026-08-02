@@ -252,6 +252,35 @@ gathers it*.
    `setGithubEvidence(path, repo, {deployState, prsInWindow, gap}, nowMs)`.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
+
+   **Ask for `files` in the PR-list call — it costs nothing extra and is the
+   single highest-leverage thing in this step:**
+
+   ```bash
+   gh pr list -R <org>/<repo> --state merged --base <branch> \
+     --search 'merged:<from>..<to>' --json number,title,mergedAt,url,files --limit 100
+   ```
+
+   `--json files` returns every PR's changed paths in the SAME call, so one
+   request per repo replaces one `gh pr view <n> --json files` per PR across
+   every coordinator. Measured across three real runs, per-PR file-list
+   fetches were **44 of 407 gh calls (10.8%)** — all of them avoidable here.
+   Store the paths in each PR's `files` field rather than leaving it `null`:
+   path-overlap is the first falsification test in
+   `references/github-evidence.md`, so with `files` populated a coordinator
+   rules a suspect in or out from the evidence file alone, and only fetches a
+   diff for the handful that survive. Do NOT pre-fetch diffs — those are large
+   and only a few PRs ever need one.
+
+   Two other measured wastes this step should pre-empt:
+   - **Never let coordinators re-probe connectors.** `gh auth status` /
+     `kubectl version` accounted for **17 of 407 gh calls (4.2%)** purely
+     because the manifest wasn't trusted. State plainly in the dispatch prompt
+     that the gate validated them.
+   - **File contents were 31% of gh traffic** and are only partly predictable,
+     so do NOT bulk-fetch them. The `files` lists above tell a coordinator
+     exactly which files matter, and the tool cache dedupes the ones two
+     coordinators both open.
 4. For each workload: run the connector skill's compulsory kubectl +
    VictoriaLogs sweep **once**, anchored to the build's own clock — never
    "now". **PAD the window: `started_at − 2m` .. `finished_at + 10m`.**

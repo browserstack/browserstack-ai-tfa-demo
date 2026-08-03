@@ -1,4 +1,4 @@
-# Failure-signature clustering
+# Clustering
 
 Why: a red build's N failures usually trace to a handful of causes (one bad
 PR/deploy/shared helper). Running the full collaborative loop once per *cause*
@@ -7,9 +7,33 @@ causes)** — the only thing that makes "RCA for ALL failed tests, even thousand
 feasible. But **every failed test must still show a per-test RCA in the TRA
 dashboard**, so clustering collapses the *evidence hunt*, not the *output*.
 
-The logic lives in `lib/signature.mjs`; this file is the protocol.
+## Two sources, one contract
 
-## The signature
+Both paths produce the identical `{ cluster_id, signature, members,
+representative, siblings }` shape, so nothing downstream (the fan-out
+workflow, the sequential harness) needs to know which one ran:
+
+- **Preferred — server-computed themes.** `lib/theme-clustering.mjs` →
+  `clustersFromThemes(rows, themesResult, testsByThemeId)`, fed from the
+  `getBuildFailureThemes` / `listTestsInFailureTheme` MCP tools (SKILL.md Step
+  3). `getBuildFailureThemes` is responsible for making themes exist, not just
+  reading them — if nothing has ever been computed for this build it triggers
+  computation (one POST, same call) and polls for `buildThemeWorkflow.status`
+  to reach `SUCCESS`, up to its own budget. The grouping reflects the
+  server's own root-cause clustering instead of a text-signature guess — two
+  failures with an identical error string but unrelated causes are not
+  conflated the way a client-side "signature" would be.
+- **Fallback — client-side failure signature.** `lib/signature.mjs` →
+  `clusterAndPersist(csvPath, csvStateModule)`, the original text-normalization
+  approach described below. Used whenever `getBuildFailureThemes` comes back
+  `ready: false` — still computing past its poll budget, a failure status, or
+  `status: "trigger-unavailable"` (the trigger call didn't succeed). This
+  makes the flow independent of whether the trigger call currently succeeds:
+  whenever it doesn't, every un-computed build degrades straight to this
+  fallback; whenever it does, the same call reaches `ready: true` on its own
+  and this fallback simply isn't exercised.
+
+## The signature (fallback path only)
 
 Computed from the trimmed failure detail `listTestIds(includeFailureDetail=true)`
 already returns on each row — **no extra probe turns**:

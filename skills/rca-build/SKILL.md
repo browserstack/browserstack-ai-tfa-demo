@@ -203,7 +203,18 @@ Then enumerate every connector relevant to test RCA:
 - plus any connector-shaped skills / MCP servers present in the session
   (a log-search MCP, a metrics MCP, an infra skill, …).
 
-**Validate** each with a cheap probe — discovery alone is not enough:
+**Validate** each with a cheap probe — discovery alone is not enough. **Every
+row below is independent of every other row — fire them all as one batch of
+parallel tool calls, never one connector at a time.** A probe failing (or
+being absent) never blocks another connector's probe from running; there is
+nothing here for one row to wait on. For example: `gh auth status`, `kubectl
+version --request-timeout=5s` (or whatever infra tool applies), a logs-MCP
+check, and a metrics-MCP check all belong in the SAME turn — not four separate
+turns run one after the other, and not "check github, then check infra,
+then …". (This is the same class of bug Step 4b hit on a real run: a
+sequential-*looking* list of independent checks got executed sequentially in
+practice, costing minutes it never needed to. Don't repeat that here, at the
+very front of the pipeline where it delays everything downstream.)
 
 | Connector | Probe                                                                                                                                                                                                                                                                                       |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -223,7 +234,16 @@ naming what to check and how. This orchestrator's contract is generic:
 
 1. For every connector skill added to the manifest in Step 0, read its
    `Scope probes:` list.
-2. Run each probe verbatim.
+2. **Run every declared probe, across every connector and every target it
+   names, together in one batch — the same rule as the base probes above.**
+   The only real ordering constraint is *within* a single connector: its scope
+   probes are only worth running once that same connector's base probe has
+   passed (no point checking which repos github can reach if `gh auth status`
+   already failed). That is a per-connector dependency, not a global one —
+   e.g. github's repo-scope probes and infra's namespace-scope probes never
+   depend on each other, so they still fire in the same batch as soon as
+   their respective base probes clear. Never run one connector's scope
+   probes, wait for them, then move to the next connector's.
 3. Record every target's result in the manifest entry — passes go into a
    resolved-scope field (e.g. `repos_validated: [...]`, `namespace: ok`),
    failures go into a per-target gap (e.g. `<target>: 404 not_accessible`).
@@ -403,6 +423,15 @@ replaces each coordinator's own turn-1 evidence sweep with ONE pre-fetch:
 it does not remove the requirement that turn-1 evidence exists, only _who
 gathers it_.
 
+**Narrate this as one combined phase, not two sequential ones.** Step 4b
+(below) starts the moment Step 3 finishes and runs the whole time Step 4 does
+— any progress line shown to the user during this window should say something
+like `Evidence pre-fetch (Step 4) + turn-1 pre-dispatch (Step 4b)`, never "Step
+4 done, now starting Step 4b." That sequential phrasing is exactly what caused
+Step 4b to be *executed* sequentially in practice on a real run — the
+narration and the execution went wrong together, and fixing only one of them
+leaves the other free to reintroduce the bug.
+
 1. Resolve the evidence-file path: `lib/evidence-file.mjs` →
    `evidencePathFor(buildId, config.paths.stateDir)` —
    `<tmpdir>/bstack-rca/rca-evidence.<buildId>.json`, alongside the state CSV.
@@ -542,68 +571,146 @@ by path-overlap relevance, not every PR in the window.
 Pass `evidencePathFor(...)`'s path to Step 5's fan-out as `evidenceFilePath` —
 every dispatch (representative and sibling) must be told to read it first.
 
-## Step 4b — turn-1 pre-dispatch (runs CONCURRENTLY with Step 4, not after it)
+## Step 4b — turn-1 pre-dispatch (fire-and-forget, fully async alongside Step 4)
 
 Every cluster's representative testRunId is already known the moment Step 3
-finishes — Step 4b does not wait for Step 4's evidence pre-fetch, because
-turn 1's message has no dependency on it: it is built entirely from Step 2's
-CSV seed (`error_summary`/`testName`), exactly the same construction
+finishes, for however many clusters this build produced — never assume a
+fixed count, it is whatever Step 3 found. Turn 1's message has no dependency
+on Step 4's evidence pre-fetch at all: it is built entirely from Step 2's CSV
+seed (`error_summary`/`testName`), exactly the same construction
 `agents/ai-tfa-coordinator.md`'s loop step 0 uses when neither `pre_seed` nor
 `resume` applies (`error_digest` present → `"Error: <title + endpoint>"`; else
-→ `"Initiating collaborative RCA for test run <id>."`). Nothing here needs the
-evidence file, so there is no ordering hazard in running the two concurrently.
+→ `"Initiating collaborative RCA for test run <id>."`). So there is no need to
+wait for Step 4 before starting Step 4b — and, just as importantly, no need to
+wait for Step 4b either before moving on.
 
-**Mechanic:** in the SAME tool-call batch as Step 4's evidence-gathering calls
-(`gh`, `kubectl`, MCP queries), ALSO call `tfaRcaTurn(testRunId=<rep>,
-message=<first-turn digest>)` directly — one call per cluster representative —
-as additional calls in that batch, so they execute concurrently with Step 4's
-own work rather than sequentially before or after it. This is a direct MCP
-call from the orchestrator, not a coordinator dispatch: turn 1 alone is cheap
-enough that spinning up a full `ai-tfa-coordinator` subagent for it would cost
-more than the latency it saves.
+**Mechanic: dispatch, don't wait.** For every cluster representative, launch
+one lightweight subagent via the Agent tool whose ONLY job is to call
+`tfaRcaTurn(testRunId=<rep>, message=<first-turn digest>)` once and emit one
+fixed-shape block as its final output — no evidence gathering, no loop, no
+drain. This is deliberately **not** a full `ai-tfa-coordinator` dispatch (that
+agent's whole design is the multi-turn evidence-gathering loop, far more
+machinery than "submit one message and return"); write a minimal,
+purpose-built inline prompt for this instead, and put the exact output
+contract below directly in that prompt — an Agent-tool result is free text,
+and with many of these dispatched concurrently the orchestrator has no other
+reliable way to tell which representative a given notification is even for.
+
+```
+TURN1_OUTPUT_START
+testRunId: <the testRunId this subagent was given>
+status: RESOLVED | NEEDS_INFO | PENDING
+threadId: <threadId from the tfaRcaTurn response, or "none">
+turnId: <turnId — PENDING only, tfaRcaTurn never returns one for the other two statuses; else "none">
+glimpse: <RESOLVED only — the trimmed {root_cause, failure_type, related_prs, confidence, viewRca} object, verbatim; else "none">
+asks: <NEEDS_INFO only — the asks array, verbatim; else "none">
+TURN1_OUTPUT_END
+```
+
+That block — not prose, not a summary — is this subagent's entire final
+message. It is exactly what the orchestrator reads back off the
+task-notification to do the bookkeeping below: `status` selects the branch,
+`testRunId` is the join key back to the right CSV row / registry entry, and
+`threadId`/`turnId`/`glimpse`/`asks` are pasted straight into `flip()` or
+`recordTurn1()` with no re-interpretation needed.
+
+An Agent-tool dispatch returns *immediately* with a launch confirmation, not
+the subagent's result — this is fundamentally different from a batch of raw
+MCP tool calls in one turn, which blocks the orchestrator until every call in
+that turn returns. Fire off every representative's dispatch together, then
+**immediately proceed to Step 4's evidence pre-fetch in the very next turn —
+do not wait for any of them.** There is no "same batch as Step 4" trick to get
+right here (an earlier version of this section relied on that and it is easy
+to execute wrong, e.g. by finishing Step 4 first and only then starting Step
+4b — the fire-and-forget dispatch here has no such ordering hazard, because
+nothing about it requires being co-located with Step 4's own tool calls).
+
+As each subagent finishes — on its own schedule, bounded only by
+`tfaRcaTurn`'s own ~90s in-call poll cap, so realistically within the first
+minute or two of the run — a task-notification carrying its `TURN1_OUTPUT`
+block arrives, interleaved with whichever Step 4 turn happens to be in flight
+at that moment. Handle each one the moment you are next free to, as pure
+bookkeeping — no new tool calls needed for this part:
 
 1. `initTurn1Registry(turn1PathFor(buildId, config.paths.stateDir), buildId, nowMs)`
-   once, before submitting any turn 1s (`lib/turn1-registry.mjs`).
+   once, before dispatching any turn 1s (`lib/turn1-registry.mjs`).
 2. **Skip any representative whose CSV row already has a `threadId` +
    `turnId`** (a `pending-resume` row from a prior run attempt — an already
-   in-flight thread). Submitting a fresh turn 1 for it would start a SECOND
+   in-flight thread). Dispatching a fresh turn 1 for it would start a SECOND
    thread for the same test, which every other part of this contract
    (`agents/ai-tfa-coordinator.md`'s "one thread per test" hard limit) forbids.
    That representative resumes its existing thread at Step 5 exactly as
    before Step 4b existed — Step 4b only ever applies to a representative with
    no prior thread at all.
-3. For every remaining (thread-less) cluster representative, submit turn 1 and
-   branch on the result:
+3. For every remaining (thread-less) cluster representative, dispatch its
+   turn-1 subagent. When its result notification lands, branch on it:
    - **RESOLVED** → `flip()` this CSV row straight to terminal, right here —
      same fields a coordinator's `RCA_OUTPUT` would set (`rca_done: resolved`,
      `root_cause`, `failure_type`, `related_prs`, `view_rca`, `confidence`,
      `turns_used: 1`, `threadId`). This representative needs **no Step 5
      dispatch at all** — the cheapest possible outcome. **Do not wait for
      Step 5 to formally start: dispatch this cluster's siblings immediately,
-     right here in Step 4b**, via `siblingPreSeed(csvPath, csvState,
-     clusterId, representativeId)` against the row you just flipped — a
-     sibling only ever needs its OWN representative's result, never the state
-     of any other cluster, so nothing about Step 5's fan-out has to begin
-     first. This is the ONLY case a sibling can be dispatched this early, and
-     the reason is narrow: it works because the representative resolved in
-     ONE pre-dispatched turn, so `pre_seed` is already real evidence, not a
-     guess. A representative still mid-loop (`NEEDS_INFO`/`PENDING`) has no
-     `root_cause` yet — dispatching that cluster's siblings before it lands
-     would degrade every one of them into a full independent investigation
-     (Step 5's measured cost note: 22.7 tool calls/2.2 turns vs 8.0/2.0 for a
-     representative, one run 60 calls/17 minutes). Never do that; siblings of
-     a not-yet-resolved representative wait for Step 5 exactly as documented
-     there.
+     right here in Step 4b** — as their own fire-and-forget Agent-tool
+     dispatches too, same principle, don't wait on them either — via
+     `siblingPreSeed(csvPath, csvState, clusterId, representativeId)` against
+     the row you just flipped. A sibling only ever needs its OWN
+     representative's result, never the state of any other cluster, so
+     nothing about Step 5's fan-out has to begin first. This is the ONLY case
+     a sibling can be dispatched this early, and the reason is narrow: it
+     works because the representative resolved in ONE pre-dispatched turn, so
+     `pre_seed` is already real evidence, not a guess. A representative still
+     mid-loop (`NEEDS_INFO`/`PENDING`) has no `root_cause` yet — dispatching
+     that cluster's siblings before it lands would degrade every one of them
+     into a full independent investigation (Step 5's measured cost note: 22.7
+     tool calls/2.2 turns vs 8.0/2.0 for a representative, one run 60
+     calls/17 minutes). Never do that; siblings of a not-yet-resolved
+     representative wait for Step 5 exactly as documented there.
    - **NEEDS_INFO** → `recordTurn1(path, testRunId, {status: "NEEDS_INFO",
      threadId, asks}, nowMs)`. A real, non-terminal answer — hand it to Step
      5's coordinator as `turn1_result` (never resubmit turn 1).
    - **PENDING** → `recordTurn1(path, testRunId, {status: "PENDING", threadId,
-     turnId}, nowMs)`. Do **not** drain it here — Step 4 is running
-     concurrently and there is no reason to block Step 4b on it. Step 5's
-     coordinator dispatch already knows how to drain a soft-PENDING (the
-     existing `resume` input covers this case as-is).
+     turnId}, nowMs)`. Do **not** drain it here — there is no reason to spend
+     any of the orchestrator's own time on it. Step 5's coordinator dispatch
+     already knows how to drain a soft-PENDING (the existing `resume` input
+     covers this case as-is).
 4. Nothing about this starts a second thread: it is exactly turn 1 of the one
    thread the Step 5 coordinator continues from `threadId`.
+5. **A subagent that never reports back fails open, not closed.** If a turn-1
+   subagent dies, errors, or times out before emitting its `TURN1_OUTPUT`
+   block, no registry entry gets recorded for that representative — there is
+   nothing to distinguish "Step 4b never ran for this test" from "Step 4b ran
+   and failed." Both land in exactly the same place: Step 5's `readTurn1`
+   returns nothing, and Step 5 falls back to a completely normal, fresh
+   dispatch (submit turn 1 from scratch, no `resume`/`turn1_result`) — which
+   is functionally the retry. There is no separate "check Step 4b succeeded,
+   re-trigger turn 1 if not" step to build; the existing no-entry fallback
+   already covers it. The one real cost: if the dead subagent *did* reach
+   `tfaRcaTurn` before failing to report back, that thread is now orphaned —
+   Step 5's fresh dispatch starts a genuinely new thread rather than resuming
+   it. Not a correctness problem (the new thread resolves independently just
+   fine) — just one wasted, never-continued thread on TFA's side per failure.
+
+**This removes orchestrator-side blocking, not underlying capacity — cap the
+fan-out itself.** Every dispatched subagent still makes a real `tfaRcaTurn`
+call, consuming the same API/compute capacity Step 5's fan-out competes for.
+"Async" means the orchestrator never sits idle waiting on these dispatches —
+it does NOT mean the dispatches are free, and firing an unbounded number of
+them at once for a build with many clusters risks the same session/rate-limit
+cascade a large Step 5 fan-out can hit. **Dispatch at most `concurrency` (from
+`config/rca.config.json` — the same value Step 5 already uses, not a separate
+setting) turn-1 subagents at a time.** For a build with more cluster
+representatives than that, issue the first `concurrency` immediately, then
+issue the next batch as soon as they're dispatched (still fire-and-forget,
+still never blocking Step 4's own progress) rather than firing every
+representative in one shot regardless of cluster count.
+
+None of this — `initTurn1Registry`, the pending-resume skip-list check, or the
+first dispatch batch — has any dependency on Step 4's own tool calls, or vice
+versa. **The very first turn can contain Step 4b's setup-and-first-dispatch-
+batch together with Step 4's own first evidence-gathering calls, in the same
+batch.** Do not treat Step 4b's prep as a turn Step 4 waits behind, even for
+one turn — that is the same one-extra-turn-of-latency mistake this whole
+section exists to remove, just smaller.
 
 Pass `turn1PathFor(...)`'s path to Step 5 alongside `evidenceFilePath` — Step 5
 must read it (`readTurn1(path, testRunId)`) before building each

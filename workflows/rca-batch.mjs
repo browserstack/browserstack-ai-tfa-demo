@@ -32,7 +32,16 @@ export const meta = {
 //     //   dispatch prompt (as before) is exactly the duplication this file
 //     //   removes.
 //   clusters: [
-//     { cluster_id, representative: { testRunId, testName, error_summary },
+//     { cluster_id,
+//       representative: { testRunId, testName, error_summary,
+//         // Step 4b pre-dispatch outcome (SKILL.md Step 4b, lib/turn1-registry.mjs)
+//         // — at most one of these two is set, never both:
+//         turn1: { status: "PENDING", threadId, turnId } |
+//                { status: "NEEDS_INFO", threadId, asks },
+//         // Step 4b's turn 1 already RESOLVED — no dispatch at all for this
+//         // representative; `resolved` is the RCA_SCHEMA-shaped result to use
+//         // directly (also already flipped into the CSV by the orchestrator).
+//         resolved: <RCA_SCHEMA object> | undefined },
 //       siblings: [ { testRunId, testName, error_summary } ] }
 //   ]
 // }
@@ -89,14 +98,56 @@ function resumeLine(row) {
   ].filter(Boolean).join("\n");
 }
 
+// Step 4b (SKILL.md Step 4b) already submitted this representative's turn 1,
+// concurrently with Step 4's evidence pre-fetch. RESOLVED needs no coordinator
+// dispatch at all (short-circuited in the pipeline stage below); these two
+// non-terminal outcomes are handed to the coordinator instead of letting it
+// submit turn 1 again — mutually exclusive per agents/ai-tfa-coordinator.md.
+function turn1Line(r) {
+  const t = r?.turn1;
+  if (!t) return null;
+  if (t.status === "PENDING" && t.turnId) {
+    return [
+      `RESUME (turn 1 already submitted by Step 4b — do not start a new thread):`,
+      `threadId=${t.threadId} turnId=${t.turnId}.`,
+      `Call getTfaTurnResult(testRunId, turnId) FIRST to read its current state`,
+      `(drain any soft-PENDING per the softPendingDrain budget) before submitting`,
+      `anything further — reuse this threadId for every follow-up on this test.`,
+    ].join("\n");
+  }
+  if (t.status === "NEEDS_INFO") {
+    return [
+      `TURN 1 ALREADY SUBMITTED AND ANSWERED by Step 4b — do NOT submit turn 1 again.`,
+      `threadId=${t.threadId}. turns_used starts at 1.`,
+      `TFA's turn-1 response was NEEDS_INFO with these asks (verbatim): ${JSON.stringify(t.asks ?? [])}`,
+      `Start this run at the ROUTE-the-asks step using them, then submit your first`,
+      `follow-up message on this SAME thread.`,
+    ].join("\n");
+  }
+  return null;
+}
+
 function repPrompt(cluster) {
   const r = cluster.representative;
+  const resume = resumeLine(r);
+  // Mutual exclusivity, enforced in code, not just by convention: a
+  // representative gets AT MOST one resume-style instruction. A prior-run CSV
+  // pending-resume (`r.threadId`/`r.turnId`, an already in-flight thread from
+  // a run this build is resuming) takes precedence over a same-run Step 4b
+  // entry (`r.turn1`) — Step 4b's pre-dispatch is supposed to skip a
+  // representative already in pending-resume (SKILL.md Step 4b), but this is
+  // the backstop: presenting BOTH would hand the coordinator two different
+  // threadIds as "the" thread to resume, which is worse than picking one.
+  const t1 = resume ? null : turn1Line(r);
   return [
     `You are the ai-tfa-coordinator for cluster ${cluster.cluster_id}.`,
-    `Run the FULL collaborative RCA loop for the representative test.`,
+    t1
+      ? `Turn 1 was pre-dispatched by Step 4b — see below for how to resume it. Otherwise run the FULL collaborative RCA loop for the representative test.`
+      : `Run the FULL collaborative RCA loop for the representative test.`,
     `testRunId=${r.testRunId}  testName=${r.testName ?? ""}`,
     `error_digest: ${r.error_summary ?? "(none)"}`,
-    resumeLine(r),
+    resume,
+    t1,
     shared,
     `Return the structured RCA_OUTPUT for this test.`,
   ].filter(Boolean).join("\n");
@@ -131,12 +182,18 @@ log(`Batch: ${clusters.length} cluster(s) over build ${ctx.buildId ?? "?"}`);
 const results = await pipeline(
   clusters,
   (cluster) =>
-    agent(repPrompt(cluster), {
-      label: `rep:${cluster.representative.testRunId}`,
-      phase: "Representatives",
-      agentType: "tfa-rca:ai-tfa-coordinator",
-      schema: RCA_SCHEMA,
-    }).then((rca) => ({ cluster, rca })),
+    // Step 4b's turn 1 already RESOLVED this representative — no dispatch at
+    // all, zero added latency. The orchestrator already flipped this row's
+    // CSV entry to terminal; `resolved` just needs to flow into the sibling
+    // stage's pre_seed the same way a dispatched rep's result would.
+    cluster.representative?.resolved
+      ? Promise.resolve({ cluster, rca: cluster.representative.resolved })
+      : agent(repPrompt(cluster), {
+          label: `rep:${cluster.representative.testRunId}`,
+          phase: "Representatives",
+          agentType: "tfa-rca:ai-tfa-coordinator",
+          schema: RCA_SCHEMA,
+        }).then((rca) => ({ cluster, rca })),
   ({ cluster, rca }) =>
     parallel(
       (cluster.siblings ?? []).map((sib) => () =>

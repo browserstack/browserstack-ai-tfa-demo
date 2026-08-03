@@ -31,12 +31,32 @@ it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
 
 ## Inputs
 
+- `pluginRoot` — **required**, absolute path to this plugin's repo root. Every
+  `<pluginRoot>/...` path in this file (bin/ commands, reference docs, the API
+  reference in `skills/rca-build/SKILL.md`) is relative to this value, not to
+  whatever directory you were started in. Missing it is what causes a
+  coordinator to guess `references/<file>.md` against the wrong cwd and burn a
+  `find` recovering the real path — the dispatch prompt must state it up front.
 - `testRunId` — **required**, the integer test-run ID. Maps to the tool's `testRunId` arg.
 - `error_digest` — optional short error title + endpoint (NOT logs) for the first-turn message.
 - `pre_seed` — optional. For a **cluster sibling**: the representative's
   `root_cause` + suspect `related_prs`. When present, the first-turn message
   states the hypothesis and asks TFA to **confirm it against this test's own logs**.
 - `resume` — optional `{ threadId, turnId }` from a prior PENDING run.
+- `turn1_result` — optional `{ threadId, asks }`. Set only for a cluster
+  representative whose turn 1 was already pre-submitted by the orchestrator's
+  Step 4b pass (`skills/rca-build/SKILL.md` Step 4b, `lib/turn1-registry.mjs`)
+  and landed `NEEDS_INFO` — i.e. a real answer already exists, just not a
+  terminal one. When present, **do not submit turn 1** — start the loop
+  already at step 3 (ROUTE the asks) using `turn1_result.asks`, with
+  `threadId = turn1_result.threadId` and `turns_used` starting at `1`. Mutually
+  exclusive with `resume` and `pre_seed` per dispatch: a representative gets at
+  most one of `resume` (Step 4b's turn 1 was still soft-`PENDING`),
+  `turn1_result` (Step 4b's turn 1 already resolved to `NEEDS_INFO`), or
+  neither (Step 4b never ran, e.g. an unclustered rerun) — never more than one,
+  and never alongside `pre_seed`, which is sibling-only. A Step 4b turn 1 that
+  landed `RESOLVED` needs no coordinator dispatch at all: the orchestrator
+  flips that row straight to terminal and this agent is never invoked for it.
 - `manifest` — the validated capability manifest `{ capability: { available, via } }`
   (built once at the `/rca-build` gate — Part A).
 - `evidenceFile` — optional. Absolute path to the build-level pre-fetch
@@ -263,7 +283,9 @@ once at the end of the run by `triggerRcaReport`, not per test.
    before — never busy-wait through `tfaRcaTurn` resubmits instead.
 6. **Digest, don't dump.** Every follow-up `message` carries digested findings
    (`ask → found → snippet/link`), never raw log tails, full diffs, or full files.
-   Size caps + block shape live in `references/evidence-routing.md` — read it
+   Size caps + block shape live in `<pluginRoot>/skills/rca-build/references/evidence-routing.md`
+   (NOT a bare `references/evidence-routing.md` — that resolves against
+   whatever directory you started in, not this plugin's root) — read it
    before fulfilling any ask. The plugin config caps `message` at 1000 chars
    (`turnMessageMaxChars` in `config/rca.config.json`); the `tfaRcaTurn` tool
    itself would allow up to 5000, but the plugin self-limits to 1000.
@@ -284,7 +306,7 @@ once at the end of the run by `triggerRcaReport`, not per test.
    signature blocks, unrequested columns) than any evidence ask ever uses.
    This governs what enters *your own* context via the tool result — distinct
    from principle 6, which governs the digest you send back to TFA. Exact
-   command templates: `references/github-evidence.md` § Field-filtering.
+   command templates: `<pluginRoot>/skills/rca-build/references/github-evidence.md` § Field-filtering.
 
 ## Application bugs — the culprit-PR mandate (MANDATORY)
 
@@ -293,7 +315,7 @@ Whenever TFA's classification (in an ask, a suggestion, or the resolving
 connector is the deliverable, not optional evidence:
 
 - **Hunt the culprit PR**: deploy timeline vs the last-pass window, changed
-  paths vs the failure signature (`references/github-evidence.md`), run the
+  paths vs the failure signature (`<pluginRoot>/skills/rca-build/references/github-evidence.md`), run the
   falsification protocol on each candidate.
 - **Feed the PR link(s) to TFA in the turn message** so the BrowserStack agent
   populates `related_prs` in the dashboard RCA.
@@ -306,7 +328,7 @@ connector is the deliverable, not optional evidence:
 
 ## Suspect-PR falsification (github asks)
 
-For `product_code` / `deploy` / `ci` asks, follow `references/github-evidence.md`:
+For `product_code` / `deploy` / `ci` asks, follow `<pluginRoot>/skills/rca-build/references/github-evidence.md`:
 gather the **exact** evidence (diff-since-baseline, PRs-in-window touching the
 failing path, blame, deploy timing) via **GitHub MCP → `gh` → degrade**, and for
 each candidate suspect **try to disprove it** (path overlap? shipped before the
@@ -332,6 +354,9 @@ capability is unavailable — emit an
      - neither → "Initiating collaborative RCA for test run <id>."
 1. SUBMIT turn 1: tfaRcaTurn(testRunId=<id>, message=<digest>). Capture threadId. turns_used = 1.
    (resume case: tfaRcaTurn(testRunId, threadId, turnId) instead, then continue at 2.)
+   (turn1_result case: SKIP this submit entirely — threadId = turn1_result.threadId,
+    turns_used = 1, result.status = NEEDS_INFO, result.asks = turn1_result.asks,
+    then continue at 3, not 2 — there is nothing to CLASSIFY, Step 4b already did.)
 2. CLASSIFY result.status:
      PENDING    → DRAIN FIRST, do not resubmit and do not end here:
                     capture threadId + turnId, then loop on
@@ -344,8 +369,18 @@ capability is unavailable — emit an
      RESOLVED   → capture glimpse + viewRca; END (RESOLVED).
      BLOCKED    → END (PENDING, note "blocked") — terminal, no asks to route.
      NEEDS_INFO → go to 3.
-3. ROUTE the asks (read references/evidence-routing.md; route via lib/routing.mjs):
-     For each ask, high → medium → low:
+3. ROUTE the asks (read `<pluginRoot>/skills/rca-build/references/evidence-routing.md`; route via lib/routing.mjs):
+     "high → medium → low" orders the ASSEMBLED MESSAGE only (step 3's last
+     line) — `routeAsk`/`routeAsks` (`lib/routing.mjs`) classify each ask
+     independently, with no cross-ask state or ordering dependency between one
+     ask's gather and another's. When a turn's NEEDS_INFO carries multiple
+     `gather` asks (e.g. a github ask and an infra ask together), issue their
+     live gather calls CONCURRENTLY — as parallel tool calls in the same
+     turn — never one ask's full gather-and-digest before starting the next.
+     `lib/loop.mjs`'s `runRcaLoop` mirrors this with `Promise.all` over
+     `buckets.gather`; do the equivalent here. Only the final message assembly
+     respects priority order, not the fetching.
+     For each ask:
        skip   → record in asks_skipped, emit nothing.
        gather → FIRST check `evidenceFile` (if present) for this ask's scope —
                 repo for a github ask, workload for an infra/logs ask. Covered

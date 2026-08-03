@@ -805,12 +805,18 @@ This distinction matters differently on each path:
   structural parameter), building a representative's dispatch prompt here is
   entirely on you. **Before dispatching ANY representative, call
   `readTurn1(turn1PathFor(buildId, stateDir), testRunId)` and fold the result
-  into the prompt** (`resume`/`turn1_result` per `agents/ai-tfa-coordinator.md`)
-  — and skip the dispatch entirely if the CSV row is already `resolved`. Omit
-  this and Step 4b's pre-dispatch is silently wasted: the coordinator submits
-  turn 1 again on a brand-new thread, abandoning the one Step 4b already
-  started (not incorrect — the run still resolves — just the entire latency
-  win thrown away without any error to notice it by).
+  into the prompt using this exact mapping — the two are distinct coordinator
+  inputs (`agents/ai-tfa-coordinator.md`), never interchangeable:**
+  `PENDING` → `resume: {threadId, turnId}`; `NEEDS_INFO` → `turn1_result:
+  {threadId, asks}`; no registry entry with the CSV row already `resolved` →
+  skip the dispatch entirely, use the CSV row's result directly. Do NOT fold a
+  `NEEDS_INFO` result into a `resume` field, or vice versa — a coordinator
+  reads these as two different shapes and a swapped one is silently wrong, not
+  rejected. Omit this translation altogether and Step 4b's pre-dispatch is
+  silently wasted: the coordinator submits turn 1 again on a brand-new thread,
+  abandoning the one Step 4b already started (not incorrect — the run still
+  resolves — just the entire latency win thrown away without any error to
+  notice it by).
 - Opt-in `workflows/rca-batch.mjs` (Claude Code only) → use only when the
   Workflow tool's structured `pipeline()`/`parallel()` orchestration,
   `resumeFromRunId` resumability, or progress UI is worth the concurrency

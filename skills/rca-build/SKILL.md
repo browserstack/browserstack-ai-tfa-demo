@@ -28,11 +28,12 @@ Config (concurrency, turn-cap, paths, evidence registry) lives in
 
 ## API reference — read THIS, do not grep the source
 
-Every signature this run needs, in one place. Measured reason it exists: on one
-run **92 of 407 tool calls (23%, 5.1 per test)** were agents re-deriving this —
-`grep -n "^export function" lib/…`, `cat config/…`, repeated `ls .claude/skills/`.
-The previous run spent 13. The jump came from adding helpers faster than the
-docs described them, so the plugin taxed every agent to learn itself.
+Every signature this run needs, in one place. This exists because agents were
+routinely re-deriving these signatures live — `grep -n "^export function"
+lib/…`, `cat config/…`, repeated `ls .claude/skills/` — a real, recurring tax
+that grew every time a helper was added faster than the docs described it, so
+the plugin taxed every agent to relearn itself from source instead of reading
+one page.
 
 Everything below is product-neutral: build ids, repos, branches, workloads and
 paths are all **inputs**, supplied by the gate and the connector skills.
@@ -150,8 +151,8 @@ Run:
 # when this plugin is itself a repo inside the workspace, cwd is the plugin and
 # the product's connector skills sit one or two levels UP, so a bare
 # `ls .claude/skills/` finds nothing and the run silently degrades to raw MCP
-# tools with best-effort repo guesses. Measured: it missed all three real
-# connectors on this workspace.
+# tools with best-effort repo guesses — on a real run it missed every
+# connector actually present on the workspace this way.
 ls .claude/skills/ ../.claude/skills/ ../../.claude/skills/ ~/.claude/skills/ 2>/dev/null
 ```
 
@@ -394,10 +395,10 @@ themesResult, testsByThemeId)` — this is the **preferred path**, since the
    so `const { clusters } = clusterRows(rows)` gives you working cluster objects
    while every `cluster_id` is silently discarded — the CSV keeps empty cluster
    columns and the run degrades to **one coordinator per test**, losing the whole
-   representative/sibling collapse. That is measured, not theoretical: a real run
-   went 12 tests → 26 subagents and 30 minutes with the clustering "done" but
-   never written. `clusterAndPersist` writes back and verifies the count, so it
-   cannot forget.
+   representative/sibling collapse. This is a real failure mode, not a
+   theoretical one — a real run hit it, with the clustering silently "done" in
+   the return value but never written to the CSV. `clusterAndPersist` writes
+   back and verifies the count, so it cannot forget.
 
    Never block the run waiting on the server; the fallback keeps the same
    `{ cluster_id, representative, siblings }` contract the fan-out consumes,
@@ -456,12 +457,11 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    highest-leverage thing in Step 4, and it is a MUST, not a nice-to-have: a
    PR-list call than omits `files` here is never corrected downstream — it
    just becomes one `gh pr view <n> --json files` per PR, run from inside the
-   `for pr in ...` loop this exact mistake produces. Measured on a real run:
-   the orchestrator listed PRs without `files` (5 `gh pr list` calls), then
-   looped `gh pr view --json files` once per PR to backfill it (9 calls) —
-   100% avoidable had the first call carried `files`. There is no legitimate
-   reason to split these into two calls; `--json files` costs nothing extra
-   on the list call itself.
+   `for pr in ...` loop this exact mistake produces. This has happened on a
+   real run: the orchestrator listed PRs without `files`, then looped `gh pr
+   view --json files` once per PR to backfill it — entirely avoidable had the
+   first call carried `files`. There is no legitimate reason to split these
+   into two calls; `--json files` costs nothing extra on the list call itself.
 
    ```bash
    gh pr list -R <org>/<repo> --state merged --base <branch> \
@@ -470,8 +470,8 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
 
    `--json files` returns every PR's changed paths in the SAME call, so one
    request per repo replaces one `gh pr view <n> --json files` per PR across
-   every coordinator. Measured across three real runs, per-PR file-list
-   fetches were **44 of 407 gh calls (10.8%)** — all of them avoidable here.
+   every coordinator. Across real runs, per-PR file-list fetches have been a
+   meaningful slice of all `gh` traffic — entirely avoidable here.
    Store the paths in each PR's `files` field rather than leaving it `null`:
    path-overlap is the first falsification test in
    `<pluginRoot>/skills/rca-build/references/github-evidence.md`, so with `files` populated a coordinator
@@ -484,23 +484,23 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    pre-fetch's window) — never as a backfill for a PR-list call that should
    have carried `files` the first time.
 
-   Two other measured wastes this step should pre-empt:
+   Two other real wastes this step should pre-empt:
    - **Never let coordinators re-probe connectors.** `gh auth status` /
-     `kubectl version` accounted for **17 of 407 gh calls (4.2%)** purely
+     `kubectl version` calls have shown up repeatedly from coordinators purely
      because the manifest wasn't trusted. State plainly in the dispatch prompt
      that the gate validated them.
-   - **File contents were 31% of gh traffic** and are only partly predictable,
-     so do NOT bulk-fetch them. The `files` lists above tell a coordinator
-     exactly which files matter, and the tool cache dedupes the ones two
-     coordinators both open.
+   - **File contents are a large, only partly predictable slice of `gh`
+     traffic**, so do NOT bulk-fetch them. The `files` lists above tell a
+     coordinator exactly which files matter, and the tool cache dedupes the
+     ones two coordinators both open.
 4. For each workload: run the connector skill's compulsory kubectl +
    VictoriaLogs sweep **once**, anchored to the build's own clock — never
    "now". **PAD the window: `started_at − 2m` .. `finished_at + 10m`.**
    `finished_at` is when the build was _marked_ finished, which is not when
-   the failing behaviour stopped: on one real build an upstream outage began
-   at 06:12:00 and ran to 06:15:51, while `finished_at` was 06:12:21 — a
-   sweep scoped strictly to `started_at..finished_at` saw 21 seconds of a
-   4-minute outage and would have missed the cause entirely. Label every
+   the failing behaviour stopped: on a real build, an upstream outage was
+   still ongoing after `finished_at` was recorded — a sweep scoped strictly
+   to `started_at..finished_at` would have caught only the very start of it
+   and missed the cause entirely. Label every
    finding with whether it falls inside or outside the strict window so a
    coordinator can weigh it; do NOT silently widen to an arbitrary window
    (that is the separate, opposite failure of matching a coincidence from
@@ -524,10 +524,10 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    note the weaker grounding — this note travels into the file, not just a
    spoken log line, so every coordinator sees it.
 6. **Resolve local clones ONCE** (`lib/repo-source.mjs`). File *contents* are
-   the largest remaining slice of github traffic (31%), and most of it can be
-   served with no network at all when the machine already has the repos
-   checked out — measured `git show` ~37ms vs `gh api` ~1022ms for the same
-   file, byte-identical.
+   the largest remaining slice of github traffic, and most of it can be served
+   with no network at all when the machine already has the repos checked
+   out — a local `git show` returns the same bytes as `gh api` far faster,
+   with no round trip.
 
    ```js
    const d = discoverWorkspaceRoot({ repos: reposValidated, from: pluginRoot });
@@ -552,9 +552,9 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    like it worked.
 
    `pins` must be the **build-time commit shas** from `deployState`, never
-   branch names. A developer's clone is routinely stale (12 commits, measured),
-   and reading a branch locally returned different bytes than the real head —
-   for RCA that is a confident wrong answer about code that never shipped.
+   branch names. A developer's clone is routinely stale, and reading a branch
+   locally has returned different bytes than the real head — for RCA that is
+   a confident wrong answer about code that never shipped.
 
    Doing this at the gate is the point: every coordinator then reads a map
    instead of probing the filesystem itself.
@@ -661,10 +661,10 @@ bookkeeping — no new tool calls needed for this part:
      `pre_seed` is already real evidence, not a guess. A representative still
      mid-loop (`NEEDS_INFO`/`PENDING`) has no `root_cause` yet — dispatching
      that cluster's siblings before it lands would degrade every one of them
-     into a full independent investigation (Step 5's measured cost note: 22.7
-     tool calls/2.2 turns vs 8.0/2.0 for a representative, one run 60
-     calls/17 minutes). Never do that; siblings of a not-yet-resolved
-     representative wait for Step 5 exactly as documented there.
+     into a full independent investigation, at real representative-level cost
+     instead of a cheap one-turn confirm (see Step 5's sibling-ordering note).
+     Never do that; siblings of a not-yet-resolved representative wait for
+     Step 5 exactly as documented there.
    - **NEEDS_INFO** → `recordTurn1(path, testRunId, {status: "NEEDS_INFO",
      threadId, asks}, nowMs)`. A real, non-terminal answer — hand it to Step
      5's coordinator as `turn1_result` (never resubmit turn 1).
@@ -732,11 +732,11 @@ per cluster, not global.
 A sibling is only cheap because it confirms a hypothesis someone else already
 established. Dispatch one without that hypothesis and "one-turn confirm"
 degenerates into a full independent investigation *with the sibling framing on
-top*, so it costs MORE than the representative it was meant to be a fraction of.
-Measured on a real run: siblings averaged **22.7 tool calls and 2.2 turns**
-against **8.0 and 2.0** for the representative, and one burned **60 calls over
-17 minutes**. Nothing ordered them after their rep and nothing refused to
-dispatch without a seed, so it degraded silently.
+top*, so it costs MORE than the representative it was meant to be a fraction
+of — this has happened on a real run, with siblings running well past
+representative-level cost because nothing ordered them after their rep and
+nothing refused to dispatch without a seed. It degrades silently, with no
+error to flag it.
 
 `siblingPreSeed` returns `{ok:false, reason}` when the representative is not
 resolved or recorded no `root_cause` — **do not dispatch that sibling yet**.
@@ -835,8 +835,8 @@ closed).
 reference-doc / lib path.** A coordinator is dispatched fresh, with no
 guarantee about its own cwd — `references/evidence-routing.md` (bare,
 relative) resolves against whatever directory the coordinator happens to
-start in, which is routinely NOT this plugin's root. Measured: 12 calls
-across coordinators were `Read` attempts at the wrong bare path followed by a
+start in, which is routinely NOT this plugin's root. This has cost real
+coordinators repeated `Read` attempts at the wrong bare path followed by a
 `find` to recover the real one (`<pluginRoot>/skills/rca-build/references/evidence-routing.md`,
 `.../github-evidence.md`, `.../clustering.md`). Every dispatch prompt must
 state `pluginRoot=<absolute path>` up front and every reference-doc pointer in
@@ -848,10 +848,9 @@ the coordinator re-derive it.** State plainly in the dispatch prompt: "Function
 signatures for `lib/*.mjs` are documented at `<pluginRoot>/skills/rca-build/SKILL.md`
 § API reference — read that section once if a signature is needed; do not
 `grep`/`Read`/`cat` the `lib/` source to re-derive a signature already
-documented there." Measured: 15 of 49 self-discovery-tax calls were a
-coordinator re-deriving a `lib/*.mjs` signature from source (one coordinator
-read `lib/evidence-file.mjs` three times plus one `grep`, all to re-learn
-`contributeLogsEvidence`'s signature) — a cost this pointer removes.
+documented there." This is a real, recurring self-discovery tax — one
+coordinator re-read `lib/evidence-file.mjs` plus a `grep`, all to re-learn
+`contributeLogsEvidence`'s signature — a cost this pointer removes.
 
 **Coordinator prompts MUST name every connector-shaped skill on the manifest.**
 Each dispatch prompt lists, per capability, the resolved connector skill from
@@ -895,20 +894,20 @@ result under the key it would compute — `mcpCacheKey(tool, args)` then
 `cachePut(toolCacheDirFor(buildId), key, {…, writerId: "orchestrator"}, nowMs)`
 from `lib/tool-cache.mjs` — storing the DIGEST, not the raw rows.
 
-This is not optional polish; without it the MCP cache goes unused. Measured
-across every live run before this was added: **zero MCP entries ever stored**,
-because an agent's check-then-call-then-store costs three calls on a miss to
-save one later, so skipping it is the rational choice for a one-off query.
-Pre-seeding inverts that — the agent's `get` is a single call that usually
-hits. Store the same digest you put in the evidence file; the two are
-complementary (the file is read wholesale at turn 1, the cache answers a
-specific repeat query later).
+This is not optional polish; without it the MCP cache goes unused. Before this
+was added, the cache went entirely unused across every live run — an agent's
+check-then-call-then-store costs three calls on a miss to save one later, so
+skipping it is the rational choice for a one-off query. Pre-seeding inverts
+that — the agent's `get` is a single call that usually hits. Store the same
+digest you put in the evidence file; the two are complementary (the file is
+read wholesale at turn 1, the cache answers a specific repeat query later).
 
 **Also hand every dispatch the tool cache.** The evidence file shares digested
 _findings_; `bin/cached-exec.mjs` / `bin/cached-mcp.mjs` share raw _call
-results_, which is where most duplicate work actually hides — on one measured
-build `gh` was 37% of all coordinator tool calls and 46 were byte-identical
-commands re-run by different coordinators. Include the plugin root in each
+results_, which is where most duplicate work actually hides — `gh` calls make
+up a large share of all coordinator tool calls on a real build, and a
+meaningful number of them are byte-identical commands re-run by different
+coordinators. Include the plugin root in each
 dispatch prompt so coordinators can invoke the wrappers, and tell them to pass
 their own `testRunId` as `writerId`. The cache lives at
 `<tmpdir>/bstack-rca/rca-toolcache.<buildId>/`, one file per call key, shared
@@ -922,9 +921,9 @@ Step 4. Every coordinator writes only its own shard under
 open the same file for writing, concurrent write-back cannot lose an update;
 `readEvidenceFile` folds base + all shards into one view, applying shards in
 sorted order, with real evidence taking precedence over a recorded `gap`. A
-measured comparison: 8 concurrent writers with a realistic read→work→write
-window lost **28 of 40 updates** against a single shared file, and **0 of 40**
-under this layout.
+comparison under a realistic concurrent read→work→write window showed a
+single shared file losing the large majority of concurrent updates, while
+this sharded layout lost none.
 
 **Application bugs need a culprit PR.** Whenever a test's RCA classifies as
 PRODUCT_BUG / application bug, the coordinator MUST hunt the culprit PR via the

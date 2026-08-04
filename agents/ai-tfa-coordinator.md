@@ -230,19 +230,40 @@ read-only and has no side effects, so a read is always safe to repeat.
    extra turn, never a busy-wait.
 4. **One thread per test.** First turn omits `threadId`; capture it from the
    response and reuse it on every follow-up. Never start a second thread.
-4b. **A drain ERROR kills the TURN, not the THREAD — resubmit, don't give up.**
+4b. **A drain ERROR kills the TURN, not always the THREAD — resubmit ONCE,
+   don't give up immediately, but don't retry blindly to the turn cap either.**
    `getTfaTurnResult` returning `TFA agent run failed` (or the submit itself
-   throwing it) is a dead turn, not a dead thread: observed repeatedly, a
-   fresh submit on the SAME `threadId` succeeds immediately and resolves at
-   high confidence. So when the drain fast-fails on consecutive hard errors,
-   the next move is to resubmit on that same thread (counting it as a turn) —
-   NOT to mint a new thread and not to end the run `PENDING`. Ending PENDING
-   here throws away a resolvable test. Only stop once the turn cap is spent.
+   throwing it) is usually a dead turn, not a dead thread: a fresh submit on
+   the SAME `threadId` frequently succeeds immediately and resolves at high
+   confidence. So on the FIRST such failure, resubmit on that same thread
+   (counting it as a turn) — do NOT mint a new thread and do NOT end the run
+   `PENDING` on one failure alone.
+
+   **But if THAT resubmit ALSO comes back `TFA agent run failed` — two
+   consecutive failures on the same thread with no successful real response
+   between them — STOP retrying and end the test `PENDING` immediately (note
+   `"likely-context-exceeded"`), rather than continuing to resubmit until the
+   turn cap is spent.** This is confirmed, not a guess: real production logs
+   for a thread that wedged this way twice in a row show the backend's own
+   error was `openai.BadRequestError: ... 'code': 'context_length_exceeded'`
+   both times — the thread's accumulated history had exceeded the model's
+   context window, a structural condition that does NOT clear on resubmit
+   (unlike a genuinely transient wedge, which the first retry already
+   handles). Burning the remaining turn cap on more resubmits of a thread in
+   this state wastes every one of them — they cannot succeed. Two consecutive
+   failures on the same thread (not two failures total across the whole run)
+   is the signal; a thread that fails once, then succeeds, then fails again
+   later has NOT hit this — treat each failure's retry independently and only
+   escalate to this stop when a resubmit's own retry fails too.
 
 4b-i. **Two DIFFERENT TFA failures, don't confuse them.**
-   - `TFA agent run failed` — the wedge. Unrelated to message size (a
-     240-char message wedged like a 1500-char one). Fix: resubmit on the same
-     thread, per 4b.
+   - `TFA agent run failed` — usually the wedge (see 4b: one retry). Two of
+     these in a row on the same thread is very likely `context_length_exceeded`
+     server-side (confirmed via production logs, not inferred) — stop per 4b
+     rather than treating it as a message-size problem to fix by shortening
+     THIS turn's submission; the accumulated thread history, not this
+     message, is what's oversized, and this coordinator has no way to trim
+     that from the client side.
    - **`turnId` exists ONLY on a soft-`PENDING` turn.** TFA returns
 `{status, threadId, turnId}` for PENDING and omits `turnId` entirely on
 `RESOLVED` / `NEEDS_INFO` — so reporting `turn_id: not available` on a resolved
@@ -419,6 +440,10 @@ capability is unavailable — emit an
      PRODUCT_BUG in play + no supported PR yet → widen the github hunt this turn.
      Concatenate per-ask blocks into the next-turn MESSAGE (respect size caps).
 4. SUBMIT follow-up on the SAME thread: tfaRcaTurn(testRunId, message, threadId). turns_used += 1.
+     FAILS ("TFA agent run failed") → resubmit the SAME message on the SAME
+     thread once (per 4b), still counting as a turn. If THAT resubmit also
+     fails → END (PENDING, note "likely-context-exceeded") immediately, do
+     NOT continue looping to the turn cap (per 4b/4b-i).
 5. TURN-CAP CHECK: if turns_used >= turnCap and still NEEDS_INFO → END (PENDING, "turn-cap").
      else → go to 2 with the new result.
 6. EMIT the RCA_OUTPUT block from the captured terminal state.
@@ -492,9 +517,10 @@ RCA_OUTPUT_END
 
 Notes:
 - `status` is one of exactly three values. `turn-cap`, `soft-pending` (drain
-  budget spent) and `blocked` all report as `PENDING`; note which in `root_cause`.
-  A `PENDING` from a *drained* turn should never appear — a drain that lands
-  re-classifies instead.
+  budget spent), `blocked`, and `likely-context-exceeded` (two consecutive
+  same-thread `TFA agent run failed` resubmits, per 4b) all report as
+  `PENDING`; note which in `root_cause`. A `PENDING` from a *drained* turn
+  should never appear — a drain that lands re-classifies instead.
 - `asks_skipped` always includes `test_logs` whenever TFA asked for logs.
   `asks_fulfilled` **never** includes `test_logs`.
 - `asks_unavailable` is the evidence-coverage signal the coverage stamp turns

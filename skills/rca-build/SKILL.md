@@ -479,14 +479,30 @@ clustering by default instead of by necessity.
 2. **`ready: true`** → for each entry in `buildThemes`, call
    `listTestsInFailureTheme(buildUuid=<build id>, themeId=<buildFailureThemeId>)`,
    following `nextCursor` until exhausted, to get that theme's member
-   testRunIds. Feed the `listTestIds` rows + the themes result + the per-theme
-   member lists into `lib/theme-clustering.mjs` → `clustersFromThemes(rows,
-themesResult, testsByThemeId)` — this is the **preferred path**, since the
-   grouping reflects the server's own root-cause analysis rather than a text-
-   signature guess, and it never runs the coordinator fan-out N-tests-wide for
-   a build with only a handful of distinct causes duplicated across teams.
-   Any failed test the server didn't assign to a theme is never dropped — it
-   still gets its own singleton cluster.
+   testRunIds. Feed rows + the themes result + the per-theme member lists into
+   `lib/theme-clustering.mjs` → `clustersFromThemes(rows, themesResult,
+   testsByThemeId)` — this is the **preferred path**, since the grouping
+   reflects the server's own root-cause analysis rather than a text-signature
+   guess, and it never runs the coordinator fan-out N-tests-wide for a build
+   with only a handful of distinct causes duplicated across teams. Any failed
+   test the server didn't assign to a theme is never dropped — it still gets
+   its own singleton cluster.
+
+   **`rows` MUST be `readRows(csvPath)` — the CSV Step 2 already seeded —
+   never a `listTestIds` result variable held over from earlier in the turn.**
+   A real run hit exactly this: an earlier `listTestIds(status="failed")` call
+   in the same session errored ("fetch failed"), a later call used a
+   *different* status filter, and `clustersFromThemes` was fed whatever `rows`
+   was still in scope — every theme member came back unmatched (every
+   `rowById.get(...)` lookup missed), which reads exactly like a "test ID
+   mismatch" but isn't one: `getBuildFailureThemes`/`listTestsInFailureTheme`
+   themselves returned correct data the whole time. The result: the CSV ended
+   up with signature-hash `c-xxxxx` cluster IDs (`clusterAndPersist`'s fallback
+   format) instead of `theme-<id>`/`solo-<id>`, i.e. the preferred path was
+   silently abandoned even though it never actually failed. The CSV is the one
+   row set guaranteed fresh and from a successful seed (Step 2 only seeds
+   after `listTestIds` succeeds) — always re-read it here rather than trusting
+   a variable carried over from turns ago.
 3. **`ready: false`** (still computing past the poll budget, a failure status,
    or `status: "trigger-unavailable"` — the trigger call didn't succeed) →
    **fall back** to **`clusterAndPersist(csvPath, csvStateModule)`**

@@ -839,19 +839,24 @@ representative outcome for seeding siblings.
 
 ## Step 5 — fan-out (fully autonomous)
 
-**REQUIRED gate before your first Step 5 dispatch: Step 4b must have already
-happened this pass.** A real run skipped Step 4b entirely — no lightweight
-turn-1 pre-dispatch subagent was ever launched, and all N cluster
-representatives went straight to a full `ai-tfa-coordinator` dispatch here
-instead, paying full multi-turn coordinator cost for every cluster including
-the ones that would have resolved in one pre-dispatched turn. **If you are
-about to issue Step 5's representative dispatches and cannot point to this
-pass's `initTurn1Registry` call and a turn-1 dispatch batch issued for every
-thread-less cluster representative, STOP — go back and do Step 4b first, even
-belatedly.** Step 4b is not an optional latency nicety layered on top of Step
-5; skipping it means every single cluster pays for a capability (Step 4b's
-one-turn resolve-and-skip-Step-5 fast path) that this run never even
-attempted.
+**REQUIRED gate before your first Step 5 dispatch: Step 4b's dispatch batch
+must have already been ISSUED this pass — not completed, not waited on,
+issued.** A real run skipped Step 4b entirely — no lightweight turn-1
+pre-dispatch subagent was ever launched, and all N cluster representatives
+went straight to a full `ai-tfa-coordinator` dispatch here instead, paying
+full multi-turn coordinator cost for every cluster including the ones that
+would have resolved in one pre-dispatched turn. **If you are about to issue
+Step 5's representative dispatches and cannot point to this pass's
+`initTurn1Registry` call and a turn-1 dispatch batch issued for every
+thread-less cluster representative, STOP — go back and fire that dispatch
+batch first.** This gate is about the dispatch having gone out, same
+fire-and-forget contract Step 4b already documents — it is NOT a "wait for
+Step 4b's subagents to finish" gate, and reading it that way reintroduces the
+exact sequential-latency bug Step 4b exists to remove. In practice this batch
+should already be long since fired by the time you reach Step 5, since Step
+4b's own instructions have it go out in the same turn as Step 4's first
+evidence-gathering calls — this check exists only to catch the case where
+that never happened at all, not to insert a new wait.
 
 **ORDER MATTERS: representative first, siblings only after it lands.** For each
 cluster, dispatch the representative, wait for its row to go terminal, then

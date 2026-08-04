@@ -9,6 +9,15 @@ that tries to *disprove* each suspect before it enters `related_prs`.
 > needed and use whatever the client already has — **GitHub MCP if available,
 > else `gh`, else degrade** to an `unavailable` block.
 
+**Contents:** [Capability discovery](#capability-discovery-in-order) ·
+[Culprit-PR hunt](#application-bugs-require-a-culprit-pr-hunt-mandatory) ·
+[Batching probes](#batch-every-independent-probe-into-one-message--never-one-call-per-turn) ·
+[Evidence per ask](#evidence-each-ask-needs-be-specific--no-fishing) ·
+[Field-filtering](#field-filtering--project-before-you-pull-every-call) ·
+[Falsification protocol](#falsification-protocol--rule-out-dont-just-rule-in) ·
+[Suspect packet](#the-suspect-packet-structured-not-free-text) ·
+[Digest discipline](#digest-discipline)
+
 ## Capability discovery (in order)
 
 1. **GitHub MCP** (`mcp__github__*`) — preferred for structured PR/diff/blame queries.
@@ -40,6 +49,30 @@ the turn cap. If still none, the turn must explicitly state
 the CSV row records the gap. Never fabricate a PR; if the github connector is
 invalid/absent, the same explicit statement plus an `unavailable` block goes to
 TFA (a gate-recorded gap).
+
+## Batch every independent probe into one message — never one call per turn
+
+This hunt routinely needs several `gh` calls that don't depend on each
+other's output: a commit-history check per candidate file in "changed paths
+vs failure signature," each row of the "Evidence each ask needs" table
+below, and each candidate PR's falsification check. **None of these need to
+see a prior result before running** — the only exception is when one call's
+output supplies a literal input to the next (e.g., you need a PR number
+back from a search before you can `gh pr view` it).
+
+Issue every independent probe as its own tool call **within the same
+message** — the same discipline `ai-tfa-coordinator.md`'s NEEDS_INFO step
+already requires across multiple asks (`Promise.all` / concurrent gather)
+applies here too, one level down, across multiple probes inside a single
+ask. One call per file path, fired one message at a time, waiting for each
+result before issuing the next, spends a full turn's think-time on every
+individual `gh api` round trip even though the call itself finishes in
+under two seconds — for a five-file changed-paths check that is the
+difference between one batched message and five serialized ones. Plan the
+full probe list first (every candidate file, every table row, every
+falsification check that has no dependency on another probe's result), then
+fire all of them together; only serialize the ones with a genuine
+input-from-output dependency.
 
 ## Evidence each ask needs (be specific — no fishing)
 

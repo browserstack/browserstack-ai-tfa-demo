@@ -13,6 +13,13 @@ capability manifest — see `SKILL.md` § Gate Part A). There are **no `kubectl`
 `chitragupta` /
 `bifrost` literals here** — that is the whole point of going generic.
 
+**Contents:** [How asks are processed](#how-a-turns-asks-are-processed) ·
+[Routing table](#routing-table-capability-not-tool) ·
+[Digest format](#digest-format) ·
+[Unfulfillable asks](#unfulfillable-asks--report-dont-drop) ·
+[Capability manifest](#capability-manifest-built-once-at-the-gate) ·
+[Build-level evidence cache](#build-level-evidence-cache-compute-once)
+
 The registry logic lives in `lib/routing.mjs` (`routeAsk` / `routeAsks`); this
 file is the human/agent-facing contract for the digest and the size caps.
 

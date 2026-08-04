@@ -26,6 +26,21 @@ There is exactly **one mode**: autonomous. There is exactly **one gate** (Step
 Config (concurrency, turn-cap, paths, evidence registry) lives in
 `config/rca.config.json`. State lives in the CSV/WAL spine (`lib/csv-state.mjs`).
 
+<use_parallel_tool_calls>
+For maximum efficiency, whenever you need to perform multiple independent
+operations — connector probes, per-repo evidence fetches, per-workload log
+sweeps, or any other set of calls with no dependency between them — invoke all
+relevant tools simultaneously in one message rather than sequentially.
+Prioritize calling tools in parallel whenever possible; err on the side of
+maximizing parallel tool calls rather than running too many tools
+sequentially. This applies throughout every step below (Gate probes, Step 4's
+per-repo/per-workload pre-fetch, Step 4b's cluster dispatch, Step 5's
+representative and sibling dispatch) — a real run measured this exact
+violation costing 4+ minutes on gate probes alone. The only exception is when
+one call's output is a literal input to another; that pair, and only that
+pair, runs in order.
+</use_parallel_tool_calls>
+
 ## API reference — read THIS, do not grep the source
 
 Every signature this run needs, in one place. This exists because agents were
@@ -216,6 +231,30 @@ then …". (This is the same class of bug Step 4b hit on a real run: a
 sequential-*looking* list of independent checks got executed sequentially in
 practice, costing minutes it never needed to. Don't repeat that here, at the
 very front of the pipeline where it delays everything downstream.)
+
+**This rule has already been read and violated on a real run — measured
+cost 4+ minutes on gate/scope probes alone.** The coordinator had this exact
+paragraph available and still issued `gh api <repo>`, an env-var check, a
+second env-var check, `kubectl get ns`, `kubectl auth can-i`, `kubectl get
+pods` (×2), and `kubectl get pod` as eight separate messages, one Bash call
+each, 10-34 seconds apart. Restating the rule again clearly did not prevent
+that, so treat it as a hard gate, not a preference:
+
+- **REQUIRED before your first probe Bash call:** write out the full list of
+  every probe you are about to run this pass — every base probe, every scope
+  probe, every target — one line each. Then issue every item on that list as
+  its own tool-call block **in this one message**.
+- **If a message you are about to send contains exactly one Bash call for a
+  probe, and your list above still has unissued items with no dependency on
+  that call's result — STOP.** That message is the violation in progress.
+  Add the rest of the list to it before sending.
+- "I'll check github's connector first, then move to infra" is the
+  rationalization that produced the 4-minute real-run cost above. It sounds
+  like reasonable sequencing; it is the forbidden pattern. github's probes
+  and infra's probes have no dependency on each other — there is no "first."
+- The only real dependency is per-connector: a connector's scope probes wait
+  on that SAME connector's base probe, nothing else. Two different
+  connectors' probes never wait on each other, ever.
 
 | Connector | Probe                                                                                                                                                                                                                                                                                       |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -452,6 +491,15 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 
+   **Every repo's PR-window search is independent of every other repo's —
+   fire all of them as parallel tool calls in ONE message, never one repo,
+   read its result, then the next repo.** The same rule that governs Gate
+   Part A's connector probes applies here at repo granularity: write the
+   full repo list from step 2 first, then issue every repo's `gh pr list`
+   call together. A message containing exactly one repo's fetch, with other
+   repos from the union still unfetched and no dependency on this one's
+   result, is the violation — go back and batch the rest in before sending.
+
    **`--json` on THIS FIRST `gh pr list` call MUST include `files` — there is
    no separate step where it gets added later.** This is the single
    highest-leverage thing in Step 4, and it is a MUST, not a nice-to-have: a
@@ -495,7 +543,10 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
      ones two coordinators both open.
 4. For each workload: run the connector skill's compulsory kubectl +
    VictoriaLogs sweep **once**, anchored to the build's own clock — never
-   "now". **PAD the window: `started_at − 2m` .. `finished_at + 10m`.**
+   "now". **Every workload's sweep is independent of every other workload's
+   and of every repo's fetch in step 3 — batch all of them into the same
+   message(s), same rule as step 3's repo fetches.** **PAD the window:
+   `started_at − 2m` .. `finished_at + 10m`.**
    `finished_at` is when the build was _marked_ finished, which is not when
    the failing behaviour stopped: on a real build, an upstream outage was
    still ongoing after `finished_at` was recorded — a sweep scoped strictly

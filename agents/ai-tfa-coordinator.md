@@ -29,6 +29,20 @@ standalone, driven by the batch workflow, a subagent dispatch, or the thin
 sequential harness (`lib/loop.mjs`). It is **generic over product and infra** —
 it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
 
+<use_parallel_tool_calls>
+For maximum efficiency, whenever you need to perform multiple independent
+operations, invoke all relevant tools simultaneously rather than sequentially.
+Prioritize calling tools in parallel whenever possible. For example, when
+checking commit history across several candidate files, run all those `gh`
+calls in parallel. When validating multiple connectors (github, infra, logs,
+metrics) or their scope probes, run all of those checks in parallel. When a
+NEEDS_INFO turn carries multiple asks, gather all of them in parallel. Err on
+the side of maximizing parallel tool calls rather than running too many tools
+sequentially — a real run measured 60-90 seconds of pure overhead per
+avoidable sequential call. The only exception is when one call's output is a
+literal input to another call; that pair, and only that pair, runs in order.
+</use_parallel_tool_calls>
+
 ## Inputs
 
 - `pluginRoot` — **required**, absolute path to this plugin's repo root. Every
@@ -379,7 +393,15 @@ capability is unavailable — emit an
      turn — never one ask's full gather-and-digest before starting the next.
      `lib/loop.mjs`'s `runRcaLoop` mirrors this with `Promise.all` over
      `buckets.gather`; do the equivalent here. Only the final message assembly
-     respects priority order, not the fetching.
+     respects priority order, not the fetching. **This is not only an
+     across-asks rule** — a single github ask routinely needs several
+     independent probes itself (a commit-history check per candidate file, a
+     falsification check per suspect PR); see
+     `references/github-evidence.md`'s "Batch every independent probe into
+     one message" for that one-level-down case. One Bash call per message,
+     waiting for each result before firing the next independent probe, pays
+     a full turn's think-time per call for no reason — this was measured
+     costing 60-90s of pure overhead per call in a real run.
      For each ask:
        skip   → record in asks_skipped, emit nothing.
        gather → FIRST check `evidenceFile` (if present) for this ask's scope —

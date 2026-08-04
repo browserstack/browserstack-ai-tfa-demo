@@ -228,42 +228,60 @@ read-only and has no side effects, so a read is always safe to repeat.
 3. **Turn-cap** = `turnCap` from `config/rca.config.json` (default 6). If the cap
    is hit while still `NEEDS_INFO`, end as `PENDING` (note `turn-cap`) — never an
    extra turn, never a busy-wait.
-4. **One thread per test.** First turn omits `threadId`; capture it from the
-   response and reuse it on every follow-up. Never start a second thread.
-4b. **A drain ERROR kills the TURN, not always the THREAD — resubmit ONCE,
-   don't give up immediately, but don't retry blindly to the turn cap either.**
-   `getTfaTurnResult` returning `TFA agent run failed` (or the submit itself
-   throwing it) is usually a dead turn, not a dead thread: a fresh submit on
-   the SAME `threadId` frequently succeeds immediately and resolves at high
-   confidence. So on the FIRST such failure, resubmit on that same thread
-   (counting it as a turn) — do NOT mint a new thread and do NOT end the run
-   `PENDING` on one failure alone.
+4. **One thread per test — with one narrow, deliberate exception (4b).** First
+   turn omits `threadId`; capture it from the response and reuse it on every
+   follow-up. Never start a second thread EXCEPT the single context-exceeded
+   restart 4b describes — that path exists precisely because the first
+   thread is provably unrecoverable, not as a general license to abandon
+   threads that are merely inconvenient.
+4b. **A drain ERROR kills the TURN, not always the THREAD — resubmit ONCE; if
+   that ALSO fails, RESTART with a condensed hypothesis rather than just
+   giving up.** `getTfaTurnResult` returning `TFA agent run failed` (or the
+   submit itself throwing it) is usually a dead turn, not a dead thread: a
+   fresh submit on the SAME `threadId` frequently succeeds immediately and
+   resolves at high confidence. So on the FIRST such failure, resubmit on
+   that same thread (counting it as a turn) — do NOT mint a new thread and do
+   NOT end the run `PENDING` on one failure alone.
 
-   **But if THAT resubmit ALSO comes back `TFA agent run failed` — two
+   **If THAT resubmit ALSO comes back `TFA agent run failed` — two
    consecutive failures on the same thread with no successful real response
-   between them — STOP retrying and end the test `PENDING` immediately (note
-   `"likely-context-exceeded"`), rather than continuing to resubmit until the
-   turn cap is spent.** This is confirmed, not a guess: real production logs
-   for a thread that wedged this way twice in a row show the backend's own
-   error was `openai.BadRequestError: ... 'code': 'context_length_exceeded'`
-   both times — the thread's accumulated history had exceeded the model's
-   context window, a structural condition that does NOT clear on resubmit
-   (unlike a genuinely transient wedge, which the first retry already
-   handles). Burning the remaining turn cap on more resubmits of a thread in
-   this state wastes every one of them — they cannot succeed. Two consecutive
-   failures on the same thread (not two failures total across the whole run)
-   is the signal; a thread that fails once, then succeeds, then fails again
-   later has NOT hit this — treat each failure's retry independently and only
-   escalate to this stop when a resubmit's own retry fails too.
+   between them — this is confirmed (via real production logs, not a guess)
+   to be the backend's own `openai.BadRequestError: ...
+   'code': 'context_length_exceeded'`: the thread's accumulated history has
+   exceeded the model's context window, a structural condition that does NOT
+   clear on resubmit (unlike a genuinely transient wedge, which the first
+   retry already handles). Continuing to resubmit THIS thread wastes every
+   remaining turn — none can succeed. But the test itself is very likely
+   still resolvable; only this one thread's history is oversized. So:**
+
+   1. **Distill everything gathered so far this run into ONE condensed
+      hypothesis message** — same digest discipline as everywhere else (link
+      over paste, no raw diffs/log dumps): the leading root-cause hypothesis,
+      the strongest supporting evidence, and any suspect PR, in the same
+      shape a cluster sibling's `pre_seed` message would carry. Discard the
+      rest of the dead thread's history entirely — it is exactly what caused
+      the overflow, so carrying more of it into the restart than this one
+      condensed paragraph defeats the point.
+   2. **Submit this as turn 1 of a BRAND NEW thread** (`tfaRcaTurn(testRunId,
+      message=<condensed hypothesis>)`, no `threadId`) — this is the one
+      narrow exception to "never start a second thread" in step 4, justified
+      because the first thread is now provably dead, not merely difficult.
+      Capture the new `threadId` and continue the loop from step 2 as normal;
+      its turns count against the same overall `turnCap` — no separate budget.
+   3. **Allow exactly ONE such restart per test.** If the fresh thread ALSO
+      hits two consecutive same-thread failures, do not restart again — end
+      `PENDING` (note `"likely-context-exceeded"`) for real. A test whose
+      condensed restart still overflows needs a human, not a third thread.
 
 4b-i. **Two DIFFERENT TFA failures, don't confuse them.**
-   - `TFA agent run failed` — usually the wedge (see 4b: one retry). Two of
-     these in a row on the same thread is very likely `context_length_exceeded`
-     server-side (confirmed via production logs, not inferred) — stop per 4b
-     rather than treating it as a message-size problem to fix by shortening
-     THIS turn's submission; the accumulated thread history, not this
-     message, is what's oversized, and this coordinator has no way to trim
-     that from the client side.
+   - `TFA agent run failed` — usually the wedge (see 4b: one retry, then one
+     condensed restart if the retry also fails). Two of these in a row on the
+     same thread is very likely `context_length_exceeded` server-side
+     (confirmed via production logs, not inferred) — handle per 4b rather
+     than treating it as a message-size problem to fix by shortening THIS
+     turn's submission; the accumulated thread history, not this message, is
+     what's oversized, and a same-thread resubmit can never trim that — only
+     a fresh thread with a condensed message can.
    - **`turnId` exists ONLY on a soft-`PENDING` turn.** TFA returns
 `{status, threadId, turnId}` for PENDING and omits `turnId` entirely on
 `RESOLVED` / `NEEDS_INFO` — so reporting `turn_id: not available` on a resolved
@@ -442,8 +460,12 @@ capability is unavailable — emit an
 4. SUBMIT follow-up on the SAME thread: tfaRcaTurn(testRunId, message, threadId). turns_used += 1.
      FAILS ("TFA agent run failed") → resubmit the SAME message on the SAME
      thread once (per 4b), still counting as a turn. If THAT resubmit also
-     fails → END (PENDING, note "likely-context-exceeded") immediately, do
-     NOT continue looping to the turn cap (per 4b/4b-i).
+     fails (two consecutive same-thread failures) → per 4b, if no restart has
+     happened yet this run: submit a condensed hypothesis as turn 1 of a
+     BRAND NEW thread (no threadId), capture the new threadId, turns_used += 1,
+     go to 2. If a restart already happened once and this (the restarted)
+     thread also hits two consecutive failures → END (PENDING, note
+     "likely-context-exceeded") — no second restart.
 5. TURN-CAP CHECK: if turns_used >= turnCap and still NEEDS_INFO → END (PENDING, "turn-cap").
      else → go to 2 with the new result.
 6. EMIT the RCA_OUTPUT block from the captured terminal state.

@@ -187,6 +187,23 @@ product-scoped — a workspace may hold none, one, or several product families
 (e.g. `<product-a>-*`, `<product-b>-*`, whatever the user has). After the `ls`,
 pick the _product family_ whose connector skills apply to THIS build:
 
+**REQUIRED before you open any single family's SKILL.md: list every family the
+`ls` output actually returned, one line each, THEN check each one's failure-
+signature match — never open just the first (or only) one you happen to
+notice and stop there.** This has gone wrong on a real run: the `ls` returned
+three families (`a11y-*`, `tm-*`, `tra-*`), the build's actual failures were
+accessibility/Workflow-Analyzer domain, and the orchestrator read only
+`tra-regression-context` (a TRA/Observability connector whose declared lanes
+don't include accessibility at all) — never opened `a11y-regression-context`,
+the one that actually matched. That silently produced "exactly one family, use
+it" behavior even though three were present, and the mismatch then had to be
+patched by asking the user two separate questions Part B says never to ask.
+**If you are about to read one family's SKILL.md and cannot recite the other
+families the `ls` output also returned, STOP — you skipped the enumeration.**
+The failure-signature check (step 2 below) is what catches a family that looks
+present but doesn't actually own this build's failures; skipping straight to
+one file is exactly how a wrong-family read reaches Part B undetected.
+
 - **Zero families found** → **nudge the user in the gate summary**:
   "No connector-shaped skills found under `.claude/skills/` — proceeding with
   raw MCP tools only; culprit-PR attribution will be best-effort against
@@ -294,6 +311,17 @@ Coordinators can then act freely inside the resolved scope and must fail
 closed outside it. This closes the failure mode where a coordinator degrades
 to `unavailable` because the orchestrator didn't confirm the specific target.
 
+**A real run skipped this whole section — not one scope probe ran, for a
+connector that declares seven of them.** The base probes (`gh auth status`,
+`kubectl version`) passed and the run went straight to Step 2's `listTestIds`,
+never reading or running the connector's `Scope probes:` list at all. **Before
+your first `listTestIds`/discovery call: confirm you can name every scope
+probe you ran and its result, for every connector recorded `valid` in the
+manifest.** If a connector is `valid` in the manifest and you cannot name a
+single scope-probe result for it, STOP — go back and run its declared list (or,
+if it genuinely declares none, the manifest-time warning below is the only
+legitimate reason to have nothing to name).
+
 Skills that don't declare `Scope probes:` degrade to a manifest-time warning
 ("scope probes missing — coordinator may over-degrade"). Do not invent
 product-specific probes here.
@@ -315,6 +343,21 @@ is the point:
 - `gh repo view` / git remotes for the repos,
 - the current branch for the working branch,
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
+
+**Check the selected connector skill's own intake-defaults section FIRST — before
+falling through to inference, and before ever asking.** A connector skill that
+declares "Intake defaults for the gate (Part B)" (or equivalent) is telling you
+these fields are answerable outright for its product, by build-name/lane or
+failure-pattern lookup — not assumptions, not something to ask about. Skipping
+straight to inference or to the user when the connector already names the
+answer is the exact bug a real run hit: the selected connector's own intake
+section explicitly read _"An orchestrator that... asks the consolidated
+question about them is reading the wrong place"_, and the run asked anyway —
+two separate questions, not even the allowed single one. If the connector's
+intake section doesn't resolve a field for THIS build (e.g. its lane table
+doesn't match the failure signature at all), that is itself a sign the wrong
+family was selected — go back to the enumeration step above before treating
+the field as genuinely non-assumable.
 
 **Product-repo corroboration (do NOT skip).** The product repo must plausibly
 be the _system under test for THIS build's failures_ — not merely a repo name
@@ -347,7 +390,20 @@ above — without it the culprit-PR hunt cannot run); and rarely an ambiguous re
 when PRs were supplied. Those, and only those, may be asked **ONCE, in a single
 consolidated question at gate close** — e.g. _"Failures look like `<domain>`;
 which repo owns that code? (reply 'none' → I'll RCA without culprit-PR
-attribution)."_ Never a second question. **Headless: skip asking entirely;
+attribution)."_ Never a second question.
+
+**This has already been violated on a real run** — a product-family
+disambiguation question and a repo-ownership question went out as two separate
+`AskUserQuestion` calls, 33 seconds apart, instead of one consolidated
+question (or, better, no question at all, since the connector's own intake
+defaults answered both — see above). **Before your first `AskUserQuestion`
+call this pass: write out every field this run still needs from the user,
+across every reason it might be non-assumable, in one list — then ask them as
+ONE question with multiple parts if more than one survives.** If you are about
+to send a second `AskUserQuestion` call in the same gate pass, STOP — fold its
+content into the first question instead, or if the first has already been
+sent, that is the violation; there is no second gate question, ever.
+**Headless: skip asking entirely;
 record the gaps.**
 
 ### Gate close
@@ -404,7 +460,17 @@ Each cluster gets one **representative** (full multi-turn loop) and `N−1`
 the expensive evidence hunt to O(distinct causes) while every test still lands a
 per-test RCA. Singleton clusters are just plain per-test loops.
 
-**Prefer the server's own clustering over recomputing it client-side:**
+**Prefer the server's own clustering over recomputing it client-side.** A real
+run skipped straight to the client-side fallback below without ever calling
+`getBuildFailureThemes` — the tool's schema had even been loaded via
+`ToolSearch` that pass, it was simply never invoked. **`clusterAndPersist` may
+ONLY be called after a `getBuildFailureThemes` call this pass returned
+`ready: false` (or errored) — never as a first move.** If you are about to call
+`clusterAndPersist` and cannot point to this pass's own `getBuildFailureThemes`
+call and its `ready: false` result, STOP — you are taking the fallback without
+ever having tried the preferred path, which throws away the server's own
+root-cause grouping for no reason and degrades every run to text-signature
+clustering by default instead of by necessity.
 
 1. Call `getBuildFailureThemes(buildUuid=<build id>)`. If nothing has ever
    been computed for this build, this triggers computation (one POST, same
@@ -772,6 +838,20 @@ representative's dispatch and translate the result into the matching input:
 representative outcome for seeding siblings.
 
 ## Step 5 — fan-out (fully autonomous)
+
+**REQUIRED gate before your first Step 5 dispatch: Step 4b must have already
+happened this pass.** A real run skipped Step 4b entirely — no lightweight
+turn-1 pre-dispatch subagent was ever launched, and all N cluster
+representatives went straight to a full `ai-tfa-coordinator` dispatch here
+instead, paying full multi-turn coordinator cost for every cluster including
+the ones that would have resolved in one pre-dispatched turn. **If you are
+about to issue Step 5's representative dispatches and cannot point to this
+pass's `initTurn1Registry` call and a turn-1 dispatch batch issued for every
+thread-less cluster representative, STOP — go back and do Step 4b first, even
+belatedly.** Step 4b is not an optional latency nicety layered on top of Step
+5; skipping it means every single cluster pays for a capability (Step 4b's
+one-turn resolve-and-skip-Step-5 fast path) that this run never even
+attempted.
 
 **ORDER MATTERS: representative first, siblings only after it lands.** For each
 cluster, dispatch the representative, wait for its row to go terminal, then

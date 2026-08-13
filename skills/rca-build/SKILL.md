@@ -358,6 +358,9 @@ is the point:
   3. Only if neither is available, fall through to the connector's
      intake-defaults, then the current git branch, per the existing order
      below.
+  This resolves the branch for the build's own trigger only — a multi-repo
+  build's OTHER repos each need their own branch resolved independently at
+  Step 4 (`workingBranch` per repo), not this single value.
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
 
 **Check the selected connector skill's own intake-defaults section FIRST — before
@@ -593,11 +596,36 @@ leaves the other free to reintroduce the bug.
 evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    Digest the result into the `evidence-block.md` shape, then persist via
    `setGithubEvidence(path, repo, {deployState, workingBranch, prsInWindow, gap}, nowMs)`.
-   **Always set `workingBranch` to the exact `<branch>` resolved in Gate Part
-   B (`fetchBuildInsights(buildId).branch`, never assumed main/master)** — it
-   is what `lib/pr-validation.mjs` checks a candidate PR's `baseRefName`
-   against, so a PR that shipped to a different branch than this build
-   actually ran on is rejected instead of trusted on timing alone.
+
+   **Resolve `workingBranch` for THIS repo, independently — never copy Part
+   B's single "working branch" across every repo in the union.** Part B
+   resolves one branch value for the build's own trigger (the automation/test
+   repo it named); a multi-repo build routinely ships different repos off
+   different branches (e.g. the product repo on `main`, the automation repo on
+   `release/2026.08`), and `fetchBuildInsights` describes only the build's own
+   branch, not every dependency's. Per repo, in this order:
+   1. `fetchBuildInsights(buildId).branch` — **only valid for the repo it
+      actually describes** (the SDK/automation repo the build ran); do not
+      apply it to a different repo in the same union. It is also SDK-build
+      metadata: absent entirely on non-SDK builds.
+   2. The active connector skill's own intake-defaults, when it declares a
+      branch/lane per repo (the customer's own skill is the right authority
+      for non-SDK builds and for every repo `fetchBuildInsights` doesn't
+      cover).
+   3. That repo's default branch (`gh api repos/OWNER/REPO --jq
+      '.default_branch'`) — **only as a last resort, and never silently
+      treated as authoritative**: it is a guess, not the branch this build
+      verified against.
+   If none resolves for a repo, leave `workingBranch: null` for it — this is
+   the SAME fail-open behavior `lib/pr-validation.mjs` already has for a
+   missing `suspectWindow.startedAt`: the branch check is skipped for that
+   repo rather than rejecting every candidate on an unresolved guess. Never
+   assume main/master when nothing resolves.
+
+   `workingBranch` is what `lib/pr-validation.mjs` checks a candidate PR's
+   `baseRefName` against, so a PR that shipped to a different branch than
+   this build actually ran on is rejected instead of trusted on timing alone
+   — but only for repos where the branch was genuinely resolved, not guessed.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 

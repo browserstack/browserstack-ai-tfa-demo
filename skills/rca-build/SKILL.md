@@ -83,12 +83,25 @@ deployShas(pathOrDoc) → {pins:{repo:sha}, source}   recomputeCoverage(path, {r
 readEvidenceFile(path) folds base+shards · readBaseFile(path) is base ONLY
 ```
 
+**PR ground-truth validation — `lib/pr-validation.mjs`**
+```
+validateSuspectPR(entry, evidenceDoc)              → {valid} | {valid:false, reason: "not-in-evidence"|"shipped-after"|"wrong-base-branch"}
+validateAndDeduplicatePRs(relatedPrs, evidenceDoc) → deduped, validated entries — invalid ones get
+  verdict: "ruled-out (<reason>)", never dropped. Called from lib/loop.mjs's out() choke point.
+```
+
 **Local repo reads — `lib/repo-source.mjs`**
 ```
 discoverWorkspaceRoot({repos, from, explicit, maxTries=3}) → {root, matched, tried, reason}
 resolveLocalRepos({repos, pins, workspaceRoot})            → {repo:{usable, sha|reason}}
 readFileAt({repo, sha, path, workspaceRoot})               → sha ONLY; a branch name is refused
+commitHistoryAt({repo, fromSha, toSha, path?, workspaceRoot}) → {ok, source, commits:[{sha,date,subject}]}
+  local `git log fromSha..toSha` — both must be shas, never a branch; omit `path` for repo-wide history
+blameAt({repo, sha, path, lineRange?, workspaceRoot})      → {ok, source, lines:[{sha,author,date,line,content}]}
+  scope lineRange:{start,end} to the failing stack frame — no gh equivalent needed once the commit is local
 ```
+All four `{ok, source: "local"|"remote-needed", reason}`-shaped calls never fall back to the network
+themselves — a `remote-needed` result means the caller falls through to the discovered `github` connector.
 
 **Housekeeping — `lib/state-dir.mjs`**
 ```
@@ -351,6 +364,9 @@ is the point:
   3. Only if neither is available, fall through to the connector's
      intake-defaults, then the current git branch, per the existing order
      below.
+  This resolves the branch for the build's own trigger only — a multi-repo
+  build's OTHER repos each need their own branch resolved independently at
+  Step 4 (`workingBranch` per repo), not this single value.
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
 
 **Check the selected connector skill's own intake-defaults section FIRST — before
@@ -585,7 +601,37 @@ leaves the other free to reintroduce the bug.
    recipes **once**, using `lib/evidence-cache.mjs`'s `compute(repo, range,
 evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    Digest the result into the `evidence-block.md` shape, then persist via
-   `setGithubEvidence(path, repo, {deployState, prsInWindow, gap}, nowMs)`.
+   `setGithubEvidence(path, repo, {deployState, workingBranch, prsInWindow, gap}, nowMs)`.
+
+   **Resolve `workingBranch` for THIS repo, independently — never copy Part
+   B's single "working branch" across every repo in the union.** Part B
+   resolves one branch value for the build's own trigger (the automation/test
+   repo it named); a multi-repo build routinely ships different repos off
+   different branches (e.g. the product repo on `main`, the automation repo on
+   `release/2026.08`), and `fetchBuildInsights` describes only the build's own
+   branch, not every dependency's. Per repo, in this order:
+   1. `fetchBuildInsights(buildId).branch` — **only valid for the repo it
+      actually describes** (the SDK/automation repo the build ran); do not
+      apply it to a different repo in the same union. It is also SDK-build
+      metadata: absent entirely on non-SDK builds.
+   2. The active connector skill's own intake-defaults, when it declares a
+      branch/lane per repo (the customer's own skill is the right authority
+      for non-SDK builds and for every repo `fetchBuildInsights` doesn't
+      cover).
+   3. That repo's default branch (`gh api repos/OWNER/REPO --jq
+      '.default_branch'`) — **only as a last resort, and never silently
+      treated as authoritative**: it is a guess, not the branch this build
+      verified against.
+   If none resolves for a repo, leave `workingBranch: null` for it — this is
+   the SAME fail-open behavior `lib/pr-validation.mjs` already has for a
+   missing `suspectWindow.startedAt`: the branch check is skipped for that
+   repo rather than rejecting every candidate on an unresolved guess. Never
+   assume main/master when nothing resolves.
+
+   `workingBranch` is what `lib/pr-validation.mjs` checks a candidate PR's
+   `baseRefName` against, so a PR that shipped to a different branch than
+   this build actually ran on is rejected instead of trusted on timing alone
+   — but only for repos where the branch was genuinely resolved, not guessed.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 
@@ -611,8 +657,17 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
 
    ```bash
    gh pr list -R <org>/<repo> --state merged --base <branch> \
-     --search 'merged:<from>..<to>' --json number,title,mergedAt,url,files --limit 100
+     --search 'merged:<from>..<to>' --json number,title,mergedAt,url,files,baseRefName --limit 100
    ```
+
+   `--base <branch>` already scopes this call to the build's real working
+   branch — but store `baseRefName` from the response on each PR anyway
+   (`match.baseRefName` in `lib/pr-validation.mjs`), not just trust the query
+   filter. A live coordinator gather run later in the loop (widening a hunt
+   outside this pre-fetch) may omit `--base` and default to the repo's
+   default branch — recording `baseRefName` per PR is what lets the
+   validation gate catch that PR before it reaches a user, rather than
+   relying on every gather call remembering the flag.
 
    `--json files` returns every PR's changed paths in the SAME call, so one
    request per repo replaces one `gh pr view <n> --json files` per PR across
@@ -1054,7 +1109,12 @@ re-running the same live search. This is already baked into
 `agents/ai-tfa-coordinator.md`'s Operating Principle 0 for any dispatch of
 that agent type — no need to repeat the mechanics in the prompt, just don't
 omit `evidenceFilePath` (above), since write-back has nothing to write to
-without it.
+without it. Note: `evidenceFilePath` is also used for **post-loop PR
+validation** — `lib/loop.mjs`'s `out()` cross-checks every coordinator's
+`related_prs` against the evidence file's `prsInWindow` ground truth
+(`lib/pr-validation.mjs`). A dispatch that omits the evidence file path
+disables this code-enforced validation gate, falling back to unvalidated
+LLM output only.
 
 **Pre-seed the MCP cache with the queries you just ran.** Step 4's log sweeps
 are MCP calls, and a coordinator will often want the same ones. Deposit each
@@ -1112,8 +1172,18 @@ link — that is all. When every row is terminal:
    `renderGlimpse`): `RCA analysis complete — build <id>` + a status count line
    (`<N> tests · <R> resolved · <P> pending · <F> failed`). **Nothing per-test.**
 2. Call **`triggerRcaReport(buildUuid=<build id>)`** (add `force=true` only to
-   re-run over an existing completed report).
-3. **Only once that call succeeds**, call
+   re-run over an existing completed report). **Wrap this call in try/catch**
+   and inspect the result:
+   - **Success** (no exception AND the response does not indicate failure):
+     proceed to step 3.
+   - **Failure** (exception thrown OR the response indicates failure — e.g. an
+     `error` field, a non-success status, or a falsy/missing result): print the
+     error message clearly, do **NOT** call `cleanupBuildArtifacts`, do **NOT**
+     print the completion glimpse or link line, and **DO** print:
+     `"triggerRcaReport failed — build artifacts preserved for retry."` Then
+     stop Step 6; the build's CSV, evidence file, and tool cache remain intact
+     so a subsequent `/rca-build` invocation can resume.
+3. **Only once step 2 succeeds**, call
    `cleanupBuildArtifacts(buildId, config.paths.stateDir)`
    (`lib/build-cleanup.mjs`) to delete THIS build's own CSV, evidence file +
    `.contrib/` shards, tool cache, and turn1 registry. Never call this before

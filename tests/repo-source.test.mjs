@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { localCloneFor, hasCommit, readFileAt, discoverWorkspaceRoot, resolveLocalRepos } from "../lib/repo-source.mjs";
+import { localCloneFor, hasCommit, readFileAt, discoverWorkspaceRoot, resolveLocalRepos, commitHistoryAt, blameAt } from "../lib/repo-source.mjs";
 
 let ws, repoDir, sha1, sha2;
 
@@ -145,4 +145,84 @@ test("path missing at that commit is a local answer, not a remote fallback", () 
   assert.equal(r.ok, false);
   assert.equal(r.source, "local");
   assert.match(r.reason, /path not present/);
+});
+
+// --- commitHistoryAt ---
+
+test("commitHistoryAt lists commits touching a path between two shas", () => {
+  const r = commitHistoryAt({ repo: "browserstack/testrepo", fromSha: sha1, toSha: sha2, path: "app.js", workspaceRoot: ws });
+  assert.equal(r.ok, true);
+  assert.equal(r.source, "local");
+  assert.equal(r.commits.length, 1);
+  assert.equal(r.commits[0].sha, sha2);
+  assert.equal(r.commits[0].subject, "two");
+  assert.ok(r.commits[0].date, "date should be populated");
+});
+
+test("commitHistoryAt refuses a branch name for either endpoint", () => {
+  const r = commitHistoryAt({ repo: "browserstack/testrepo", fromSha: "main", toSha: sha2, path: "app.js", workspaceRoot: ws });
+  assert.equal(r.ok, false);
+  assert.equal(r.source, "remote-needed");
+  assert.match(r.reason, /must both be commit shas/);
+});
+
+test("commitHistoryAt: empty range (fromSha === toSha) returns no commits, not an error", () => {
+  const r = commitHistoryAt({ repo: "browserstack/testrepo", fromSha: sha2, toSha: sha2, path: "app.js", workspaceRoot: ws });
+  assert.equal(r.ok, true);
+  assert.deepStrictEqual(r.commits, []);
+});
+
+test("commitHistoryAt: an absent sha defers to the caller, no fetch unless asked", () => {
+  const r = commitHistoryAt({ repo: "browserstack/testrepo", fromSha: sha1, toSha: "0".repeat(40), path: "app.js", workspaceRoot: ws });
+  assert.equal(r.ok, false);
+  assert.equal(r.source, "remote-needed");
+  assert.match(r.reason, /not present|allowFetch/);
+});
+
+test("commitHistoryAt: no local clone defers to the caller", () => {
+  const r = commitHistoryAt({ repo: "browserstack/absent", fromSha: sha1, toSha: sha2, workspaceRoot: ws });
+  assert.equal(r.ok, false);
+  assert.equal(r.source, "remote-needed");
+  assert.match(r.reason, /no local clone/);
+});
+
+// --- blameAt ---
+
+test("blameAt attributes each line to the commit that introduced it", () => {
+  const r = blameAt({ repo: "browserstack/testrepo", sha: sha2, path: "app.js", workspaceRoot: ws });
+  assert.equal(r.ok, true);
+  assert.equal(r.source, "local");
+  assert.equal(r.lines.length, 1);
+  assert.equal(r.lines[0].sha, sha2);
+  assert.equal(r.lines[0].content, "VERSION_TWO");
+  assert.ok(r.lines[0].author, "author should be populated");
+  assert.ok(r.lines[0].date, "date should be populated");
+});
+
+test("blameAt scoped to a lineRange narrows the result", () => {
+  const r = blameAt({ repo: "browserstack/testrepo", sha: sha2, path: "app.js", lineRange: { start: 1, end: 1 }, workspaceRoot: ws });
+  assert.equal(r.ok, true);
+  assert.equal(r.lines.length, 1);
+  assert.equal(r.lines[0].line, 1);
+});
+
+test("blameAt refuses a branch name", () => {
+  const r = blameAt({ repo: "browserstack/testrepo", sha: "main", path: "app.js", workspaceRoot: ws });
+  assert.equal(r.ok, false);
+  assert.equal(r.source, "remote-needed");
+  assert.match(r.reason, /must be a commit sha/);
+});
+
+test("blameAt: path missing at that commit is a local answer, not a remote fallback", () => {
+  const r = blameAt({ repo: "browserstack/testrepo", sha: sha1, path: "nope.js", workspaceRoot: ws });
+  assert.equal(r.ok, false);
+  assert.equal(r.source, "local");
+  assert.match(r.reason, /path not present/);
+});
+
+test("blameAt: no local clone defers to the caller", () => {
+  const r = blameAt({ repo: "browserstack/absent", sha: sha1, path: "app.js", workspaceRoot: ws });
+  assert.equal(r.ok, false);
+  assert.equal(r.source, "remote-needed");
+  assert.match(r.reason, /no local clone/);
 });

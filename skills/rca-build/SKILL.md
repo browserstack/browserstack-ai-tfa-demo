@@ -85,7 +85,7 @@ readEvidenceFile(path) folds base+shards · readBaseFile(path) is base ONLY
 
 **PR ground-truth validation — `lib/pr-validation.mjs`**
 ```
-validateSuspectPR(entry, evidenceDoc)              → {valid} | {valid:false, reason: "not-in-evidence"|"shipped-after"}
+validateSuspectPR(entry, evidenceDoc)              → {valid} | {valid:false, reason: "not-in-evidence"|"shipped-after"|"wrong-base-branch"}
 validateAndDeduplicatePRs(relatedPrs, evidenceDoc) → deduped, validated entries — invalid ones get
   verdict: "ruled-out (<reason>)", never dropped. Called from lib/loop.mjs's out() choke point.
 ```
@@ -592,7 +592,12 @@ leaves the other free to reintroduce the bug.
    recipes **once**, using `lib/evidence-cache.mjs`'s `compute(repo, range,
 evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    Digest the result into the `evidence-block.md` shape, then persist via
-   `setGithubEvidence(path, repo, {deployState, prsInWindow, gap}, nowMs)`.
+   `setGithubEvidence(path, repo, {deployState, workingBranch, prsInWindow, gap}, nowMs)`.
+   **Always set `workingBranch` to the exact `<branch>` resolved in Gate Part
+   B (`fetchBuildInsights(buildId).branch`, never assumed main/master)** — it
+   is what `lib/pr-validation.mjs` checks a candidate PR's `baseRefName`
+   against, so a PR that shipped to a different branch than this build
+   actually ran on is rejected instead of trusted on timing alone.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 
@@ -618,8 +623,17 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
 
    ```bash
    gh pr list -R <org>/<repo> --state merged --base <branch> \
-     --search 'merged:<from>..<to>' --json number,title,mergedAt,url,files --limit 100
+     --search 'merged:<from>..<to>' --json number,title,mergedAt,url,files,baseRefName --limit 100
    ```
+
+   `--base <branch>` already scopes this call to the build's real working
+   branch — but store `baseRefName` from the response on each PR anyway
+   (`match.baseRefName` in `lib/pr-validation.mjs`), not just trust the query
+   filter. A live coordinator gather run later in the loop (widening a hunt
+   outside this pre-fetch) may omit `--base` and default to the repo's
+   default branch — recording `baseRefName` per PR is what lets the
+   validation gate catch that PR before it reaches a user, rather than
+   relying on every gather call remembering the flag.
 
    `--json files` returns every PR's changed paths in the SAME call, so one
    request per repo replaces one `gh pr view <n> --json files` per PR across

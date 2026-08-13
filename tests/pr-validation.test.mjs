@@ -129,3 +129,56 @@ test("validateAndDeduplicatePRs: shipped-after verdict", () => {
   assert.equal(result.length, 1);
   assert.equal(result[0].verdict, "ruled-out (shipped-after)");
 });
+
+// --- branch check ---
+
+test("validateSuspectPR: PR merged into the wrong branch returns wrong-base-branch", () => {
+  const entry = { owner: "org", repo: "app", number: 42, merged_at: "2026-08-01T00:00:00Z" };
+  const doc = {
+    github: {
+      "org/app": {
+        workingBranch: "regression_run",
+        prsInWindow: [{ pr: 42, baseRefName: "main", mergedAt: "2026-08-01T00:00:00Z" }],
+      },
+    },
+    suspectWindow: { startedAt: "2026-08-02T00:00:00Z" },
+  };
+  assert.deepStrictEqual(validateSuspectPR(entry, doc), { valid: false, reason: "wrong-base-branch" });
+});
+
+test("validateSuspectPR: PR merged into the correct working branch is valid", () => {
+  const entry = { owner: "org", repo: "app", number: 42, merged_at: "2026-08-01T00:00:00Z" };
+  const doc = {
+    github: {
+      "org/app": {
+        workingBranch: "regression_run",
+        prsInWindow: [{ pr: 42, baseRefName: "regression_run", mergedAt: "2026-08-01T00:00:00Z" }],
+      },
+    },
+    suspectWindow: { startedAt: "2026-08-02T00:00:00Z" },
+  };
+  assert.deepStrictEqual(validateSuspectPR(entry, doc), { valid: true });
+});
+
+test("validateSuspectPR: missing workingBranch or baseRefName skips the branch check (fail-open)", () => {
+  const entry = { owner: "org", repo: "app", number: 42, merged_at: "2026-08-01T00:00:00Z" };
+  const doc = {
+    github: { "org/app": { prsInWindow: [{ pr: 42, mergedAt: "2026-08-01T00:00:00Z" }] } },
+    suspectWindow: { startedAt: "2026-08-02T00:00:00Z" },
+  };
+  assert.deepStrictEqual(validateSuspectPR(entry, doc), { valid: true });
+});
+
+test("validateAndDeduplicatePRs: never overwrites verdict from ground truth", () => {
+  const prs = [{ owner: "org", repo: "app", number: 42, verdict: "supported" }];
+  const doc = {
+    github: {
+      "org/app": {
+        prsInWindow: [{ pr: 42, verdict: "some-ground-truth-value", mergedAt: "2026-08-01T00:00:00Z" }],
+      },
+    },
+    suspectWindow: { startedAt: "2026-08-02T00:00:00Z" },
+  };
+  const result = validateAndDeduplicatePRs(prs, doc);
+  assert.equal(result[0].verdict, "supported");
+});

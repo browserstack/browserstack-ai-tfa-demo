@@ -103,7 +103,7 @@ manifest resolved to), since the failure mode is identical.
 | Repo exists / default branch | `gh api repos/OWNER/REPO` | `gh api repos/OWNER/REPO --jq '.default_branch'` |
 | Branch exists on the shipping branch | `gh api repos/OWNER/REPO/branches/BRANCH` | `gh api repos/OWNER/REPO/branches/BRANCH --jq '.name'` |
 | Commit history / PR-window search | `gh api "repos/OWNER/REPO/commits?sha=BRANCH&per_page=100"` | add `--jq '[.[] | {sha: .sha[0:8], date: .commit.committer.date, msg: (.commit.message | split("\n")[0])}]'` |
-| PR metadata | `gh pr view N --repo OWNER/REPO` (full payload) | `gh pr view N --repo OWNER/REPO --json state,mergedAt,baseRefName,headRefOid,files,author` — `--json` is itself a field allowlist; list only the fields this ask uses |
+| PR metadata | `gh pr view N --repo OWNER/REPO` (full payload) | `gh pr view N --repo OWNER/REPO --json state,mergedAt,baseRefName,headRefOid,files,author` — `--json` is itself a field allowlist; list only the fields this ask uses. **Always keep `baseRefName`** — the code-level validation gate rejects a PR whose base branch doesn't match the build's actual working branch, so dropping this field silently disables that check |
 | Pod / workload listing | `kubectl get pods -n NS -o wide` | `kubectl get pods -n NS -o custom-columns='NAME:.metadata.name,STATUS:.status.phase'` |
 | Deploy / image state | `kubectl get deploy -n NS -o yaml` | `kubectl get deploy -n NS -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image'` |
 | Log sweep | a raw `--tail` dump | `kubectl logs POD --since=<window> --tail=2000 \| grep -E '<correlation token>\|ERROR\|Exception'` — filter by the correlation token, never a raw tail |
@@ -124,7 +124,9 @@ For **each** candidate suspect PR, try to **break** the hypothesis:
 1. **Path overlap.** Do the PR's changed hunks actually touch the failing code
    path (the function/line in the stack)? No overlap → **ruled out**.
 2. **Deployment-state guard.** Was the PR's code actually **live** in the run's
-   env at `started_at`? If it shipped *after* the failure window, or sits behind
+   env at `started_at`? If it shipped *after* the failure window, merged into a
+   **different branch** than the one this build actually ran on (never assume
+   main/master — use the resolved `<branch>` from Gate Part B), or sits behind
    an **OFF** flag, it could not have caused this failure → **ruled out**.
 3. **Direction.** Does the change plausibly produce *this* error (e.g. a validator
    tightened to reject the input the test sends)? If the change is unrelated to

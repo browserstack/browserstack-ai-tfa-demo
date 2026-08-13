@@ -67,3 +67,17 @@ test("foldGithub: author null when absent from all shards (FR-6)", () => {
   const pr = folded.github["org/repo"].prsInWindow.find((p) => String(p.pr) === "42");
   assert.equal(pr.author, undefined); // neither shard had author
 });
+
+test("foldGithub: workingBranch set at base survives a shard that omits it", () => {
+  initEvidenceFile(file, "b1", 1000);
+  const base = readEvidenceFile(file);
+  base.github = { "org/repo": { workingBranch: "regression_run", prsInWindow: [] } };
+  writeEvidenceFile(file, base);
+
+  contributeGithubEvidence(file, "writer1", "org/repo", {
+    prsInWindow: [{ pr: 42, baseRefName: "regression_run" }],
+  }, 2000);
+
+  const folded = readEvidenceFile(file);
+  assert.equal(folded.github["org/repo"].workingBranch, "regression_run");
+});

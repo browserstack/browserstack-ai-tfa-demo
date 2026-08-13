@@ -80,7 +80,7 @@ input-from-output dependency.
 |---|---|
 | "Did `<X>` change since the last passing run?" | the diff of `<X>`'s file/function between the **baseline ref** (last-green, or the configured fallback) and the build's commit — not the whole repo diff |
 | "Which PRs are suspect?" | PRs **merged in the window** `(baselineRef, build commit]` that **touch the failing code path** — intersect changed files with the failing file/function |
-| "Who/what last changed the failing line?" | `blame` on the specific failing lines (from the test's `file_path` + the error) |
+| "Who/what last changed the failing line?" | `blame` on the specific failing lines (from the test's `file_path` + the error) — **prefer `blameAt` (`lib/repo-source.mjs`)** when `localRepos` shows this repo usable at the pinned sha: pure local git, no GitHub dependency at all, not just faster |
 | "What shipped to the run's env before the failure?" | deploy timeline (`gh` releases/tags + the env's deploy record); compare deploy time vs. the run's `started_at` |
 | "Did CI change?" | the workflow-file diff + recent `gh run` history for the failing job |
 
@@ -102,7 +102,7 @@ manifest resolved to), since the failure mode is identical.
 |---|---|---|
 | Repo exists / default branch | `gh api repos/OWNER/REPO` | `gh api repos/OWNER/REPO --jq '.default_branch'` |
 | Branch exists on the shipping branch | `gh api repos/OWNER/REPO/branches/BRANCH` | `gh api repos/OWNER/REPO/branches/BRANCH --jq '.name'` |
-| Commit history / PR-window search | `gh api "repos/OWNER/REPO/commits?sha=BRANCH&per_page=100"` | add `--jq '[.[] | {sha: .sha[0:8], date: .commit.committer.date, msg: (.commit.message | split("\n")[0])}]'` |
+| Commit history / PR-window search | `gh api "repos/OWNER/REPO/commits?sha=BRANCH&per_page=100"` | add `--jq '[.[] | {sha: .sha[0:8], date: .commit.committer.date, msg: (.commit.message | split("\n")[0])}]'`. **Prefer `commitHistoryAt` (`lib/repo-source.mjs`)** when `localRepos` shows this repo usable — same answer, no network call, and it takes two pinned shas (never a branch) so it can't drift the way a `BRANCH`-scoped query can |
 | PR metadata | `gh pr view N --repo OWNER/REPO` (full payload) | `gh pr view N --repo OWNER/REPO --json state,mergedAt,baseRefName,headRefOid,files,author` — `--json` is itself a field allowlist; list only the fields this ask uses. **Always keep `baseRefName`** — the code-level validation gate rejects a PR whose base branch doesn't match the build's actual working branch, so dropping this field silently disables that check |
 | Pod / workload listing | `kubectl get pods -n NS -o wide` | `kubectl get pods -n NS -o custom-columns='NAME:.metadata.name,STATUS:.status.phase'` |
 | Deploy / image state | `kubectl get deploy -n NS -o yaml` | `kubectl get deploy -n NS -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image'` |

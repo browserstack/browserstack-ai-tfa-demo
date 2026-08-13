@@ -95,7 +95,13 @@ validateAndDeduplicatePRs(relatedPrs, evidenceDoc) → deduped, validated entrie
 discoverWorkspaceRoot({repos, from, explicit, maxTries=3}) → {root, matched, tried, reason}
 resolveLocalRepos({repos, pins, workspaceRoot})            → {repo:{usable, sha|reason}}
 readFileAt({repo, sha, path, workspaceRoot})               → sha ONLY; a branch name is refused
+commitHistoryAt({repo, fromSha, toSha, path?, workspaceRoot}) → {ok, source, commits:[{sha,date,subject}]}
+  local `git log fromSha..toSha` — both must be shas, never a branch; omit `path` for repo-wide history
+blameAt({repo, sha, path, lineRange?, workspaceRoot})      → {ok, source, lines:[{sha,author,date,line,content}]}
+  scope lineRange:{start,end} to the failing stack frame — no gh equivalent needed once the commit is local
 ```
+All four `{ok, source: "local"|"remote-needed", reason}`-shaped calls never fall back to the network
+themselves — a `remote-needed` result means the caller falls through to the discovered `github` connector.
 
 **Housekeeping — `lib/state-dir.mjs`**
 ```

@@ -15,6 +15,12 @@ SUSPECT:
   link: <PR permalink>
 ```
 
+**Note:** `verdict: supported` entries are subject to a code-level validation
+gate (`lib/pr-validation.mjs`) that cross-checks each PR against the evidence
+file's `prsInWindow` and merge window. A PR absent from evidence or merged after
+`started_at` will be automatically downgraded to `ruled-out` regardless of the
+LLM's verdict.
+
 If the hunt ends empty after a real search (never fabricate):
 
 ```

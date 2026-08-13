@@ -83,6 +83,13 @@ deployShas(pathOrDoc) → {pins:{repo:sha}, source}   recomputeCoverage(path, {r
 readEvidenceFile(path) folds base+shards · readBaseFile(path) is base ONLY
 ```
 
+**PR ground-truth validation — `lib/pr-validation.mjs`**
+```
+validateSuspectPR(entry, evidenceDoc)              → {valid} | {valid:false, reason: "not-in-evidence"|"shipped-after"}
+validateAndDeduplicatePRs(relatedPrs, evidenceDoc) → deduped, validated entries — invalid ones get
+  verdict: "ruled-out (<reason>)", never dropped. Called from lib/loop.mjs's out() choke point.
+```
+
 **Local repo reads — `lib/repo-source.mjs`**
 ```
 discoverWorkspaceRoot({repos, from, explicit, maxTries=3}) → {root, matched, tried, reason}
@@ -1054,7 +1061,12 @@ re-running the same live search. This is already baked into
 `agents/ai-tfa-coordinator.md`'s Operating Principle 0 for any dispatch of
 that agent type — no need to repeat the mechanics in the prompt, just don't
 omit `evidenceFilePath` (above), since write-back has nothing to write to
-without it.
+without it. Note: `evidenceFilePath` is also used for **post-loop PR
+validation** — `lib/loop.mjs`'s `out()` cross-checks every coordinator's
+`related_prs` against the evidence file's `prsInWindow` ground truth
+(`lib/pr-validation.mjs`). A dispatch that omits the evidence file path
+disables this code-enforced validation gate, falling back to unvalidated
+LLM output only.
 
 **Pre-seed the MCP cache with the queries you just ran.** Step 4's log sweeps
 are MCP calls, and a coordinator will often want the same ones. Deposit each
@@ -1112,8 +1124,18 @@ link — that is all. When every row is terminal:
    `renderGlimpse`): `RCA analysis complete — build <id>` + a status count line
    (`<N> tests · <R> resolved · <P> pending · <F> failed`). **Nothing per-test.**
 2. Call **`triggerRcaReport(buildUuid=<build id>)`** (add `force=true` only to
-   re-run over an existing completed report).
-3. **Only once that call succeeds**, call
+   re-run over an existing completed report). **Wrap this call in try/catch**
+   and inspect the result:
+   - **Success** (no exception AND the response does not indicate failure):
+     proceed to step 3.
+   - **Failure** (exception thrown OR the response indicates failure — e.g. an
+     `error` field, a non-success status, or a falsy/missing result): print the
+     error message clearly, do **NOT** call `cleanupBuildArtifacts`, do **NOT**
+     print the completion glimpse or link line, and **DO** print:
+     `"triggerRcaReport failed — build artifacts preserved for retry."` Then
+     stop Step 6; the build's CSV, evidence file, and tool cache remain intact
+     so a subsequent `/rca-build` invocation can resume.
+3. **Only once step 2 succeeds**, call
    `cleanupBuildArtifacts(buildId, config.paths.stateDir)`
    (`lib/build-cleanup.mjs`) to delete THIS build's own CSV, evidence file +
    `.contrib/` shards, tool cache, and turn1 registry. Never call this before

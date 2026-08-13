@@ -134,6 +134,14 @@ Feed **both supporting and disconfirming** evidence back to TFA. A suspect that
 survives 1–3 is a real candidate; one that fails any is reported as ruled-out
 (with the reason), **not** dropped silently.
 
+**Code-level validation runs after this protocol.** Even if the LLM marks a
+suspect as `supported`, `lib/pr-validation.mjs`'s code gate cross-checks every
+entry in `related_prs` against the evidence file's `prsInWindow` (existence) and
+`suspectWindow.startedAt` (merge window). A PR that fails either check is
+automatically downgraded to `ruled-out`. This protocol remains valuable as
+defense-in-depth — it catches path-overlap and flag-gating issues that the code
+gate cannot — but is not the sole enforcer of existence or merge-window checks.
+
 ## The suspect packet (structured, not free text)
 
 Each surviving/ruled-out suspect is one structured block so `related_prs`

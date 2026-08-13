@@ -387,7 +387,17 @@ failing path, blame, deploy timing) via **GitHub MCP → `gh` → degrade**, and
 each candidate suspect **try to disprove it** (path overlap? shipped before the
 failure window? behind an OFF flag?). Feed both supporting *and* disconfirming
 evidence back as a structured suspect packet; only `verdict: supported` suspects
-belong in `related_prs`. Reuse the pre-computed build-level evidence — do not
+belong in `related_prs`.
+
+**Code-enforced validation gate (primary enforcement).** After the loop resolves,
+`lib/loop.mjs`'s `out()` runs `validateAndDeduplicatePRs` (`lib/pr-validation.mjs`)
+on every coordinator's `related_prs`, cross-checking each claimed PR against the
+evidence file's `prsInWindow` ground truth. A PR absent from the evidence or
+merged after `started_at` is automatically downgraded to
+`verdict: "ruled-out (<reason>)"`. The LLM falsification protocol above is
+**defense-in-depth** — it catches issues the code gate cannot (path-overlap,
+behind-an-OFF-flag), but is not the sole enforcer of merge-window or existence
+checks. Reuse the pre-computed build-level evidence — do not
 re-fetch per test (the `evidenceFile`'s `github` section, if present and not
 `gap`-marked for this repo; otherwise the live github connector). A culprit
 hunt often needs to go deeper than the file's summary — a full diff, a

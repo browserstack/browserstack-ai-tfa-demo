@@ -341,7 +341,16 @@ is the point:
 
 - invocation args (build id, PR URLs, repo hints from Step 0),
 - `gh repo view` / git remotes for the repos,
-- the current branch for the working branch,
+- **working branch — resolve in this order:**
+  1. `fetchBuildInsights(buildId=<id>)`'s `branch` field, when a build id is
+     known and the MCP tool returns one. This is the branch the build actually
+     ran on — authoritative, and preferred over any assumption below.
+  2. If `fetchBuildInsights` is unavailable, errors, or returns no `branch`
+     (older build, field absent), fall back to whatever branch the user
+     supplied in their skill invocation args.
+  3. Only if neither is available, fall through to the connector's
+     intake-defaults, then the current git branch, per the existing order
+     below.
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
 
 **Check the selected connector skill's own intake-defaults section FIRST — before

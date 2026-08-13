@@ -25,13 +25,15 @@ workflow, the sequential harness) needs to know which one ran:
   conflated the way a client-side "signature" would be.
 - **Fallback — client-side failure signature.** `lib/signature.mjs` →
   `clusterAndPersist(csvPath, csvStateModule)`, the original text-normalization
-  approach described below. Used whenever `getBuildFailureThemes` comes back
-  `ready: false` — still computing past its poll budget, a failure status, or
-  `status: "trigger-unavailable"` (the trigger call didn't succeed). This
-  makes the flow independent of whether the trigger call currently succeeds:
-  whenever it doesn't, every un-computed build degrades straight to this
-  fallback; whenever it does, the same call reaches `ready: true` on its own
-  and this fallback simply isn't exercised.
+  approach described below. This is a **server-outage net, not the routine path
+  for un-computed builds.** The trigger endpoint is deployed, so
+  `getBuildFailureThemes` makes themes exist for a fresh build (one POST, same
+  call) and returns `ready: true` — a never-analyzed build no longer degrades
+  to signatures. `ready: false` now means the server genuinely couldn't produce
+  themes: still computing past the poll budget, a failure status, or
+  `status: "trigger-unavailable"` (the trigger call itself errored). Only then
+  does this fallback engage, keeping the run resilient when o11y is unavailable
+  rather than aborting or exploding to one coordinator per test.
 
 ## The signature (fallback path only)
 

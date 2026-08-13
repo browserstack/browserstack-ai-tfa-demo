@@ -512,10 +512,14 @@ clustering by default instead of by necessity.
    row set guaranteed fresh and from a successful seed (Step 2 only seeds
    after `listTestIds` succeeds) — always re-read it here rather than trusting
    a variable carried over from turns ago.
-3. **`ready: false`** (still computing past the poll budget, a failure status,
-   or `status: "trigger-unavailable"` — the trigger call didn't succeed) →
-   **fall back** to **`clusterAndPersist(csvPath, csvStateModule)`**
-   (`lib/signature.mjs`), not `clusterRows` directly:
+3. **`ready: false`** — a **server-outage net, not the routine path.** The
+   trigger endpoint is deployed, so a never-computed build gets its themes from
+   the POST inside Step 1 and returns `ready: true`; `ready: false` now means
+   the server genuinely couldn't produce them (still computing past the poll
+   budget, a failure status, or `status: "trigger-unavailable"` — the trigger
+   call itself errored). Only then **fall back** to
+   **`clusterAndPersist(csvPath, csvStateModule)`** (`lib/signature.mjs`), not
+   `clusterRows` directly:
 
    ```js
    const clusters = clusterAndPersist(csvPath, await import("./lib/csv-state.mjs"));
@@ -532,12 +536,11 @@ clustering by default instead of by necessity.
 
    Never block the run waiting on the server; the fallback keeps the same
    `{ cluster_id, representative, siblings }` contract the fan-out consumes,
-   so nothing downstream needs to know which path produced it. This also
-   makes the flow independent of whether the trigger call currently succeeds:
-   whenever it doesn't, `getBuildFailureThemes` degrades to `ready: false`
-   fast (no wasted poll budget) and this fallback engages every time;
-   whenever it does, the same call reaches `ready: true` on its own and this
-   fallback simply isn't exercised — no code change required either way.
+   so nothing downstream needs to know which path produced it. With the trigger
+   endpoint deployed this path is the exception, not the rule: a healthy server
+   reaches `ready: true` on its own (fresh builds included), and this net only
+   engages on a genuine outage — the server erroring, failing computation, or a
+   real backlog outrunning the poll budget.
 
 `clustersFromThemes` mutates each row's `cluster_id` in place but does NOT
 persist — it's pure/dependency-free by design. Write its rows back yourself

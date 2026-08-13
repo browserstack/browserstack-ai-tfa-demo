@@ -19,7 +19,10 @@ workflow, the sequential harness) needs to know which one ran:
   3). `getBuildFailureThemes` is responsible for making themes exist, not just
   reading them — if nothing has ever been computed for this build it triggers
   computation (one POST, same call) and polls for `buildThemeWorkflow.status`
-  to reach `SUCCESS`, up to its own budget. The grouping reflects the
+  to reach `SUCCESS`. Cadence: one GET first, a single POST trigger only if no
+  themes exist yet (never re-fired), then GET every 3s up to a 90s wall-clock
+  ceiling — `ready: true` on `SUCCESS`, `ready: false` if the 90s is spent or
+  the status is `FAILED`/`ERROR`. The grouping reflects the
   server's own root-cause clustering instead of a text-signature guess — two
   failures with an identical error string but unrelated causes are not
   conflated the way a client-side "signature" would be.

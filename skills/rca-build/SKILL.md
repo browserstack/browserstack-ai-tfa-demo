@@ -483,8 +483,12 @@ clustering by default instead of by necessity.
 
 1. Call `getBuildFailureThemes(buildUuid=<build id>)`. If nothing has ever
    been computed for this build, this triggers computation (one POST, same
-   call) and polls in-call up to its own budget for `buildThemeWorkflow.status`
-   to reach `SUCCESS`.
+   call) and polls in-call for `buildThemeWorkflow.status` to reach `SUCCESS`.
+   The poll cadence is fixed: **one GET first; a single POST trigger only when
+   the build has no themes yet (never re-fired); then GET every 3s up to a 90s
+   wall-clock ceiling.** Reaching `SUCCESS` returns `ready: true`; exhausting
+   the 90s (or a `FAILED`/`ERROR` status) returns `ready: false`. The call
+   never blocks longer than ~90s — so it's safe to await inline.
 2. **`ready: true`** → for each entry in `buildThemes`, call
    `listTestsInFailureTheme(buildUuid=<build id>, themeId=<buildFailureThemeId>)`,
    following `nextCursor` until exhausted, to get that theme's member

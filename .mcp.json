@@ -2,8 +2,8 @@
   "mcpServers": {
     "bstack": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@browserstack/mcp-server@1.2.27-beta.1"],
+      "command": "node",
+      "args": ["/Users/jaydeep/development/mcp-server/dist/index.js"],
       "env": {
         "BROWSERSTACK_USERNAME": "${BROWSERSTACK_USERNAME}",
         "BROWSERSTACK_ACCESS_KEY": "${BROWSERSTACK_ACCESS_KEY}",

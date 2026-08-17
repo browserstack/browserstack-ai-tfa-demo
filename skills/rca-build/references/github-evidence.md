@@ -139,8 +139,8 @@ survives 1–3 is a real candidate; one that fails any is reported as ruled-out
 Each surviving/ruled-out suspect is one structured block so `related_prs`
 populates deterministically. **The canonical fillable format lives in
 [`../templates/suspect-packet.md`](../templates/suspect-packet.md)** (fields:
-pr, title, files, hunks, author, merged_at vs last_green vs started_at, verdict with
-rule-out reason, tag, link) — copy it, don't retype it. A worked example (supported
+repo, pr, title, files, hunks, author, merged_at vs last_green vs started_at, verdict
+with rule-out reason, tag, link) — copy it, don't retype it. A worked example (supported
 + ruled-out side by side) is in
 [`../examples/sample-run.md`](../examples/sample-run.md).
 
@@ -149,11 +149,14 @@ suspects stay in the thread as disconfirming evidence so TFA (and a human) can s
 the elimination, not just the conclusion.
 
 **Hand-off to TFA — the `pr_details` contract.** Every supported suspect is passed
-to `tfaRcaTurn` via its `prDetails` param as a structured object with **all five**
-required fields — `title`, `author`, `link`, `number`, `tag` (`regression | latent`).
-This is what keeps the PR context correct end-to-end; a bare link in free text is not
-enough (incomplete PR context previously misled the agent). The exact shape + the
-`regression`-vs-`latent` rule are in `../templates/suspect-packet.md`.
+to `tfaRcaTurn` via its `prDetails` param as a structured object with **all six**
+required fields — `repo`, `number`, `title`, `author`, `link`, `tag`
+(`regression | latent`). Identity is `repo`+`number` (a number is unique only within
+its repo), and `link` must be the canonical `https://github.com/<repo>/pull/<number>`.
+This is what keeps the PR context correct end-to-end; a bare link/number in free text
+is not enough (that is what let the same `#861` collide across repos and 404 in
+AIR-607). A case with no causal PR emits no entry — never fabricate one. The exact
+shape + the `regression`-vs-`latent` rule are in `../templates/suspect-packet.md`.
 
 ## Digest discipline
 

@@ -6,7 +6,8 @@ falsification protocol: `../references/github-evidence.md`.
 
 ```
 SUSPECT:
-  pr: <#number>
+  repo: <owner/name, e.g. browserstack/ai-sdk>
+  pr: <#number>              # unique only WITHIN repo — identity is repo+number
   title: <PR title, verbatim>
   files: <changed files overlapping the failing path>
   hunks: <the 1-3 load-bearing changed hunks — see digest size caps>
@@ -14,15 +15,26 @@ SUSPECT:
   merged_at: <ts>   vs   last_green: <ts>   vs   started_at: <ts>
   verdict: supported | ruled-out (<no-path-overlap | shipped-after | behind-off-flag | unrelated>)
   tag: regression | latent
-  link: <PR permalink>
+  link: <canonical URL: https://github.com/<repo>/pull/<number>>
 ```
 
-`tag` (supported suspects only):
-- **`regression`** — the PR merged **within** this run's regression window (`merged_at`
-  after `last_green`, before `started_at`) and introduced the failure. A change in the drop.
-- **`latent`** — a pre-existing cause surfaced now, **not** newly introduced by a
-  windowed PR (e.g. an older merge, a flag flip, or an env/data change). Tag a suspect
-  `latent` when its change predates `last_green` yet still explains the failure.
+**Identity is `repo` + `number`, never the bare number.** A PR number is unique only
+within its repo, so `ai-sdk#861` and `nl2steps#861` are different PRs; keying on the
+number alone collapses them into one card. `link` MUST be the canonical
+`https://github.com/<repo>/pull/<number>` — never a hand-assembled or guessed URL, or
+it 404s / points at the wrong repo.
+
+`tag` — describes the **window-position of the supported causal change**, so it only
+applies to a PR that is actually the cause (`verdict: supported`):
+- **`regression`** — the causal PR merged **within** this run's window (`merged_at`
+  after `last_green`, before `started_at`). A change in the drop *introduced* the
+  failure → readiness-blocking.
+- **`latent`** — the causal PR is a **pre-window** change (`merged_at` ≤ `last_green`)
+  whose defect only surfaced now (env/data change, a newly-taken code path, dependency
+  bump exposing it). The bug is real but *not introduced by this drop*.
+- **No causal PR at all** (pure env/flake/data, or the hunt ended empty) → emit **no
+  entry**. Do NOT attach a pre-window PR just to have something, and do NOT invent a
+  `latent` tag to fill the shape — that mis-attribution is exactly the AIR-607 bug.
 
 If the hunt ends empty after a real search (never fabricate):
 
@@ -40,11 +52,12 @@ agent). All five fields are **required** per entry — never emit a partial PR o
 ```
 prDetails: [
   {
+    repo:   <owner/name>,        // string, e.g. browserstack/ai-sdk
+    number: <#number>,           // integer, no "#"  (identity = repo + number)
     title:  <PR title>,          // string, verbatim
     author: <login>,             // string
-    link:   <PR permalink>,      // string (URL)
-    number: <#number>,           // integer, no "#"
-    tag:    regression | latent  // exactly one
+    link:   https://github.com/<repo>/pull/<number>,  // canonical URL only
+    tag:    regression | latent  // exactly one; supported causal PR only
   }
 ]
 ```

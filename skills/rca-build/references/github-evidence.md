@@ -155,8 +155,17 @@ required fields — `repo`, `number`, `title`, `author`, `link`, `tag`
 its repo), and `link` must be the canonical `https://github.com/<repo>/pull/<number>`.
 This is what keeps the PR context correct end-to-end; a bare link/number in free text
 is not enough (that is what let the same `#861` collide across repos and 404 in
-AIR-607). A case with no causal PR emits no entry — never fabricate one. The exact
-shape + the `regression`-vs-`latent` rule are in `../templates/suspect-packet.md`.
+AIR-607). A case with no causal PR emits no entry — never fabricate one.
+
+**`title` and `author` are mandatory-resolved from the PR, not the window scan.**
+Run `gh pr view <number> --repo <repo> --json title,author` (the same call already in
+the field-filtering table, batched with the falsification probes) and take `title` from
+`.title` and `author` from `.author.login`. Never pass the git merge-commit subject as
+the title, and never pass a placeholder such as `"unknown"` for author — both defeat the
+point (the dashboard `related_prs.author`/title would render the placeholder). If the
+field genuinely can't be resolved, state the gap; don't invent a value.
+
+The exact shape + the `regression`-vs-`latent` rule are in `../templates/suspect-packet.md`.
 
 ## Digest discipline
 

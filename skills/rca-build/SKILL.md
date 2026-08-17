@@ -1096,9 +1096,13 @@ this sharded layout lost none.
 **Application bugs need a culprit PR.** Whenever a test's RCA classifies as
 PRODUCT_BUG / application bug, the coordinator MUST hunt the culprit PR via the
 github connector (deploy timeline vs last-pass window, changed paths vs failure
-signature — `<pluginRoot>/skills/rca-build/references/github-evidence.md`) and feed the PR link(s) to TFA in
-the turn message so the dashboard RCA's `related_prs` populates. An
-application-bug RCA with no GitHub PR link is **incomplete**: keep digging until
+signature — `<pluginRoot>/skills/rca-build/references/github-evidence.md`) and
+pass each supported culprit PR to TFA via `tfaRcaTurn`'s **`prDetails`** param —
+the structured `pr_details` contract (`title`, `author`, `link`, `number`,
+`tag: regression | latent`; all required per entry — see
+`templates/suspect-packet.md`), **not** just a bare link in free text. This is
+what keeps the PR context correct and populates the dashboard RCA's
+`related_prs`. An application-bug RCA with no GitHub PR link is **incomplete**: keep digging until
 the turn cap; if still none, the turn must explicitly state "no culprit PR
 identified after <what was searched>" and the CSV row records the gap.
 

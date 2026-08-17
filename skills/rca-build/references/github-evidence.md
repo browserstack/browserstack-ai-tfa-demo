@@ -139,14 +139,21 @@ survives 1–3 is a real candidate; one that fails any is reported as ruled-out
 Each surviving/ruled-out suspect is one structured block so `related_prs`
 populates deterministically. **The canonical fillable format lives in
 [`../templates/suspect-packet.md`](../templates/suspect-packet.md)** (fields:
-pr, files, hunks, author, merged_at vs last_green vs started_at, verdict with
-rule-out reason, link) — copy it, don't retype it. A worked example (supported
+pr, title, files, hunks, author, merged_at vs last_green vs started_at, verdict with
+rule-out reason, tag, link) — copy it, don't retype it. A worked example (supported
 + ruled-out side by side) is in
 [`../examples/sample-run.md`](../examples/sample-run.md).
 
 Only `verdict: supported` suspects should end up in TFA's `related_prs`. Ruled-out
 suspects stay in the thread as disconfirming evidence so TFA (and a human) can see
 the elimination, not just the conclusion.
+
+**Hand-off to TFA — the `pr_details` contract.** Every supported suspect is passed
+to `tfaRcaTurn` via its `prDetails` param as a structured object with **all five**
+required fields — `title`, `author`, `link`, `number`, `tag` (`regression | latent`).
+This is what keeps the PR context correct end-to-end; a bare link in free text is not
+enough (incomplete PR context previously misled the agent). The exact shape + the
+`regression`-vs-`latent` rule are in `../templates/suspect-packet.md`.
 
 ## Digest discipline
 

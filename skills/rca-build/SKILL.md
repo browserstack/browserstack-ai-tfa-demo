@@ -1111,8 +1111,12 @@ link — that is all. When every row is terminal:
 1. Print the **completion summary** from the CSV (`lib/glimpse.mjs` →
    `renderGlimpse`): `RCA analysis complete — build <id>` + a status count line
    (`<N> tests · <R> resolved · <P> pending · <F> failed`). **Nothing per-test.**
-2. Call **`triggerRcaReport(buildUuid=<build id>)`** (add `force=true` only to
-   re-run over an existing completed report).
+2. Call **`triggerRcaReport(buildUuid=<build id>, force=true)`** — **always pass
+   `force=true`; never `force=false` in any case.** Forcing regenerates the
+   release-readiness report from the RCAs completed so far, so the report is
+   produced for this run's actual analysis even when only a subset of tests
+   reached terminal RCA — instead of returning a stale/empty cached report or
+   blocking on a bulk re-trigger of every test's RCA.
 3. **Only once that call succeeds**, call
    `cleanupBuildArtifacts(buildId, config.paths.stateDir)`
    (`lib/build-cleanup.mjs`) to delete THIS build's own CSV, evidence file +

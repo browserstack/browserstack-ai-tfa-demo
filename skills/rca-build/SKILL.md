@@ -79,8 +79,7 @@ readFileAt({repo, sha, path, workspaceRoot})               → sha ONLY; a branc
 
 **Housekeeping — `lib/state-dir.mjs`**
 ```
-hardenStateDir(dir)                       run once at gate start; idempotent
-pruneStateDir(dir, nowMs, {maxAgeMs, dryRun})   NOT automatic — these files are the resume state
+hardenStateDir(dir)                       run once at gate start; idempotent (perms only, never deletes)
 ```
 
 **Step 4b turn-1 pre-dispatch registry — `lib/turn1-registry.mjs`**
@@ -90,14 +89,6 @@ initTurn1Registry(path, buildId, nowMs)   idempotent, never clobbers existing en
 recordTurn1(path, testRunId, {status, threadId, turnId?, asks?}, nowMs)   PENDING or NEEDS_INFO only — RESOLVED is flipped straight into the CSV instead
 readTurn1(path, testRunId)   → entry | null
 readAllTurn1(path)           → {testRunId: entry}   run-end stats only
-deleteTurn1Registry(path)    → boolean (existed?)   called by lib/build-cleanup.mjs
-```
-
-**Build-completion cleanup — `lib/build-cleanup.mjs`**
-```
-cleanupBuildArtifacts(buildId, stateDir="") → {deleted, errors}
-  deletes THIS build's CSV, evidence file + .contrib shards, tool cache dir, and turn1 registry.
-  Call ONLY after triggerRcaReport succeeds (Step 6) — never a periodic sweep, see lib/state-dir.mjs.
 ```
 
 **Routing / output — `lib/routing.mjs`, `lib/glimpse.mjs`, `lib/evidence-cache.mjs`**
@@ -375,12 +366,6 @@ so no per-test probe turns are needed.
 **First, sweep the state directory** (`lib/state-dir.mjs` → `hardenStateDir(dir)`).
 The sweep is cheap and idempotent — run it unconditionally; it never throws,
 skipping anything it cannot chmod.
-
-Nothing deletes these artifacts when a run finishes, and that is deliberate —
-resume is keyed on `buildId` → same path, so cleaning up on completion would
-break `pending-resume`. `pruneStateDir(dir, nowMs)` exists for growth (default
-7 days, far longer than any run) but is **not** automatic: these files *are* the
-resume state. Call it explicitly, with `dryRun: true` first.
 
 Resolve the state file with `lib/csv-state.mjs` → `csvPathFor(buildId,
 config.paths.stateDir)` — the **build id is in the filename** and the default
@@ -912,18 +897,7 @@ link — that is all. When every row is terminal:
    produced for this run's actual analysis even when only a subset of tests
    reached terminal RCA — instead of returning a stale/empty cached report or
    blocking on a bulk re-trigger of every test's RCA.
-3. **Only once that call succeeds**, call
-   `cleanupBuildArtifacts(buildId, config.paths.stateDir)`
-   (`lib/build-cleanup.mjs`) to delete THIS build's own CSV, evidence file +
-   `.contrib/` shards, tool cache, and turn1 registry. Never call this before
-   `triggerRcaReport` succeeds, and never on a run that ends with any row still
-   non-terminal — at that point resume still needs these files. This is safe
-   specifically because Step 6 only runs "when every row is terminal": there is
-   nothing left to resume for THIS build once its report has generated. It is
-   deliberately not `lib/state-dir.mjs`'s `pruneStateDir` (a separate, manual,
-   age-based sweep across every build in the shared temp dir) — that remains
-   the safety net for a build that crashes before ever reaching Step 6.
-4. Print the link line, verbatim shape:
+3. Print the link line, verbatim shape:
 
    ```
    Full report on the Test Observability UI: <viewReport>

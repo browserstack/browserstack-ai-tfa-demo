@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, statSync, existsSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hardenStateDir, pruneStateDir } from "../lib/state-dir.mjs";
+import { hardenStateDir } from "../lib/state-dir.mjs";
 
 const mode = (p) => statSync(p).mode & 0o777;
 
@@ -50,53 +50,3 @@ test("hardenStateDir is idempotent and safe on a missing dir", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-// These files ARE the resume state, so the default must not be able to eat a
-// build someone is about to resume.
-test("pruneStateDir keeps recent artifacts and removes only old ones", () => {
-  const { root, dir } = fixture();
-  // Pin every fixture file's mtime relative to the test's own clock — the
-  // files are created at real "now", so a hardcoded future nowMs would make
-  // the whole fixture look ancient and the test would pass for the wrong
-  // reason (it did, first time round).
-  const now = 1_800_000_000_000;
-  // utimesSync takes SECONDS as a plain number; `new Date(seconds)` would be
-  // read as milliseconds and land every stamp in 1970.
-  const stamp = (p, ageSec) => { const s = now / 1000 - ageSec; utimesSync(p, s, s); };
-  stamp(join(dir, "rca-state.b1.csv"), 60);
-  stamp(join(dir, "rca-toolcache.b1"), 60);
-  const old = join(dir, "rca-state.ancient.csv");
-  writeFileSync(old, "x\n");
-  stamp(old, 8 * 24 * 60 * 60);
-
-  const r = pruneStateDir(dir, now);
-
-  assert.deepEqual(r.removed, ["rca-state.ancient.csv"]);
-  assert.equal(existsSync(old), false);
-  assert.ok(existsSync(join(dir, "rca-state.b1.csv")), "a fresh build must survive");
-  assert.ok(r.kept >= 1);
-
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("pruneStateDir dryRun reports without deleting", () => {
-  const { root, dir } = fixture();
-  // Pin every fixture file's mtime relative to the test's own clock — the
-  // files are created at real "now", so a hardcoded future nowMs would make
-  // the whole fixture look ancient and the test would pass for the wrong
-  // reason (it did, first time round).
-  const now = 1_800_000_000_000;
-  // utimesSync takes SECONDS as a plain number; `new Date(seconds)` would be
-  // read as milliseconds and land every stamp in 1970.
-  const stamp = (p, ageSec) => { const s = now / 1000 - ageSec; utimesSync(p, s, s); };
-  stamp(join(dir, "rca-state.b1.csv"), 60);
-  stamp(join(dir, "rca-toolcache.b1"), 60);
-  const old = join(dir, "rca-state.ancient.csv");
-  writeFileSync(old, "x\n");
-  stamp(old, 8 * 24 * 60 * 60);
-
-  const r = pruneStateDir(dir, now, { dryRun: true });
-  assert.deepEqual(r.removed, ["rca-state.ancient.csv"]);
-  assert.equal(existsSync(old), true, "dryRun must not delete");
-
-  rmSync(root, { recursive: true, force: true });
-});

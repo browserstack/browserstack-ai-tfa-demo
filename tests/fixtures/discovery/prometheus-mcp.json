@@ -1,0 +1,13 @@
+{
+  "name": "metrics resolved from a session MCP server, no CLI present",
+  "env": {
+    "executables": ["git"],
+    "mcpServers": ["mcp__prometheus__execute_query", "claude_ai_Slack"],
+    "repoFiles": []
+  },
+  "expect": {
+    "available": ["metrics"],
+    "unavailable": ["github", "infra", "logs", "other"],
+    "via": { "metrics": "mcp__prometheus__execute_query" }
+  }
+}

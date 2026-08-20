@@ -1,0 +1,9 @@
+{
+  "name": "gh on PATH, nothing else",
+  "env": { "executables": ["gh", "git"], "mcpServers": [], "repoFiles": [] },
+  "expect": {
+    "available": ["github"],
+    "unavailable": ["infra", "logs", "metrics", "other"],
+    "via": { "github": "gh" }
+  }
+}

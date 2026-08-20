@@ -1,0 +1,10 @@
+{
+  "name": "a CI config file fingerprints GITHUB, not a ci capability",
+  "$why": "evidenceRouting.ci maps to capability github. There is no ci capability, so .github/workflows/ must resolve github.",
+  "env": { "executables": [], "mcpServers": [], "repoFiles": [".github/workflows/test.yml"] },
+  "expect": {
+    "available": ["github"],
+    "unavailable": ["infra", "logs", "metrics", "other"],
+    "via": { "github": "file:.github/workflows/test.yml" }
+  }
+}

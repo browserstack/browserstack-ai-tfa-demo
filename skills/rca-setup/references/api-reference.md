@@ -58,7 +58,38 @@ template never had.
 
 ## Discovery
 
-`lib/discovery.mjs` — not yet created. U2 documents its exports here.
+`lib/discovery.mjs` — pure. The environment is passed in, never sensed: no `child_process`,
+no `fs`, no `Date.now()`. That is what makes the engine replayable from a fixture.
+
+```
+discover({table, env, connectorSkills}) → {discovered, questions, custom, violations}
+    env: {executables[], mcpServers[], repoFiles[]}   collected by the caller
+    discovered[]: {capability, via, evidence, resolvedScope, unresolvedFields, tag}
+                  — exactly the array buildManifest() consumes
+    questions[]:  {capability, field, consumer, mandatory}   scope the interview still owes
+    custom[]:     present tools no row fingerprints (R8) — routed into the declared-gap list
+
+preFillFromConnectorSkills(table, connectorSkills) → {scopeByCapability, violations}
+interpolate(template, scope, {leaders})            → {ok, command, argv} | {ok:false, reason}
+```
+
+**There is no probe executor here.** Discovery is fingerprint MATCHING; nothing is run.
+Live reads belong to verification, so the probe-result replay seam lives there. This
+module's fixtures (`tests/fixtures/discovery/*.json`) are environment descriptors.
+
+**`interpolate` re-validates.** The template was checked at schema time against `{repo}`,
+not against the string that runs. A resolved scope value can carry a redirect, an operator,
+or a metacharacter the template never had, so the interpolated command goes through
+`isProbeRunnable` again immediately before execution. Checking only the template is the gap
+this closes.
+
+**An always-asked capability is never resolved by discovery**, even on a coincidental
+fingerprint hit — `other` is the catch-all, and matching it by accident would swallow the
+unrecognised stack it exists to surface.
+
+**Connector-skill pre-fill is a less-trusted input, not a more-trusted one.** It reads four
+filesystem paths including a home directory, so any scope probe it declares passes the same
+gate as a shipped table probe, and it may only fill scope fields the table already declares.
 
 ## Verification
 

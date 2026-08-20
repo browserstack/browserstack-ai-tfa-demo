@@ -220,6 +220,39 @@ test("an angle-bracket placeholder is rejected, with the redirect reason surface
   assert.match(violations[0].message, /redirect/);
 });
 
+test("an unquoted shell metacharacter is rejected even when it tokenizes as part of a word", () => {
+  // Regression: `--base main; id` tokenizes as ["--base", "main;", "id"], so the
+  // standalone-operator check never sees a `;` and accepted it. Not exploitable
+  // (execFile, no shell) but the probe is silently wrong, and claiming operators
+  // are rejected while accepting an attached one is a false guarantee.
+  for (const bad of ["gh api repos/x; id", "gh api repos/x && id", "gh api repos/$(id)", "gh api repos/`id`"]) {
+    const violations = validateTable(stub(), {
+      github: {
+        mandatory: true,
+        resolvable: "partial",
+        fingerprints: { executables: ["gh"] },
+        probe: bad,
+        scopeFields: {},
+      },
+    });
+    assert.deepEqual(codes(violations), ["bad-probe"], `${bad} must be refused`);
+    assert.match(violations[0].message, /metacharacter|redirect/);
+  }
+});
+
+test("a quoted metacharacter is still allowed — quoting is respected", () => {
+  const violations = validateTable(stub(), {
+    github: {
+      mandatory: true,
+      resolvable: "partial",
+      fingerprints: { executables: ["gh"] },
+      probe: "gh pr list --search 'merged:2026-01-01..2026-02-01'",
+      scopeFields: {},
+    },
+  });
+  assert.deepEqual(codes(violations), []);
+});
+
 test("a malformed mcpProbe is reported", () => {
   const violations = validateTable(
     stub({ routing: { kibana: { capability: "logs" } } }),

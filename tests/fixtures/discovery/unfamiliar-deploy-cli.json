@@ -1,0 +1,10 @@
+{
+  "name": "no Kubernetes, but an unfamiliar deployment CLI is present",
+  "$why": "AE5 — the unrecognised tool becomes one open question and a custom record, never an infra assumption.",
+  "env": { "executables": ["flyctl", "gh"], "mcpServers": [], "repoFiles": [] },
+  "expect": {
+    "available": ["github"],
+    "unavailable": ["infra", "logs", "metrics", "other"],
+    "custom": ["flyctl"]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "every capability resolvable at once",
+  "env": {
+    "executables": ["gh", "kubectl", "logcli", "promtool"],
+    "mcpServers": [],
+    "repoFiles": ["k8s/deployment.yaml"]
+  },
+  "expect": {
+    "available": ["github", "infra", "logs", "metrics"],
+    "unavailable": ["other"],
+    "via": { "github": "gh", "infra": "kubectl", "logs": "logcli", "metrics": "promtool" }
+  }
+}

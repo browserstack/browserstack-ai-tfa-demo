@@ -4,6 +4,11 @@ Written by `writeRcaContext` (`lib/rca-context.mjs`). Signatures and error codes
 are in `<pluginRoot>/skills/rca-setup/references/api-reference.md`; the resolution
 rules are in `<pluginRoot>/skills/rca-setup/references/context-resolution.md`.
 
+**Field names are the capability table's, exactly.** `namespace` and `logIndex`
+are singular because `config/rca.config.json` declares them that way, and both
+`resolveIntake` and `intakeFromContext` look them up by exact key. This example
+carried `namespaces`/`logIndexes`, so a context written from it resolved neither.
+
 **Portable facts only.** Anything a different machine would answer differently is
 re-derived on load, never written — workspace roots, local clone paths, which CLI
 this developer happens to prefer. Writing them would make the file wrong for the
@@ -24,9 +29,9 @@ something the first engineer never used.
   "repos": ["acme/api", "acme/e2e-tests"],
   "subpaths": ["services/billing"],   // what we own inside a monorepo
   "baseBranch": "main",
-  "namespaces": ["prod"],
+  "namespace": "prod",
   "workloads": ["billing-consumer"],
-  "logIndexes": ["app-logs-2026"],
+  "logIndex": "app-logs-2026",
 
   "credentials": {
     "github": { "kind": "env-var", "name": "GH_TOKEN" }

@@ -135,6 +135,10 @@ test("a capability valid for one target and 404 on another stays valid for the t
     row,
     targets: [{ field: "repo", value: "acme/api" }, { field: "repo", value: "acme/ghost" }],
     scope: { branch: "main" },
+    // The env is part of the scenario, not boilerplate: a machine with no route to
+    // GitHub cannot probe it, and omitting this asserted per-target behaviour on a
+    // machine where no target could be read at all.
+    env: { executables: ["gh"], mcpServers: [], repoFiles: [] },
     runProbe,
   });
   assert.equal(r.verified, true, "one passing target keeps the capability usable");
@@ -403,4 +407,164 @@ test("every failure record produced anywhere in this suite has a non-empty next 
     assert.ok(g.nextAction && g.nextAction.trim().length > 0, `${g.errorClass} has no next action`);
     assert.ok(g.errorClass, "and every gap names its error class");
   }
+});
+
+// ---- the MCP route ----------------------------------------------------------
+
+test("the MCP tool name comes from the matched server, not from a question", () => {
+  // `mcpProbe.tool` is a template — `{githubMcpTool}` — and that name is not a
+  // declared scopeField in any row. So discover() could never ask for it, no skill
+  // file mentioned it, and the verifier's only honest answer was "answer it during
+  // setup": a question the interview is forbidden to ask (never ask for a field the
+  // table does not declare). The result was a HARD BLOCK on a machine that had a
+  // working GitHub MCP server and nothing wrong with it. routeFor() had already
+  // matched that server and returned it as `via`; that was the answer all along.
+  const seen = [];
+  const r = verifyGithub({
+    row: table.github,
+    scope: { repos: ["acme/api"], baseBranch: "main" },
+    env: { executables: [], mcpServers: ["mcp__github__get_repository"], repoFiles: [] },
+    runProbe: (req) => { seen.push(req); return { ok: true, raw: "{}" }; },
+    prList: { mergedCount: 7 },
+  });
+
+  assert.equal(r.verified, true, "an MCP-only machine must verify");
+  assert.equal(r.blocking, false);
+  assert.equal(r.via, "mcp");
+  assert.equal(seen.length, 1, "exactly one MCP request, and it was actually dispatched");
+  assert.equal(seen[0].tool, "mcp__github__get_repository");
+});
+
+test("MCP probe args are interpolated, not dispatched with placeholders intact", () => {
+  // args went out verbatim: {"repo": "{repo}"} reached the provider literally.
+  // Either it 404s — and the gap blames the customer's correct value — or the tool
+  // ignores the unknown argument and returns success, which reports verified:true
+  // having verified nothing at all. The second is worse: it is a silent false pass
+  // on the one mandatory capability.
+  const seen = [];
+  verifyGithub({
+    row: table.github,
+    scope: { repos: ["acme/api"], baseBranch: "main" },
+    env: { executables: [], mcpServers: ["mcp__github__get_repository"], repoFiles: [] },
+    runProbe: (req) => { seen.push(req); return { ok: true, raw: "{}" }; },
+    prList: { mergedCount: 3 },
+  });
+  assert.deepEqual(seen[0].args, { repo: "acme/api" });
+  assert.doesNotMatch(
+    JSON.stringify(seen[0]),
+    /\{[A-Za-z0-9_]+\}/,
+    `no {placeholder} may survive into a dispatched request: ${JSON.stringify(seen[0])}`,
+  );
+});
+
+test("with no route at all, nothing is executed and the gap says so", () => {
+  // Defaulting the route to "cli" when discovery matched nothing meant the verifier
+  // BUILT a `logcli labels` command and ran it on a machine with no logcli — then
+  // recorded gapClass absent-on-this-machine while the next action told the customer
+  // to correct their value.
+  let called = 0;
+  const r = verifyCapability({
+    capability: "logs",
+    row: table.logs,
+    targets: [{ field: "logIndex", value: "app-logs" }],
+    scope: { logIndex: "app-logs" },
+    env: { executables: [], mcpServers: [], repoFiles: [] },
+    runProbe: () => { called += 1; return { ok: false, raw: "should not be called" }; },
+  });
+  assert.equal(called, 0, "no probe may run when nothing can answer it");
+  assert.equal(r.verified, false);
+
+  const gap = r.targets[0].gap;
+  assert.equal(gap.errorClass, "not-installed");
+  assert.equal(gap.gapClass, GAP_CLASS.ABSENT_ON_MACHINE);
+  assert.doesNotMatch(gap.nextAction, /answer it during setup/, "must not ask for an undeclared field");
+  assert.doesNotMatch(gap.nextAction, /value corrected/, "must not blame the value when the tool is absent");
+  assert.match(gap.nextAction, /install/i, `must name something actionable: ${gap.nextAction}`);
+});
+
+// ---- one probe per runtime ---------------------------------------------------
+
+test("each infra runtime probes its own tool, not kubectl", () => {
+  // infra fingerprints five runtimes and shipped exactly one kubectl probe, so a
+  // Nomad, ECS, docker or pm2 machine had a `kubectl get pods` command built for
+  // it. That fails, and the failure was recorded as the customer's scope being
+  // invalid — the single-technology bias the whole setup flow exists to avoid.
+  const expected = {
+    kubectl: /^kubectl /,
+    docker: /^docker /,
+    aws: /^aws /,
+    nomad: /^nomad /,
+    pm2: /^pm2 /,
+  };
+  for (const [exe, pattern] of Object.entries(expected)) {
+    const seen = [];
+    const r = verifyCapability({
+      capability: "infra",
+      row: table.infra,
+      targets: [{ field: "namespace", value: "prod" }],
+      scope: { namespace: "prod" },
+      env: { executables: [exe], mcpServers: [], repoFiles: [] },
+      runProbe: (req) => { seen.push(req.command); return { ok: true, raw: "ok" }; },
+    });
+    assert.equal(r.verified, true, `${exe} must verify: ${JSON.stringify(r.gaps ?? [])}`);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0], pattern, `${exe} must probe itself, got: ${seen[0]}`);
+  }
+});
+
+test("a capability whose CLI is present probes over the CLI, not over MCP", () => {
+  // logs and metrics fingerprinted logcli and promtool but declared only an
+  // mcpProbe, so verifyCapability — which never passed `route` at all, leaving the
+  // route-aware branch dead — emitted an MCP request on a machine with no MCP
+  // server, and recorded a false scope-invalid gap on the flagship fixture.
+  for (const [capability, exe] of [["logs", "logcli"], ["metrics", "promtool"]]) {
+    const seen = [];
+    const r = verifyCapability({
+      capability,
+      row: table[capability],
+      targets: [{ field: capability === "logs" ? "logIndex" : "metricsNamespace", value: "x" }],
+      scope: {},
+      env: { executables: [exe], mcpServers: [], repoFiles: [] },
+      runProbe: (req) => { seen.push(req); return { ok: true, raw: "ok" }; },
+    });
+    assert.equal(r.verified, true, capability);
+    assert.equal(seen[0].kind, "cli", `${capability} must take the CLI route when ${exe} is present`);
+  }
+});
+
+// ---- GitHub scope vocabulary ------------------------------------------------
+
+test("verifyGithub reads the vocabulary the table and the context actually use", () => {
+  // It read scope.repo and scope.branch; the table declares `repos` and
+  // `baseBranch`, and the persisted context stores those same names. A caller
+  // handing over the real shape produced ZERO targets.
+  const seen = [];
+  const r = verifyGithub({
+    row: table.github,
+    scope: { repos: ["acme/api", "acme/e2e"], baseBranch: "main" },
+    env: { executables: ["gh"], mcpServers: [], repoFiles: [] },
+    runProbe: (req) => { seen.push(req.command); return { ok: true, raw: "{}", scopes: ["repo"] }; },
+    prList: { mergedCount: 4 },
+  });
+  assert.equal(r.verified, true);
+  assert.deepEqual(r.targets.map((t) => [t.field, t.value]), [["repo", "acme/api"], ["baseBranch", "main"]]);
+  assert.deepEqual(seen, ["gh api repos/acme/api", "gh pr list --base main --limit 1"]);
+});
+
+test("an unresolved GitHub scope refuses with a sentence a human can act on", () => {
+  // With no targets, `verified` was false, `failed` was undefined, and the refusal
+  // a customer read at the one mandatory gate was literally:
+  //   "GitHub is mandatory and I cannot move ahead without it: undefined 'undefined'
+  //    failed as undefined."
+  const r = verifyGithub({
+    row: table.github,
+    scope: {},
+    env: { executables: ["gh"], mcpServers: [], repoFiles: [] },
+    runProbe: () => { throw new Error("must not probe with nothing to probe"); },
+  });
+  assert.equal(r.verified, false);
+  assert.equal(r.blocking, true);
+  assert.doesNotMatch(r.message, /undefined/, r.message);
+  assert.match(r.message, /scope is unresolved/);
+  assert.match(r.nextAction, /repository and base branch/);
 });

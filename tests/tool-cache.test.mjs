@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   toolCacheDirFor, cacheKey, mcpCacheKey, cacheGet, cachePut, cacheStats,
   isCacheable, isCacheableMcp, isRunnable, redact, tokenize, splitPipeline,
+  isProbeRunnable, isPermittedProbeLeader,
 } from "../lib/tool-cache.mjs";
 
 let dir;
@@ -269,4 +270,121 @@ test("CONCURRENCY: same key written twice stays readable and consistent", () => 
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w1", stdout: "same-bytes" }, 1000);
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w2", stdout: "same-bytes" }, 2000);
   assert.equal(cacheGet(dir, k).stdout, "same-bytes");
+});
+
+// ---- the probe gate ---------------------------------------------------------
+//
+// This is the boundary between a command string that arrived as DATA — from
+// config/rca.config.json, from a customer-supplied overlay, or from a connector
+// skill under ~/.claude/skills — and execFile. It shipped with no direct tests at
+// all: its only coverage was incidental, through validateTable fixtures, so the
+// reject paths below had never once executed.
+
+test("a destructive verb is refused however it is attached", () => {
+  // The verb scan compared whole argv tokens, so the space-separated form was
+  // caught and the attached form was not — on a read-only path holding the
+  // customer's real credentials.
+  // Refusal is the contract; WHICH guard fires is not. Some of these trip the
+  // pre-existing MUTATING scan first, which is an equally correct refusal.
+  const refused = [
+    ["gh api repos/x --method=DELETE", ["gh"]],
+    ["gh api repos/x --method DELETE", ["gh"]],
+    ["docker rm container", ["docker"]],
+    ["aws s3 rm s3://bucket/key", ["aws"]],
+    ["kubectl delete pod x", ["kubectl"]],
+    ["nomad job run x.nomad", ["nomad"]],
+    ["pm2 delete all", ["pm2"]],
+  ];
+  for (const [cmd, leaders] of refused) {
+    assert.equal(isProbeRunnable(cmd, { leaders }).ok, false, `${cmd} must be refused`);
+  }
+
+  // The attached form specifically, which is the hole this closed: no shell
+  // metacharacter, nothing the MUTATING scan matches, and the verb rides in as a
+  // flag VALUE where a whole-token comparison cannot see it.
+  const attached = isProbeRunnable("gh api repos/x --method=DELETE", { leaders: ["gh"] });
+  assert.match(attached.reason, /destructive verb/, "the attached form must be caught by the verb scan");
+});
+
+test("the read-only status probes each runtime actually ships are accepted", () => {
+  // The mirror of the test above: a denylist that also refuses the real probes
+  // would have been caught here rather than by every customer at once.
+  const cases = [
+    ["kubectl version --request-timeout=5s", ["kubectl"]],
+    ["docker version", ["docker"]],
+    ["aws sts get-caller-identity", ["aws"]],
+    ["nomad status", ["nomad"]],
+    ["pm2 jlist", ["pm2"]],
+    ["logcli labels", ["logcli"]],
+    ["promtool --version", ["promtool"]],
+    ["gh api repos/acme/api", ["gh"]],
+  ];
+  for (const [cmd, leaders] of cases) {
+    const r = isProbeRunnable(cmd, { leaders });
+    assert.equal(r.ok, true, `${cmd} must be accepted: ${r.reason ?? ""}`);
+  }
+});
+
+test("a backslash-escaped quote cannot hide a shell operator", () => {
+  // firstUnquoted had no escape rule while tokenize did, so the two disagreed
+  // about where quotes ended: `\"` left the text OUTSIDE quotes for the tokenizer
+  // and INSIDE them for the scanner, and the `;` between went unseen.
+  const hidden = String.raw`gh api repos/x\";id;:\"`;
+  const r = isProbeRunnable(hidden, { leaders: ["gh"] });
+  assert.equal(r.ok, false, "an escaped-quote operator must be refused");
+  assert.match(r.reason, /metacharacter/);
+
+  // And the idiom the escape rule exists for still works: a quoted jq filter.
+  const jq = isProbeRunnable(`gh api repos/x --jq ".[] | \\"x\\""`, { leaders: ["gh"] });
+  assert.equal(jq.ok, true, `a quoted jq filter must still be accepted: ${jq.reason ?? ""}`);
+});
+
+test("a probe leader must be in the catalog, not merely non-interpreter", () => {
+  // Every previous rejection case used an interpreter name, so the "not in the
+  // permitted catalog" branch had never run.
+  for (const leader of ["npm", "terraform", "ansible", "psql", "mysql"]) {
+    const r = isPermittedProbeLeader(leader);
+    assert.equal(r.ok, false, `${leader} is not a probe leader`);
+  }
+  for (const leader of ["gh", "kubectl", "docker", "aws", "nomad", "pm2", "logcli", "promtool"]) {
+    assert.equal(isPermittedProbeLeader(leader).ok, true, leader);
+  }
+});
+
+test("an interpreter is refused as a probe leader whatever else the row says", () => {
+  for (const leader of ["bash", "sh", "zsh", "python3", "node", "ruby", "perl", "xargs", "ssh", "nc"]) {
+    const r = isPermittedProbeLeader(leader);
+    assert.equal(r.ok, false, leader);
+  }
+});
+
+test("looksLikeSecret is never weaker than redact", async () => {
+  // redact() protects a file in temp; looksLikeSecret protects a file that gets
+  // COMMITTED. The committed-artifact guard was measurably the weaker of the two:
+  // it missed `token=<hex>` and `Basic <base64>`, both of which redact catches.
+  // Asserting the relationship rather than a case list keeps it that way.
+  const { looksLikeSecret } = await import("../lib/verify.mjs");
+  const { EMBEDDED, BENIGN } = await import("./helpers/fake-credentials.mjs");
+
+  // Direction 1 — never weaker. Anything redact flags, looksLikeSecret must flag.
+  // This is the relationship that was broken: `token=<hex>` and `Basic <base64>`
+  // were redacted out of a temp file and written verbatim into a committed one.
+  for (const c of Object.values(EMBEDDED)) {
+    if (redact(c) === c) continue; // redact misses it too — direction 2 covers that
+    assert.equal(
+      looksLikeSecret(c).secret,
+      true,
+      `looksLikeSecret must flag anything redact flags — missed ${JSON.stringify(c)}`,
+    );
+  }
+
+  // Direction 2 — strictly stronger where it must be. A URL with userinfo is the
+  // shape of an answer to "which log endpoint?", and redact does not catch it.
+  assert.equal(redact(EMBEDDED.urlUserinfo), EMBEDDED.urlUserinfo, "precondition: redact misses this");
+  assert.equal(looksLikeSecret(EMBEDDED.urlUserinfo).secret, true, "the committed-file guard must not");
+
+  // And neither direction may swallow a real answer.
+  for (const b of BENIGN) {
+    assert.equal(looksLikeSecret(b).secret, false, `must not flag a legitimate value: ${b}`);
+  }
 });

@@ -13,6 +13,21 @@ deliberately skipped, or proven broken:
 | `failed` | Verification ran and the value is wrong or unreachable. |
 | `unverified` | Corrected at the gate, but re-verification did not pass within its round budget. **GitHub can never end here** — see below. |
 
+**The "not available" list comes from `reportableUnavailable`, never from the raw
+set.** `unavailableCapabilities(manifest)` takes only the manifest and cannot read a
+table field, so `other` — the catch-all, which can never match a fingerprint — would
+be reported every single run. Print
+`reportableUnavailable(unavailableCapabilities(manifest), table)`; it honours
+`exemptFromDiscoveryReport`. The manifest and the TFA-facing declaration still mark
+the capability unavailable — only this human-facing line suppresses it.
+
+**A context adopted from outside this repo says so.** `readRcaContext` returns a
+`trust` label: `own-worktree` and `origin-match` are evidence, `tracked` means
+someone committed it deliberately, and `name-only` means the only link is a
+directory name the file itself declared. On `name-only`, print the path and the
+label above the digest — adopting a file that drives repos, branch and the overlay
+must never be silent.
+
 **Never raw probe output.** A digest is a decision surface. The failure taxonomy
 in `<pluginRoot>/skills/rca-setup/references/verification-failures.md` reduces
 every provider error to a class plus a next action; that class is what prints.
@@ -43,6 +58,9 @@ Warnings:
 
 Gaps recorded (the run proceeds; these degrade evidence, not the run):
   · logs — skipped at setup
+
+Not available on this machine:
+  · <capability> — <install the CLI | connect the MCP server>
 
 Destination: <abs path>/.rca-context.json   (commit and push it so teammates inherit it)
 

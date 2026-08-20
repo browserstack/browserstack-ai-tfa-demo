@@ -24,6 +24,7 @@ import {
   findContextFile,
   findSecretFields,
   readRcaContext,
+  intakeFromContext,
   resolveIntake,
   startOfRunRefusal,
   writeRcaContext,
@@ -77,11 +78,17 @@ const validContext = (over = {}) => ({
   repos: ["acme/api", "acme/e2e-tests"],
   subpaths: ["services/billing"],
   baseBranch: "main",
-  namespaces: ["prod"],
+  // SINGULAR, because config/rca.config.json declares these scopeFields as
+  // `namespace` and `logIndex` and both resolveIntake and intakeFromContext look
+  // them up by exact key. This fixture used the plural forms — a shape
+  // writeRcaContext never produces — so the whole suite asserted against a context
+  // the real flow cannot write, and the key mismatch was invisible in both
+  // directions.
+  namespace: "prod",
   workloads: ["billing-consumer"],
-  logIndexes: ["app-logs-2026"],
+  logIndex: "app-logs-2026",
   credentials: { github: { kind: CREDENTIAL_KIND.ENV_VAR, name: "GH_TOKEN" } },
-  verified: { github: { ok: true } },
+  verified: { github: { ok: true, targets: ["acme/api", "main"], via: "cli" } },
   gaps: [],
   warnings: [],
   ...over,
@@ -460,4 +467,160 @@ test("contextHomeDir is reusable on its own for the digest", () => {
   const h = contextHomeDir({ homeRepo: "acme/api", verifiedRepos: ["acme/api"], from: automationRepo });
   assert.equal(h.ok, true);
   assert.equal(h.dir, productRepo);
+});
+
+// ---- adoption: which file on this machine is allowed to drive the run --------
+
+test("a planted context in a non-repo directory is never adopted", () => {
+  workspace();
+  // The walk covers cwd, cwd's children, and two levels up plus each of THEIR
+  // children — around 140 directories. The only test applied was
+  // `basename(dir) === basename(parsed.homeRepo)`, and homeRepo is a value the FILE
+  // supplies, so anything sitting in a directory named after the repo it claims was
+  // adopted. The adopted file then drives the run: resolveIntake ranks the context
+  // above connector defaults and inference, so repos, branch, namespace and the
+  // capabilities overlay all come from it.
+  const planted = join(ws, "api-decoy", "api");
+  mkdirSync(planted, { recursive: true });
+  writeFileSync(join(planted, CONTEXT_FILENAME), JSON.stringify(validContext()));
+
+  assert.equal(
+    findContextFile({ from: join(ws, "api-decoy") }),
+    null,
+    "a directory that is not a git worktree root cannot supply a context",
+  );
+});
+
+test("a context in our own worktree is adopted and labelled as such", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
+  const read = readRcaContext({ from: productRepo });
+  assert.equal(read.ok, true);
+  assert.equal(read.trust, "own-worktree");
+});
+
+test("a context adopted from a sibling repo is labelled, not silently trusted", () => {
+  workspace();
+  // The sibling walk is a real supported layout (context committed to the product
+  // repo, run started from the automation repo). With an uncommitted, origin-less
+  // file there is no strong evidence available — so it is accepted AND labelled, and
+  // the gate is required to show the path and the label rather than adopt silently.
+  writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
+  const read = readRcaContext({ from: automationRepo });
+  assert.equal(read.ok, true);
+  assert.equal(read.path, join(productRepo, CONTEXT_FILENAME));
+  assert.equal(read.trust, "name-only", "weak adoption must be visible to the gate");
+});
+
+test("an unparseable planted file cannot brick the run", () => {
+  workspace();
+  // The unparseable early-return sat ABOVE the adoption test, so any junk
+  // .rca-context.json anywhere in the ~140-directory walk short-circuited the search
+  // and every run refused with parse-error — a denial of service on the run from any
+  // writable directory near the repo.
+  const decoy = join(ws, "api-decoy", "api");
+  mkdirSync(decoy, { recursive: true });
+  writeFileSync(join(decoy, CONTEXT_FILENAME), "{ not json");
+  writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
+
+  const read = readRcaContext({ from: join(ws, "api-decoy") });
+  assert.notEqual(read.code, "parse-error", "a planted decoy must not preempt the real context");
+});
+
+// ---- write refusals ---------------------------------------------------------
+
+test("a partial never overwrites a complete context", () => {
+  workspace();
+  const first = writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
+  assert.equal(first.ok, true);
+
+  // Every write was unconditional, so a resumed session that re-verified less than
+  // the first — or a second engineer running setup in the same repo — silently
+  // replaced a committed complete context with a narrower one.
+  const downgrade = writeRcaContext({
+    context: validContext({ complete: false, verified: {} }),
+    verifiedRepos: ["acme/api"],
+    from: productRepo,
+  });
+  assert.equal(downgrade.ok, false);
+  assert.equal(downgrade.code, "would-downgrade");
+  assert.match(downgrade.message, /discard verified answers/);
+
+  const still = readRcaContext({ from: productRepo });
+  assert.equal(still.context.complete, true, "the complete context must survive intact");
+});
+
+test("a complete context may still be replaced by another complete one", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
+  const again = writeRcaContext({
+    context: validContext({ baseBranch: "release" }),
+    verifiedRepos: ["acme/api"],
+    from: productRepo,
+  });
+  assert.equal(again.ok, true, "re-running setup to completion must still work");
+  assert.equal(readRcaContext({ from: productRepo }).context.baseBranch, "release");
+});
+
+test("writeRcaContext's own missing-field and schema-version guards refuse", () => {
+  workspace();
+  // readRcaContext's equivalents were well covered; the write side repeats the
+  // checks independently and every write test used a fully valid context, so a
+  // regression here would have persisted a context the next read refuses.
+  const missing = writeRcaContext({ context: { schemaVersion: SCHEMA_VERSION, complete: true }, from: productRepo });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.code, "missing-field");
+  assert.deepEqual(missing.fields, ["homeRepo"]);
+
+  const version = writeRcaContext({
+    context: validContext({ schemaVersion: SCHEMA_VERSION + 1 }),
+    verifiedRepos: ["acme/api"],
+    from: productRepo,
+  });
+  assert.equal(version.ok, false);
+  assert.equal(version.code, "schema-version");
+  assert.equal(findContextFile({ from: productRepo }), null, "a refused write leaves nothing behind");
+});
+
+// ---- the intake vocabulary seam ---------------------------------------------
+
+test("a complete context resolves every intake field the gate asks for", () => {
+  // The guarantee, asserted end to end. The gate asks resolveIntake for `repo`,
+  // `automationRepo`, `baseBranch`, `namespace`, `workloads`; the artifact stores
+  // `repos`, `homeRepo`, `baseBranch`, `namespace`, `workloads`. resolveIntake
+  // matches keys EXACTLY, so passing the context raw left `repo` and
+  // `automationRepo` unresolved — and the gate then re-asked for a repo the context
+  // had verified, breaking the zero-questions guarantee the same block promises.
+  const fields = ["repo", "automationRepo", "baseBranch", "namespace", "workloads"];
+  const context = validContext();
+
+  const raw = resolveIntake({ context, fields });
+  assert.equal(raw.repo.source, "unresolved", "precondition: the raw shape does not resolve");
+
+  const translated = resolveIntake({ context: intakeFromContext(context), fields });
+  for (const f of fields) {
+    assert.equal(translated[f].source, "context", `${f} must come from the context, not inference`);
+  }
+  assert.equal(translated.repo.value, "acme/api", "homeRepo IS the product repo");
+  assert.equal(translated.automationRepo.value, "acme/e2e-tests");
+});
+
+test("an ambiguous automation repo is left for inference rather than guessed", () => {
+  const t = intakeFromContext({ homeRepo: "acme/api", repos: ["acme/api", "acme/e2e", "acme/other"] });
+  assert.equal(t.repo, "acme/api");
+  assert.equal(t.automationRepo, undefined, "two candidates is not an answer");
+});
+
+test("build metadata and invocation args still outrank the context", () => {
+  // The translator must not change precedence, only vocabulary.
+  const context = intakeFromContext(validContext());
+  const r = resolveIntake({
+    buildMeta: { baseBranch: "from-build" },
+    invocationArgs: { repo: "typed/by-user" },
+    context,
+    fields: ["repo", "baseBranch", "namespace"],
+  });
+  assert.equal(r.baseBranch.source, "buildMeta");
+  assert.equal(r.repo.source, "invocationArgs");
+  assert.equal(r.namespace.source, "context");
 });

@@ -37,7 +37,7 @@ test("discovery fixtures exist and cover every seeded capability", () => {
 
 for (const fx of fixtures) {
   test(`fixture ${fx.file}: ${fx.name}`, () => {
-    const { discovered, questions, custom } = discover({ table, env: fx.env });
+    const { discovered, relevant, questions, custom } = discover({ table, env: fx.env });
     const manifest = buildManifest(config, discovered);
 
     const available = Object.entries(manifest)
@@ -54,6 +54,14 @@ for (const fx of fixtures) {
 
     for (const [cap, via] of Object.entries(fx.expect.via ?? {})) {
       assert.equal(manifest[cap].via, via, `${cap} via`);
+    }
+
+    if (fx.expect.relevant) {
+      assert.deepEqual(
+        relevant.map((r) => r.capability).sort(),
+        [...fx.expect.relevant].sort(),
+        "relevant set — file evidence raises questions without claiming the capability",
+      );
     }
 
     if (fx.expect.custom) {
@@ -147,10 +155,14 @@ test("a fingerprint is a needle, not a haystack — one-way containment only", (
 });
 
 test("a file fingerprint matches only on a path boundary", () => {
+  // File evidence lands in `relevant`, not `discovered` — it raises the scope
+  // questions without claiming a capability nothing on this machine can verify.
   const hit = (repoFiles) =>
-    discover({ table, env: { executables: [], mcpServers: [], repoFiles } }).discovered.map((d) => d.capability);
+    discover({ table, env: { executables: [], mcpServers: [], repoFiles } }).relevant.map((d) => d.capability);
   assert.deepEqual(hit(["k8s/deployment.yaml"]), ["infra"], "k8s/ matches its own directory");
   assert.deepEqual(hit(["k8something/deployment.yaml"]), [], "but not a directory that merely starts the same");
+  // A .github/ directory is relevance, not availability — it cannot verify API
+  // access, so it raises github's scope questions without claiming the capability.
   assert.deepEqual(hit([".github/workflows/test.yml"]), ["github"]);
 });
 
@@ -222,13 +234,48 @@ test("interpolate reports unresolved placeholders rather than running a literal 
   assert.match(r.reason, /unresolved placeholder\(s\): repo/);
 });
 
-test("a scope value carrying a redirect or operator is caught at interpolation, not at schema time", () => {
+test("a scope value carrying a redirect or operator is refused", () => {
   // The template was validated against `{branch}`, not against what the customer
   // typed. This is the gap that checking only the template leaves open.
   for (const hostile of ["main > /etc/x", "main | python3", "main; id"]) {
     const r = interpolate("gh pr list --base {branch} --limit 1", { branch: hostile }, { leaders: ["gh"] });
     assert.equal(r.ok, false, `${hostile} must be refused`);
-    assert.match(r.reason, /interpolated probe is not runnable/);
+  }
+});
+
+test("a scope value may not introduce argv structure", () => {
+  // The three cases above all contain a shell metacharacter, so passing them
+  // proved only that DETACHED operators are rejected. Each value below carries no
+  // metacharacter at all and every one reached a real command before the value
+  // check existed:
+  //
+  //  --method=DELETE  the verb rides in as an attached flag VALUE, so the
+  //                   destructive-verb scan never saw it as a token
+  //  '; id; '         the documented exec path embeds the probe in single quotes
+  //                   (`node bin/cached-exec.mjs ... '<cmd>'`), so the value
+  //                   closes that quote and the outer shell runs the rest
+  //  \";id;:\"         two quoting models over one string — tokenize treats \" as
+  //                   a literal, the metachar scan treated it as a delimiter
+  const vectors = [
+    ["acme/api --method=DELETE", "attached flag value"],
+    ["acme/api'; id; '", "single-quote breakout of the outer shell"],
+    ['acme/api\\";id;:\\"', "backslash-escaped quote"],
+    ["-oJson", "leading dash reads as a flag"],
+    ["acme/api\ttab", "any whitespace adds a token"],
+  ];
+  for (const [hostile, why] of vectors) {
+    const r = interpolate("gh api repos/{repo}", { repo: hostile }, { leaders: ["gh"] });
+    assert.equal(r.ok, false, `${why}: ${JSON.stringify(hostile)} must be refused`);
+    assert.match(r.reason, /unusable scope value/, why);
+  }
+});
+
+test("legitimate scope values still interpolate", () => {
+  // The value check is a denylist on structure, not on content — it must not
+  // start refusing ordinary answers.
+  for (const good of ["acme/api", "main", "release/2026-08", "services/billing", "app-logs-2026", "prod"]) {
+    const r = interpolate("gh api repos/{repo}", { repo: good }, { leaders: ["gh"] });
+    assert.equal(r.ok, true, `${good} must be accepted: ${r.reason ?? ""}`);
   }
 });
 
@@ -244,6 +291,45 @@ test("every shipped probe template interpolates to a runnable command", () => {
       if (!row?.[field]) continue;
       const r = interpolate(row[field], scope, { leaders });
       assert.equal(r.ok, true, `${cap}.${field} -> ${r.reason ?? ""}`);
+    }
+  }
+});
+
+// ---- discovery and verification must agree ----------------------------------
+
+test("every capability discovery reports available can actually be verified", () => {
+  // The property, not a case list. Two divergences shipped before this existed:
+  // two-way MCP containment (a fingerprint matching a shorter server name), and
+  // github's file fingerprint (a .github/ directory reported as API access). Both
+  // looked correct in isolation and only showed up as discovery saying yes while
+  // verification said no ON THE SAME MACHINE — which a customer reads as the tool
+  // contradicting itself. Asserting agreement catches the next one by construction.
+  const envs = [
+    { executables: ["gh"], mcpServers: [], repoFiles: [] },
+    { executables: [], mcpServers: ["mcp__github__get_repository"], repoFiles: [] },
+    { executables: ["kubectl"], mcpServers: [], repoFiles: [] },
+    { executables: ["nomad"], mcpServers: [], repoFiles: [] },
+    { executables: ["logcli", "promtool"], mcpServers: [], repoFiles: [] },
+    { executables: [], mcpServers: [], repoFiles: ["k8s/deployment.yaml"] },
+    { executables: [], mcpServers: [], repoFiles: [".github/workflows/test.yml"] },
+  ];
+
+  for (const env of envs) {
+    const { discovered } = discover({ table, env });
+    for (const d of discovered) {
+      const row = table[d.capability];
+      assert.notEqual(
+        d.evidence.kind,
+        "file",
+        `${d.capability} claimed availability from file evidence — that belongs in \`relevant\``,
+      );
+      const hasRoute =
+        (row?.fingerprints?.executables ?? []).some((e) => env.executables.includes(e)) ||
+        (env.mcpServers ?? []).length > 0;
+      assert.ok(
+        hasRoute,
+        `${d.capability} was discovered via ${d.via} but no CLI or MCP route on this env can verify it`,
+      );
     }
   }
 });

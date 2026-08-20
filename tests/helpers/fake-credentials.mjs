@@ -33,3 +33,31 @@ export const FAKE = {
    *  detector must NOT flag it. */
   gitSha: hexBody(40),
 };
+
+/**
+ * Credentials with NO provider prefix, which clear no entropy bar either.
+ *
+ * These are the shapes `redact` in lib/tool-cache.mjs catches and
+ * `looksLikeSecret` in lib/verify.mjs did not — which made the guard on the
+ * git-COMMITTED artifact strictly weaker than the one on a temp file. The URL form
+ * was missed by both, and it is exactly what a customer types when asked for a log
+ * or metrics endpoint.
+ */
+export const EMBEDDED = {
+  /** `key=value`, no prefix the detector can anchor on. */
+  kvToken: "to" + "ken=" + hexBody(32),
+  kvApiKey: "api" + "_key=" + hexBody(32),
+  /** An auth scheme with a base64 body — `elastic:password`, encoded. */
+  basicScheme: "Ba" + "sic " + "ZWxhc3RpYzpwYXNzd29yZA==",
+  bearerScheme: "Bea" + "rer " + mixedBody(24),
+  /** userinfo in a URL: the shape of an answer to "which log endpoint?". */
+  urlUserinfo: "https://" + "elastic:" + "hunter2" + "@logs.acme.internal:9200",
+};
+
+/** Values that must NEVER be flagged: real answers the interview collects. */
+export const BENIGN = [
+  "acme/api", "main", "release/2026-08", "services/billing",
+  "app-logs-2026", "prod", "billing-consumer",
+  "https://logs.acme.internal:9200",
+  FAKE.gitSha,
+];

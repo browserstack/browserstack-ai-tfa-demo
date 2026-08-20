@@ -41,17 +41,20 @@ import {
  *  being a budget. Milestone 2 tightens rca-build as its body shrinks — the failure
  *  message prints every measured total so that number comes from recorded data. */
 const CEILINGS = {
-  "rca-build": 1500, // 1478 today. The whole point of milestone 2 is to move this down.
-  "rca-setup": 650, // 593 today.
+  "rca-build": 1500, // 1487 today. The whole point of milestone 2 is to move this down.
+  "rca-setup": 650, // 617 today.
 };
 
 const measure = (skill) => mandatedLineCount(skill);
-const over = (skill) => measure(skill).total > CEILINGS[skill];
+// Parameterised so the comparison itself is testable. As a closure over CEILINGS
+// it could only ever be called with a ceiling the real bodies pass, which is why
+// the test below asserted around it instead of through it.
+const over = (skill, ceiling = CEILINGS[skill]) => measure(skill).total > ceiling;
 
 test("every skill's mandated reading stays inside its budget", () => {
   const report = SKILLS.map(measure);
   assert.deepEqual(
-    SKILLS.filter(over).map((s) => `${s}: ${measure(s).total} > ${CEILINGS[s]}`),
+    SKILLS.filter((s) => over(s)).map((s) => `${s}: ${measure(s).total} > ${CEILINGS[s]}`),
     [],
     `over budget. Measured totals (body + mandated reading):\n` +
       report
@@ -92,10 +95,14 @@ test("relocating prose from a body into mandated reading does not reduce the tot
 });
 
 test("the over-ceiling comparison fails when the ceiling is below the measured total", () => {
-  // A loose ceiling measured against the real bodies would pass by construction and
-  // ship a check whose failure path has never executed.
+  // This test previously asserted `r.total > 1` and `r.perFile.length > 1` and never
+  // called over() at all — so rewriting over() to `return false` would have left it
+  // green, which is precisely the "failure path never executed" problem its own
+  // comment warned about. Now it drives the comparison in both directions.
   const r = measure("rca-setup");
-  assert.ok(r.total > 1, "a ceiling of 1 must be exceeded");
+  assert.equal(over("rca-setup", 1), true, "a ceiling of 1 must be exceeded");
+  assert.equal(over("rca-setup", r.total), false, "the measured total is not OVER itself");
+  assert.equal(over("rca-setup", r.total - 1), true, "one line below the total is over");
   assert.ok(r.perFile.length > 1, "and the report must name every file that contributed");
 });
 

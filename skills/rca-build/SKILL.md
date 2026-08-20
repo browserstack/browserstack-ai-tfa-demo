@@ -122,6 +122,9 @@ startOfRunRefusal(readResult) → {refuse, code, message, nextAction, partial}
     THE start-of-run policy — call it in Part A Step 0a. Refuses on no-context,
     unreadable-context and github-unverified. A partial with verified GitHub
     proceeds with `partial: true`.
+intakeFromContext(context) -> the run's intake vocabulary, translated from the
+                  artifact's. `repo` <- homeRepo; `automationRepo` <- the one other
+                  verified repo, when unambiguous. Required before resolveIntake.
 CONTEXT_FILENAME  ".rca-context.json"   at the home repo's worktree root, NOT under .rca/
 SCHEMA_VERSION    CREDENTIAL_KIND  { ENV_VAR, PROVIDER_MANAGED }
 ```
@@ -210,7 +213,8 @@ const verdict = startOfRunRefusal(read);
 ```
 
 `startOfRunRefusal` is the whole refusal policy, as a tested function rather than a
-list of paragraphs here. It refuses in four cases and only four:
+list of paragraphs here. It refuses in three cases and only three — the fourth row
+below is the proceed case, not a refusal:
 
 | `verdict.code` | Meaning | What to print |
 |---|---|---|
@@ -220,7 +224,7 @@ list of paragraphs here. It refuses in four cases and only four:
 | — | `refuse: false` | proceed; `verdict.partial` says whether unanswered capabilities must be declared as gaps |
 
 **Refuse before any RCA work, identically in interactive and headless mode.** The
-third and fourth rows are the ones a prose list forgets: `unreadable-context` looks
+`unreadable-context` row is the one a prose list forgets: it looks
 like `no-context` until you look closely, and telling someone to run setup when
 their file is merely conflict-marked discards every answer they already gave.
 
@@ -436,11 +440,17 @@ is the point:
 const intake = resolveIntake({
   buildMeta,                        // fetchBuildInsights — branch the build actually ran on
   invocationArgs,                   // build id, PR URLs, repo hints the user typed
-  context: read.context,            // what `rca-setup` verified
+  context: intakeFromContext(read.context),   // MUST go through the translator
   connectorDefaults,                // the connector skill's intake-defaults section
   fields: ["repo", "automationRepo", "baseBranch", "namespace", "workloads"],
 });
 ```
+
+`intakeFromContext` is not optional decoration. The artifact speaks the capability
+table's vocabulary (`repos`, `homeRepo`, `baseBranch`, `namespace`) and this call
+asks for the run's (`repo`, `automationRepo`, …); `resolveIntake` matches keys
+exactly, so passing `read.context` raw leaves three of the five fields
+`unresolved` and the gate re-asks for answers a verified context already holds.
 
 Precedence, in full: **build metadata → invocation args → persisted context →
 connector intake defaults → inference.** Every field comes back `{value, source}`,
@@ -532,7 +542,7 @@ execution is fully autonomous: every downstream evidence gap becomes an
 `unavailable` block back to TFA (best-effort finalize), never a prompt.
 
 **Never a blocker — except the start-of-run context refusals.** Once the gate has
-closed, nothing stops the run. But the four `startOfRunRefusal` cases in Part A
+closed, nothing stops the run. But the three `startOfRunRefusal` refusals in Part A
 Step 0a fire BEFORE it opens, and those do stop it: no resolvable context, a
 context present but unreadable, and GitHub unverified. That is not an exception to
 autonomy — it is the precondition for it, since a run with no verified GitHub

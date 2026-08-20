@@ -64,6 +64,11 @@ const GATE_CRITICAL = [
   // string-presence check; it will not satisfy this one.
   { fn: "resolveIntake", module: "rca-context.mjs" },
   { fn: "readRcaContext", module: "rca-context.mjs" },
+  // Shipped, documented and unit-tested while NOTHING drove it — the exact bug
+  // class this test exists to catch, which it missed because the old check counted
+  // mentions rather than call sites.
+  { fn: "reportableUnavailable", module: "capability-table.mjs" },
+  { fn: "intakeFromContext", module: "rca-context.mjs" },
 ];
 
 test("gate-critical lib exports are actually invoked outside tests", () => {
@@ -85,9 +90,22 @@ test("gate-critical lib exports are actually invoked outside tests", () => {
   // never written means every coordinator re-probes the filesystem.
   for (const { fn, module } of GATE_CRITICAL) {
     if (!existsSync(join(ROOT, "lib", module))) continue; // not built yet
-    // Definition line doesn't count as a call site.
-    const uses = haystack.split(fn).length - 1;
-    assert.ok(uses >= 2, `${fn} appears ${uses}x outside tests — defined but never driven`);
+
+    // Count CALL SITES, not mentions. `haystack.split(fn).length - 1` counted every
+    // occurrence including the `export function` definition, so a threshold of 2 was
+    // satisfied by the definition plus a single prose mention — zero invocations —
+    // while the comment above it claimed the definition did not count. The guard
+    // named a property it was not checking, which is worse than not checking it.
+    //
+    // A call site is `fn(` minus the declarations. Prose counts: for the adapter
+    // exports the CALLER is an agent following a fenced snippet, so a `resolveIntake({`
+    // in SKILL.md is a real driver — that is what test 3 below pins in place.
+    const decls = (haystack.match(new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${fn}\\b`, "g")) ?? []).length;
+    const invocations = (haystack.match(new RegExp(`\\b${fn}\\s*\\(`, "g")) ?? []).length - decls;
+    assert.ok(
+      invocations >= 1,
+      `${fn} is declared ${decls}x and called ${invocations}x outside tests — defined but never driven`,
+    );
   }
 });
 

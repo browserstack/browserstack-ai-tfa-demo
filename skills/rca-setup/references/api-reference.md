@@ -32,7 +32,7 @@ reportableUnavailable(unavailable, table) → the subset worth showing a human
     honours `exemptFromDiscoveryReport`. unavailableCapabilities() takes only the
     manifest and cannot read a table field, so suppression happens here — and only
     for the human-facing line; the manifest and the TFA declaration are unchanged.
-RESOLVABLE                                Set: always | partial | always-asked
+RESOLVABLE                                Set: partial | always-asked
 OVERLAY_FORBIDDEN                         fields an overlay may never set
 ```
 
@@ -165,6 +165,11 @@ findSecretFields(context)                  → [{path, kind}]
 startOfRunRefusal(readResult)               → {refuse, code?, message?, nextAction?, partial?}
     the run's whole refusal policy: no-context · unreadable-context · github-unverified
     `refuse:false` carries `partial`, so the caller knows to declare unanswered gaps
+intakeFromContext(context) → the RUN's intake vocabulary, translated from the
+    artifact's own. `repo` ← homeRepo (the repo the context is committed to IS the
+    product repo); `automationRepo` ← the one other verified repo when unambiguous.
+    The two vocabularies are not interchangeable and resolveIntake matches keys
+    exactly, so the run must translate before resolving.
 resolveIntake({buildMeta, invocationArgs, context, connectorDefaults, fields})
                                            → {field: {value, source}}
 CONTEXT_FILENAME  ".rca-context.json"      SCHEMA_VERSION      CREDENTIAL_KIND

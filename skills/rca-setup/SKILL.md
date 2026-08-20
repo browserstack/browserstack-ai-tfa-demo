@@ -52,8 +52,13 @@ context's GitHub no longer verifies.
 
 Collect the environment and hand it to `discover()`:
 
-- executables on PATH from the table's fingerprints,
-- MCP servers present in this session,
+- executables on PATH — scan broadly, not only the table's fingerprints, or the
+  unfamiliar deploy CLI a custom-capability record exists to surface can never
+  appear,
+- MCP servers present in this session: pass **your own available tool names
+  through verbatim** (`mcp__prometheus__execute_query`, `claude_ai_Slack`).
+  Fingerprint matching is one-way substring containment, so no parsing, filtering
+  or server-name derivation is needed — deriving one is how this gets it wrong,
 - repo fingerprint paths that exist,
 - connector-shaped skills at `.claude/skills/`, `../.claude/skills/`,
   `../../.claude/skills/`, `~/.claude/skills/`.
@@ -95,8 +100,21 @@ the owned subpaths and GitHub's path-overlap test is their only consumer.
 
 Follow `<pluginRoot>/skills/rca-setup/references/verification-failures.md`. Live
 read per resolved target through `verifyCapability`, and `verifyGithub` for GitHub.
-Per target, not per tool. On the MCP route you invoke the tool and hand the result
-to the verifier.
+Per target, not per tool.
+
+`runProbe` is the seam: `lib/` cannot invoke an MCP tool or spawn a process, so YOU
+execute and hand back the result. Call the verifier — never re-implement
+`scrubFailure`, `classifyGap` or `nearMatch` from the prose in that reference:
+
+```js
+const result = verifyGithub({
+  row, scope, env, candidates,
+  prList,                             // on the MCP route this IS the base-branch evidence
+  runProbe: (req) => req.kind === "mcp"
+    ? mcpResultFor(req.tool, req.args)   // you invoke it; return {ok, raw, scopes?}
+    : execProbe(req.command),            // execFile(argv[0], argv.slice(1)) — no shell
+});
+```
 
 If a customer pastes a credential value at any point: refuse it, do not echo it,
 give rotation guidance, and continue asking for the variable name instead.

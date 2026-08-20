@@ -27,12 +27,9 @@ Config (concurrency, turn-cap, paths, evidence registry) lives in
 `config/rca.config.json`. State lives in the CSV/WAL spine (`lib/csv-state.mjs`).
 
 <use_parallel_tool_calls>
-Whenever you need to perform multiple independent operations — connector
-probes, per-repo evidence fetches, per-workload log sweeps, or any other set
-of calls with no dependency between them — invoke all relevant tools
-simultaneously in one message rather than sequentially. The only exception is
-when one call's output is a literal input to another; that pair, and only
-that pair, runs in order.
+Fan out independent work in one message — connector probes, per-repo
+evidence fetches, per-workload log sweeps. Only chain calls when one's
+output is a literal input to the next.
 </use_parallel_tool_calls>
 
 ## API reference — read `references/api.md`, don't grep the source

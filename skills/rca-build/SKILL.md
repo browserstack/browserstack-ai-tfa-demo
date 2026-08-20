@@ -524,17 +524,19 @@ siblings behind an unrelated slow representative.
 
 Dispatch path, in preference order:
 
-- **`workflows/rca-batch.mjs`** (Claude Code, when the Workflow tool is available) —
-  `pipeline(clusters, repStage, siblingStage)` has no barrier between stages, so a
-  cluster's siblings start the instant ITS OWN representative resolves: the only path
-  with a true per-cluster guarantee. Prefer it whenever cluster count exceeds
-  `concurrency` (also the path for `resumeFromRunId` resumability / progress UI). It
-  caps concurrency below the JSON value; use the default path if you need literal
-  fan-out.
-- **Direct Agent-tool dispatch** (default, all hosts) — dispatch
+- **`workflows/rca-batch.mjs`** — **the default whenever the Workflow runtime is
+  available** (Claude Code). `pipeline(clusters, repStage, siblingStage)` has no
+  barrier between stages, so a cluster's siblings start the instant ITS OWN
+  representative resolves: the only path with a true per-cluster guarantee, and it
+  keeps coordinator output out of the orchestrator's context. Also gives
+  `resumeFromRunId` resumability + progress UI. It caps concurrency below the JSON
+  value — but so does the platform's own subagent limit on the fallback, so this is
+  rarely the deciding factor.
+- **Direct Agent-tool dispatch** (fallback — no Workflow runtime) — dispatch
   `tfa-rca:ai-tfa-coordinator` subagents in batches of `concurrency` (one message, up
   to `concurrency` tool-use blocks), refilling per the rolling queue above. Honors the
-  JSON value literally, but streams per-batch, not per-cluster.
+  JSON value literally, but streams per-batch, not per-cluster (a batch is a barrier:
+  the next batch waits for the slowest in the current one).
   **This path has no code enforcing the Step 4b handoff — you are the enforcement.**
   Before dispatching ANY representative, call `readTurn1(turn1PathFor(buildId,
   stateDir), testRunId)` and fold the result into the prompt using this exact mapping

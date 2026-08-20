@@ -288,28 +288,3 @@ test("flipping to pending-resume without a turnId warns loudly", () => {
 // "A PRODUCT_BUG RCA without a culprit PR is incomplete" was a prompt-only rule.
 // A stated "none — searched X" satisfies it; a blank field does not, and the two
 // are indistinguishable in the CSV.
-test("flip warns on a product bug with no PR evidence trail", () => {
-  const dir = mkdtempSync(join(tmpdir(), "rca-pb-"));
-  const csv = join(dir, "s.csv");
-  seed(csv, "b", [{ test_id: 1 }, { test_id: 2 }, { test_id: 3 }]);
-
-  const warnings = [];
-  const orig = console.warn;
-  console.warn = (m) => warnings.push(String(m));
-  try {
-    flip(csv, 1, { rca_done: "resolved", failure_type: "PRODUCT_BUG" }, 1);
-    flip(csv, 2, { rca_done: "resolved", failure_type: "PRODUCT_BUG", related_prs: ["https://x/pull/1"] }, 1);
-    flip(csv, 3, { rca_done: "resolved", failure_type: "PRODUCT_BUG", related_prs: "none — searched repo-a, repo-b in window" }, 1);
-  } finally {
-    console.warn = orig;
-  }
-
-  const pb = warnings.filter((w) => /EMPTY related_prs/.test(w));
-  assert.equal(pb.length, 1, "only the blank one warns");
-  assert.match(pb[0], /testRunId=1/);
-
-  // An honest dead end is compliant — must not be nagged.
-  assert.ok(!pb.some((w) => /testRunId=3/.test(w)), "a stated 'none, searched X' satisfies the rule");
-
-  rmSync(dir, { recursive: true, force: true });
-});

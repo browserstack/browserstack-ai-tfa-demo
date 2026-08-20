@@ -59,78 +59,17 @@ pass. The gate has two parts; both run before any RCA work starts.
 
 ### Part A — connector discovery + validation
 
-**Step 0 — enumerate connector-shaped skills FIRST (before probing raw MCP tools).**
-Run:
-
-```bash
-# cwd, the WORKSPACE ROOT above it, and the user dir — the middle levels matter
-# because this plugin may be nested inside the workspace.
-ls .claude/skills/ ../.claude/skills/ ../../.claude/skills/ ~/.claude/skills/ 2>/dev/null
-```
-
-For each `SKILL.md` found, open it and look for a **Capability declaration**
-block (or a `capability: <name>` line in the frontmatter/body). Any skill that
-declares `capability: github | infra | logs | metrics | other` **IS** the
-connector for that capability and MUST be added to the manifest — it
-**SUPERSEDES** the raw MCP tool for that capability because it carries
-product-specific routing (repo map, cluster/namespace, branch conventions,
-falsification protocol) the raw tool does not. Record the skill's actual name in
-the manifest entry (e.g. `github: valid, via: gh (skill=<skill-name>)` — whatever
-the skill is really called; there is no required naming convention). Skipping
-this step is the failure mode where the orchestrator dispatches coordinators
-that grep the wrong repos on the wrong branch.
-
-**Disambiguating when >1 skill declares the same capability (nudge / one-question
-rule).** Group the discovered skills **by their declared `capability`** — not by
-name. A capability may have none, one, or several skills claiming it (whatever the
-user has; names are arbitrary). For each capability, pick the skill that applies to
-THIS build:
-
-**Enumerate every skill claiming a capability before opening any one of them**, then
-pick by failure-signature match (step 2 below) — never open just the first and stop.
-Reading only one when several claim the same capability silently degrades to
-"exactly one, use it" and lands a wrong-connector read in Part B. If you can't
-recite the other candidates the `ls` returned, you skipped this — stop and enumerate.
-
-- **Zero skills for a capability** → **nudge the user in the gate summary**:
-  "No connector-shaped skills found under `.claude/skills/` — proceeding with
-  raw MCP tools only; culprit-PR attribution will be best-effort against
-  workspace `git remote` guesses. Add a skill that declares `capability: github` /
-  `capability: infra` (name it anything) for higher-fidelity routing." Then proceed
-  with raw connectors. **Do NOT block.**
-- **Exactly one skill for a capability** → use it. No question. *(The common case:
-  a flat set of arbitrarily-named skills, one per capability — this is normal, not a
-  degraded config.)*
-- **Two or more skills claiming the same capability** → try to disambiguate WITHOUT
-  asking:
-  1. Match the build's project / build name (from `getBuildId` metadata or
-     the invocation args) against each candidate's SKILL.md description — if one
-     matches unambiguously, use it.
-  2. Match the discovered failure signatures (from Step 2's `listTestIds` if it
-     has already run, else defer this to a re-visit after discovery) against
-     each candidate's declared file paths / error patterns — if one owns the
-     failure surface, use it.
-     If both signals leave the choice ambiguous, this earns the **one
-     consolidated gate question** (Part B rules apply): fold it into the same
-     question as any other non-assumable field, e.g. _"Multiple `github` connector
-     skills found (`<name-a>`, `<name-b>`); build/failure signatures don't uniquely
-     pick one — which owns this build's failures?"_ Headless (can't ask): do **not**
-     commit to an arbitrary candidate — the wrong product connector means
-     confidently-wrong repo/branch routing, worse than none. Degrade this capability
-     to the raw/generic connector (as in the zero-skills case) and record the
-     unresolved ambiguity as a gap.
-  If candidates happen to declare a shared `product:`/`scope:`, use it to keep the
-  picked connector set coherent across capabilities — but never *require* it; a name
-  prefix is not a signal.
-
-Then enumerate every connector relevant to test RCA:
+Enumerate every connector relevant to test RCA:
 
 - from `config/rca.config.json` → `evidenceRouting`: **github**
   (product_code/deploy/ci), **infra** (whatever runtime the user has — k8s,
   ECS, docker, Nomad, plain VMs, PM2, …), **logs** (kibana or any log store),
   **metrics**, **other**;
 - plus any connector-shaped skills / MCP servers present in the session
-  (a log-search MCP, a metrics MCP, an infra skill, …).
+  (a log-search MCP, a metrics MCP, an infra skill, …). A skill that declares
+  `capability: github | infra | logs | metrics | other` **supersedes** the raw
+  tool for that capability — it carries product-specific routing (repo map,
+  branch conventions) the raw tool lacks.
 
 **Validate** each with a cheap probe — discovery alone is not enough. **Every
 row below is independent of every other row — fire them all as one batch of
@@ -164,7 +103,7 @@ reachable. That is the connector SKILL's job: each connector skill MUST
 declare, in its `Capability declaration` section, a `Scope probes:` list
 naming what to check and how. This orchestrator's contract is generic:
 
-1. For every connector skill added to the manifest in Step 0, read its
+1. For every connector skill added to the manifest in Part A, read its
    `Scope probes:` list.
 2. **Run every declared probe, across every connector and every target it
    names, together in one batch — the same rule as the base probes above.**
@@ -229,9 +168,8 @@ falling through to inference, and before ever asking.** A connector skill that
 declares "Intake defaults for the gate (Part B)" (or equivalent) is telling you
 these fields are answerable outright for its product. If the connector's
 intake section doesn't resolve a field for THIS build (e.g. its lane table
-doesn't match the failure signature at all), that is itself a sign the wrong
-family was selected — go back to the enumeration step above before treating
-the field as genuinely non-assumable.
+doesn't match the failure signature at all), don't force its default — treat
+the field via the normal path (inference, else a gap) as genuinely non-assumable.
 
 **Product-repo corroboration (do NOT skip).** The product repo must plausibly
 be the _system under test for THIS build's failures_ — not merely a repo name
@@ -319,46 +257,24 @@ Each cluster gets one **representative** (full multi-turn loop) and `N−1`
 the expensive evidence hunt to O(distinct causes) while every test still lands a
 per-test RCA. Singleton clusters are just plain per-test loops.
 
-**Clustering comes from the server's failure themes.** When the server has
-none, every failed test is simply its own representative (a singleton).
+Clustering comes from the server's failure themes only — poll cadence and
+rationale in `references/clustering.md`.
 
-1. Call `getBuildFailureThemes(buildUuid=<build id>)`. If nothing has ever
-   been computed for this build, this triggers computation (one POST, same
-   call) and polls in-call for `buildThemeWorkflow.status` to reach `SUCCESS`.
-   The poll cadence is fixed: **one GET first; a single POST trigger only when
-   the build has no themes yet (never re-fired); then GET every 3s up to a 90s
-   wall-clock ceiling.** Reaching `SUCCESS` returns `ready: true`; exhausting
-   the 90s (or a `FAILED`/`ERROR` status) returns `ready: false`. The call
-   never blocks longer than ~90s — so it's safe to await inline.
-2. **`ready: true`** → for each entry in `buildThemes`, call
+1. Call `getBuildFailureThemes(buildUuid=<build id>)` (triggers + polls in-call,
+   ≤~90s; safe to await inline).
+2. **`ready: true`** → for each `buildThemes` entry, call
    `listTestsInFailureTheme(buildUuid=<build id>, themeId=<buildFailureThemeId>)`,
-   following `nextCursor` until exhausted, to get that theme's member
-   testRunIds. Feed rows + the themes result + the per-theme member lists into
+   following `nextCursor` to exhaustion for its member testRunIds, then
    `lib/theme-clustering.mjs` → `clustersFromThemes(rows, themesResult,
-   testsByThemeId)` — this is the **preferred path**, since the grouping
-   reflects the server's own root-cause analysis rather than a text-signature
-   guess, and it never runs the coordinator fan-out N-tests-wide for a build
-   with only a handful of distinct causes duplicated across teams. Any failed
-   test the server didn't assign to a theme is never dropped — it still gets
-   its own singleton cluster.
+   testsByThemeId)`. Any test the server didn't assign still gets its own singleton.
+3. **`ready: false`** → `clustersFromThemes(readRows(csvPath), { buildThemes: [] }, {})`
+   → every failed test its own `solo-` cluster (all representatives). No local guess.
 
-   **`rows` MUST be `readRows(csvPath)` — the CSV Step 2 already seeded —
-   never a `listTestIds` result variable held over from earlier in the turn.**
-   The CSV is the one row set guaranteed fresh and from a successful seed
-   (Step 2 only seeds after `listTestIds` succeeds) — always re-read it here
-   rather than trusting a variable carried over from turns ago.
-3. **`ready: false`** (the server genuinely couldn't produce themes — still
-   computing past the poll budget, a failure status, or `trigger-unavailable`)
-   → call `clustersFromThemes(readRows(csvPath), { buildThemes: [] }, {})`.
-   With no themes, every failed test falls through to its own `solo-` cluster —
-   i.e. **all tests become representatives**, each running its own full per-test
-   loop. No client-side clustering and no local guess; correctness over the cost
-   collapse when the server can't group.
-
-`clustersFromThemes` mutates each row's `cluster_id` in place but does NOT
-persist — it's pure/dependency-free by design. Write its rows back yourself
-with `csvState.writeRows(csvPath, rows)` before fan-out, then verify: **if
-`cluster_id` is empty on any row, Step 3 did not take effect** — do not proceed.
+`rows` MUST be `readRows(csvPath)` (the CSV Step 2 seeded), never a `listTestIds`
+variable held over from earlier in the turn. `clustersFromThemes` mutates
+`cluster_id` but does NOT persist — `writeRows(csvPath, rows)` before fan-out, then
+verify: **if `cluster_id` is empty on any row, Step 3 did not take effect** — do not
+proceed.
 
 ## Step 4 — build-evidence pre-fetch (see `<pluginRoot>/skills/rca-build/references/evidence-routing.md` and `<pluginRoot>/lib/evidence-file.mjs`)
 
@@ -694,7 +610,7 @@ documented there."
 
 **Coordinator prompts MUST name every connector-shaped skill on the manifest.**
 Each dispatch prompt lists, per capability, the resolved connector skill from
-Gate Part A Step 0 — e.g. _"Use `<resolved-github-skill>` for every
+Gate Part A — e.g. _"Use `<resolved-github-skill>` for every
 product_code / deploy / ci ask. Use `<resolved-infra-skill>` for every infra
 ask."_ Omitting a manifest-listed connector lets the coordinator infer repos
 from workspace `git remote` or cwd, landing wrong PR attributions.

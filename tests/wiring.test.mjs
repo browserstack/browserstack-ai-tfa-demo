@@ -244,9 +244,8 @@ const OWNERS = {
 const INTERNAL = new Set([
   "emptyEvidenceFile", "writeEvidenceFile", "contribDirFor", "contribPathFor",
   "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache",
-  "normalize",
   "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
-  "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
+  "orderAsks", "routeAsk",
   "unavailableCapabilities", "toolCacheDirFor", "cacheKey",
   "isCacheable", "splitPipeline",
   // tool-cache module internals — agents drive the cache through
@@ -357,6 +356,7 @@ test("every lib/ symbol named in prose still exists", () => {
     "windowDays", "rotationGuidance", "connectorSkills", "scopeProbes",
     // placeholders and wire vocabulary, not lib symbols
     "pluginRoot", "evidenceFile", "turnCap", "evidenceType", "claude_ai_Slack",
+    "maxErrorReads", "maxReads", "maxWaitMs", "intervalMs",
     // Removed FIELD names that prose legitimately still names in order to explain
     // what changed. This check cannot tell "naming a deleted thing to explain it"
     // from "instructing a call to a deleted thing", so the difference is an
@@ -365,7 +365,7 @@ test("every lib/ symbol named in prose still exists", () => {
     "runRcaLoop",
     "scopeProbe", "isProbeRunnable", "isPermittedProbeLeader", "clusterAndPersist",
     "clusterRows", "computeSignature", "clustersFromThemes", "renderGlimpse",
-    "makeEvidenceCache", "resolveBaseline", "discoveryHints", "exemptFrom",
+    "resolveBaseline", "discoveryHints", "exemptFrom",
   ]);
 
   const prose = [];

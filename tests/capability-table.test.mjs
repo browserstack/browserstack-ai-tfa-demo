@@ -293,3 +293,30 @@ test("an overlay MAY still add hints for a capability it does not own the gate f
   assert.ok(Object.keys(table.metrics.scopeFields).includes("acct"));
   assert.ok(Object.keys(table.metrics.scopeFields).includes("metricsNamespace"), "merged, not replaced");
 });
+
+test("an overlay cannot declare a credential-named scope field", () => {
+  // A scope field is TYPED BY A HUMAN and written to a committed file, so a field
+  // called `apiToken` invites exactly the value the write guard then refuses.
+  // Removing scopeFields from OVERLAY_FORBIDDEN let a customer-committed overlay
+  // decide what a human is asked for. MUTATION: drop the CREDENTIAL_NAMED check
+  // and this passes.
+  const { table, violations } = mergeOverlay(realConfig().capabilities, {
+    metrics: { scopeFields: { apiToken: { consumer: "the credential used to query metrics" } } },
+  });
+  assert.deepEqual(codes(violations), ["overlay-credential-field"]);
+  assert.ok(!Object.keys(table.metrics.scopeFields).includes("apiToken"));
+  assert.match(violations[0].message, /environment-variable NAME/);
+});
+
+test("a prototype key NESTED in an overlay field is rejected too", () => {
+  // UNSAFE_KEYS was checked at the capability level and on immediate row fields
+  // only — and the overlay may now supply scopeFields and seedHints, so that
+  // nesting became customer-reachable. JSON.parse makes __proto__ an OWN property
+  // that spread copies faithfully, so it merged with zero violations.
+  const hostile = JSON.parse('{"metrics":{"scopeFields":{"__proto__":{"consumer":"x"},"real":{"consumer":"y"}}}}');
+  const { table, violations } = mergeOverlay(realConfig().capabilities, hostile);
+  assert.deepEqual(codes(violations), ["overlay-unsafe-key"]);
+  assert.ok(!Object.keys(table.metrics.scopeFields).includes("__proto__"));
+  assert.ok(Object.keys(table.metrics.scopeFields).includes("real"), "the sibling field survives");
+  assert.equal({}.consumer, undefined, "and Object.prototype is untouched");
+});

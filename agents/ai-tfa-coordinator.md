@@ -442,10 +442,23 @@ capability is unavailable — emit an
      PENDING    → DRAIN FIRST, do not resubmit and do not end here:
                     capture threadId + turnId, then loop on
                     getTfaTurnResult(testRunId, turnId) every softPendingDrain.intervalMs
-                    until status != PENDING, or the budget (maxReads / maxWaitMs) is spent.
+                    until the status is RESOLVED / NEEDS_INFO / BLOCKED, or the
+                    budget (maxReads / maxWaitMs) is spent, or the error streak
+                    below trips.
+                    NOT a landing: any other status, an empty result, or an
+                    unreadable one. An unrecognised-but-parseable status counts as
+                    "still working", so a new upstream status can never cut a drain
+                    short. "until status != PENDING" was the earlier wording and it
+                    is wrong: it ends the drain on ERROR or QUEUED and falls into a
+                    CLASSIFY with no matching branch.
                     landed  → replace `result` with it and re-CLASSIFY (turns_used UNCHANGED —
                               a read is not a turn; drop the spent turnId).
                     spent   → END (PENDING, note "soft-pending"), row stays resumable.
+                    maxErrorReads consecutive HARD errors → END (PENDING, note
+                              "tfa-error"), row stays resumable. A single failed
+                              read is not a verdict; one good read clears the
+                              streak. This is a different outcome from
+                              "soft-pending" on purpose — see the notes.
                     no getTfaTurnResult tool → END (PENDING, note "soft-pending").
      RESOLVED   → capture glimpse + viewRca; END (RESOLVED).
      BLOCKED    → END (PENDING, note "blocked") — terminal, no asks to route.
@@ -567,9 +580,12 @@ RCA_OUTPUT_END
 
 Notes:
 - `status` is one of exactly three values. `turn-cap`, `soft-pending` (drain
-  budget spent), `blocked`, and `likely-context-exceeded` (two consecutive
+  budget spent), `tfa-error` (`maxErrorReads` consecutive hard reads — the drain
+  stopped early), `blocked`, and `likely-context-exceeded` (two consecutive
   same-thread `TFA agent run failed` resubmits, per 4b) all report as
-  `PENDING`; note which in `root_cause`. A `PENDING` from a *drained* turn
+  `PENDING`; note which in `root_cause`. **Keep `soft-pending` and `tfa-error`
+  apart** — one means TFA was slow, the other that TFA broke, and only that
+  distinction supports the diagnosis `maxErrorReads` exists for. A `PENDING` from a *drained* turn
   should never appear — a drain that lands re-classifies instead.
 - `asks_skipped` always includes `test_logs` whenever TFA asked for logs.
   `asks_fulfilled` **never** includes `test_logs`.
@@ -585,7 +601,9 @@ Notes:
 - **Never** prompt, ask, or wait on a user — the gate is closed; gaps degrade to `unavailable`.
 - **Never** fulfill or seed a `test_logs` ask — TFA owns logs.
 - **Never** exceed `turnCap` `tfaRcaTurn` calls in one run.
-- **Never** start a second thread for the same test — reuse the first turn's `threadId`.
+- **Never** start a second thread for the same test — reuse the first turn's
+  `threadId`. The one exception is 4b's single context-exceeded restart, stated
+  there; this list is a summary and does not override it.
 - **Never** submit a new `tfaRcaTurn` message while a turn is soft-`PENDING` —
   drain it with `getTfaTurnResult` first; resubmitting stacks two turns on one thread.
 - **Never** let drain reads consume the turn cap, and never drain past the

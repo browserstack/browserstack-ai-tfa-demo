@@ -35,10 +35,15 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, appendFileSync } from "node:fs";
 import {
-  toolCacheDirFor, cacheKey, cacheGet, cachePut, cacheStats, isRunnable, tokenize,
+  toolCacheDirFor, cacheKey, cacheGet, cachePut, cacheStats, isRunnable, tokenize, VOLATILITY,
 } from "../lib/tool-cache.mjs";
 
-const [, , buildId, writerOrFlag, commandArg] = process.argv;
+// `--stable` may appear anywhere after the writer id. It declares that this key's
+// answer cannot change — a read pinned to a commit sha, a merged PR's diff — so the
+// entry is exempt from the snapshot expiry.
+const rawArgv = process.argv.slice(2);
+const stable = rawArgv.includes("--stable");
+const [buildId, writerOrFlag, commandArg] = rawArgv.filter((a) => a !== "--stable");
 
 // `-` means the command arrives on stdin, which sidesteps the nested-quoting
 // problem entirely (see gotcha 2 above).
@@ -56,7 +61,7 @@ if (command === "-") {
 }
 
 if (!buildId || (writerOrFlag !== "--stats" && !command)) {
-  console.error("usage: cached-exec.mjs <buildId> <writerId> '<command>'");
+  console.error("usage: cached-exec.mjs <buildId> <writerId> [--stable] '<command>'");
   console.error("       cached-exec.mjs <buildId> --stats");
   process.exit(2);
 }
@@ -128,7 +133,15 @@ let fetched;
 // SNAPSHOT_MAX_AGE_MS must read as a MISS, and cacheGet cannot know the time.
 const hit = cacheGet(dir, key, Date.now());
 if (hit) {
-  banner(`[tool-cache HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B]`);
+  // Age and truncation are in the banner because the skill prose tells the agent
+  // to reason about both — "if the age matters for what you are concluding, say
+  // so" — and a hit that reports neither presents stale or clipped evidence as
+  // current and complete.
+  const ageS = Math.round((hit.ageMs ?? 0) / 1000);
+  banner(
+    `[tool-cache HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B, ` +
+      `${ageS}s old, ${hit.volatility}${hit.truncated ? ", TRUNCATED" : ""}]`,
+  );
   fetched = hit.stdout;
 } else {
   const res = run(gate.fetch, undefined);
@@ -147,7 +160,22 @@ if (hit) {
   } else {
     // nowMs is read here, at the process edge — lib/ keeps its no-clock
     // discipline so it stays sandbox-safe.
-    cachePut(dir, key, { command: gate.fetchText, writerId: writerOrFlag, stdout: fetched, exitCode: 0 }, Date.now());
+    // `--stable` says this key's answer cannot change — a read pinned to a commit
+    // sha, a merged PR's diff. Without it every shell entry took the SNAPSHOT
+    // default and expired in 15 minutes, including content that is immutable by
+    // construction, which is the traffic this wrapper exists for.
+    cachePut(
+      dir,
+      key,
+      {
+        command: gate.fetchText,
+        writerId: writerOrFlag,
+        stdout: fetched,
+        exitCode: 0,
+        volatility: stable ? VOLATILITY.STABLE : VOLATILITY.SNAPSHOT,
+      },
+      Date.now(),
+    );
     banner(`[tool-cache MISS ${key} — stored ${fetched.length}B]`);
   }
 }

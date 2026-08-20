@@ -180,3 +180,21 @@ test("pre-filled scope removes the question it answers", () => {
   assert.ok(before.includes("repos"));
   assert.ok(!after.includes("repos"));
 });
+
+test("assigning the always-asked capability is reported, not silently dropped", () => {
+  // planInterview documents that an assignment wins "unconditionally", but the
+  // always-asked guard discarded it with NO violation — and since nothing entered
+  // `claimed`, the tool came back in `unassigned`, so the plan accepted and then
+  // re-asked about the same tool.
+  const r = plan({ executables: ["gh", "weirdtail"] }, { assigned: { other: { via: "weirdtail" } } });
+  assert.deepEqual(r.violations.map((v) => v.code), ["assigned-always-asked"]);
+  assert.match(r.violations[0].message, /capability it SERVES/);
+});
+
+test("an assignment claims the tool it names, even spelled loosely", () => {
+  // `claimed` keyed on the raw `via`, so assigning `via: "newrelic"` against an
+  // executable called `newrelic-cli` listed its own routed tool as unassigned.
+  const r = plan({ executables: ["newrelic-cli", "gh"] }, { assigned: { metrics: { via: "newrelic", kind: "executable" } } });
+  assert.ok(r.routes.some((x) => x.capability === "metrics"));
+  assert.deepEqual(r.unassigned.map((u) => u.name), [], "the routed tool is not also reported unassigned");
+});

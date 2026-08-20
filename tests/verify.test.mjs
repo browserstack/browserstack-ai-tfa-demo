@@ -408,3 +408,16 @@ test("a failed gap with no next action never prints 'undefined'", () => {
   assert.doesNotMatch(gate.message, /undefined/, gate.message);
   assert.ok(gate.nextAction.trim().length > 0);
 });
+
+test("normalisation never UPGRADES a reported failure", () => {
+  // It is documented as only ever downgrading an unsupported claim, but computing
+  // `verified` purely from the targets turned a reported `verified: false` into
+  // true whenever any target carried ok+checkedBy — with no violation. If the
+  // agent says it is not verified, the targets can only take that away.
+  const r = validateVerification({
+    capability: "logs",
+    row: table.logs,
+    result: { verified: false, via: "logcli", targets: [ok("logIndex", "app", "logcli labels -> 3")] },
+  });
+  assert.equal(r.result.verified, false, "the agent's own verdict stands");
+});

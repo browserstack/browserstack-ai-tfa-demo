@@ -1,10 +1,10 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { localCloneFor, hasCommit, readFileAt, discoverWorkspaceRoot, resolveLocalRepos } from "../lib/repo-source.mjs";
+import { localCloneFor, hasCommit, readFileAt, discoverWorkspaceRoot, resolveLocalRepos, ensureCommit } from "../lib/repo-source.mjs";
 
 let ws, repoDir, sha1, sha2;
 
@@ -145,4 +145,48 @@ test("path missing at that commit is a local answer, not a remote fallback", () 
   assert.equal(r.ok, false);
   assert.equal(r.source, "local");
   assert.match(r.reason, /path not present/);
+});
+
+test("a ref that could be read as a git option is refused before any fetch", () => {
+  // `git fetch origin <ref>` parses options in that position, so a value starting
+  // with `-` is read as one: `--upload-pack=<cmd>` runs <cmd> locally. execFile
+  // gives no protection, because the injection is an argv POSITION, not a shell
+  // metacharacter. The value arrives from RCA_SHIPPING_BRANCH — from the gate and a
+  // connector skill.
+  //
+  // A REAL clone with a local-path origin is required, or this passes for the wrong
+  // reason: on a non-repo directory `git fetch` throws and the catch returns false
+  // whether or not the ref was validated.
+  const origin = mkdtempSync(join(tmpdir(), "rca-origin-"));
+  const g = (dir, ...a) => execFileSync("git", ["-C", dir, ...a], { stdio: ["ignore", "pipe", "pipe"] });
+  g(origin, "init", "-q");
+  g(origin, "config", "user.email", "a@b.c");
+  g(origin, "config", "user.name", "a");
+  writeFileSync(join(origin, "f.txt"), "hi");
+  g(origin, "add", "f.txt");
+  g(origin, "commit", "-qm", "init");
+
+  const work = mkdtempSync(join(tmpdir(), "rca-clone-"));
+  execFileSync("git", ["clone", "-q", origin, join(work, "repo")], { stdio: ["ignore", "pipe", "pipe"] });
+  const clone = join(work, "repo");
+
+  const marker = join(tmpdir(), `rca-ref-marker-${process.pid}`);
+  assert.equal(existsSync(marker), false, "precondition");
+
+  assert.equal(
+    ensureCommit(clone, "deadbeefdeadbeef", `--upload-pack=touch ${marker}; git-upload-pack`),
+    false,
+  );
+  assert.equal(existsSync(marker), false, "a ref must never reach git as an option");
+
+  for (const hostile of ["-u", "+refs/heads/*:refs/heads/*", "../../etc/passwd", "a b", ""]) {
+    assert.equal(ensureCommit(clone, "deadbeefdeadbeef", hostile), false,
+      `${JSON.stringify(hostile)} must be refused`);
+  }
+
+  // And a legitimate branch still fetches: the guard must not break the feature.
+  assert.equal(typeof ensureCommit(clone, "deadbeefdeadbeef", "main"), "boolean");
+
+  rmSync(origin, { recursive: true, force: true });
+  rmSync(work, { recursive: true, force: true });
 });

@@ -143,6 +143,8 @@ const INTERNAL = new Set([
   // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
   "isRunnable", "tokenize", "isCacheableMcp", "redact", "cacheGet",
   "cachePut", "cacheStats", "mcpCacheKey",
+  // probe validation — imported by lib/capability-table.mjs, never by an agent.
+  "isProbeRunnable", "isPermittedProbeLeader",
 ]);
 
 /**

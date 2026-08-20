@@ -86,7 +86,7 @@ test("every exported lib helper appears in the SKILL's API reference", () => {
   const INTERNAL = new Set([
     "emptyEvidenceFile", "writeEvidenceFile", "contribDirFor", "contribPathFor",
     "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache",
-    "replaySubmit", "replayRead", "normalize", "computeSignature",
+    "replaySubmit", "replayRead",
     "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
     "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
     "unavailableCapabilities", "renderGlimpse", "toolCacheDirFor", "cacheKey",

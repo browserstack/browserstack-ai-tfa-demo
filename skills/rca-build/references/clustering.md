@@ -7,54 +7,29 @@ causes)** — the only thing that makes "RCA for ALL failed tests, even thousand
 feasible. But **every failed test must still show a per-test RCA in the TRA
 dashboard**, so clustering collapses the *evidence hunt*, not the *output*.
 
-## Two sources, one contract
+## Source: the server's failure themes
 
-Both paths produce the identical `{ cluster_id, signature, members,
-representative, siblings }` shape, so nothing downstream (the fan-out
-workflow, the sequential harness) needs to know which one ran:
+Clustering comes from one source — the server's failure themes — so the
+`{ cluster_id, signature, members, representative, siblings }` shape is produced
+the same way every run, and nothing downstream (the fan-out workflow, the
+sequential harness) needs to branch on it.
 
-- **Preferred — server-computed themes.** `lib/theme-clustering.mjs` →
-  `clustersFromThemes(rows, themesResult, testsByThemeId)`, fed from the
-  `getBuildFailureThemes` / `listTestsInFailureTheme` MCP tools (SKILL.md Step
-  3). `getBuildFailureThemes` is responsible for making themes exist, not just
-  reading them — if nothing has ever been computed for this build it triggers
-  computation (one POST, same call) and polls for `buildThemeWorkflow.status`
-  to reach `SUCCESS`. Cadence: one GET first, a single POST trigger only if no
-  themes exist yet (never re-fired), then GET every 3s up to a 90s wall-clock
-  ceiling — `ready: true` on `SUCCESS`, `ready: false` if the 90s is spent or
-  the status is `FAILED`/`ERROR`. The grouping reflects the
-  server's own root-cause clustering instead of a text-signature guess — two
-  failures with an identical error string but unrelated causes are not
-  conflated the way a client-side "signature" would be.
-- **Fallback — client-side failure signature.** `lib/signature.mjs` →
-  `clusterAndPersist(csvPath, csvStateModule)`, the original text-normalization
-  approach described below. This is a **server-outage net, not the routine path
-  for un-computed builds.** The trigger endpoint is deployed, so
-  `getBuildFailureThemes` makes themes exist for a fresh build (one POST, same
-  call) and returns `ready: true` — a never-analyzed build no longer degrades
-  to signatures. `ready: false` now means the server genuinely couldn't produce
-  themes: still computing past the poll budget, a failure status, or
-  `status: "trigger-unavailable"` (the trigger call itself errored). Only then
-  does this fallback engage, keeping the run resilient when the server-side
-  clustering is unavailable rather than aborting or exploding to one coordinator per test.
+`lib/theme-clustering.mjs` → `clustersFromThemes(rows, themesResult, testsByThemeId)`,
+fed from the `getBuildFailureThemes` / `listTestsInFailureTheme` MCP tools
+(SKILL.md Step 3). `getBuildFailureThemes` makes themes exist, not just reads
+them: if none have been computed it triggers computation (one POST, same call)
+and polls `buildThemeWorkflow.status` — one GET first, a single POST trigger
+only when no themes exist yet (never re-fired), then GET every 3s up to a 90s
+ceiling. `ready: true` (SUCCESS) → real themes; `ready: false` (budget spent,
+`FAILED`/`ERROR`, or `trigger-unavailable`) → the server couldn't group. The
+grouping reflects the server's own root-cause analysis: two failures with an
+identical error string but unrelated causes aren't conflated the way a text-only
+guess would conflate them.
 
-## The signature (fallback path only)
-
-Computed from the trimmed failure detail `listTestIds(includeFailureDetail=true)`
-already returns on each row — **no extra probe turns**:
-
-```
-signature = normalize(failure_category) | normalize(error_summary) | normalize(file_path)
-```
-
-`normalize` folds the volatile tokens that make two instances of the *same*
-failure look different: ISO timestamps, UUIDs, hex/memory addresses, `file:line:col`,
-and bare numbers. So `timeout after 3000ms on node-7` and `timeout after 5000ms
-on node-2` share a signature.
-
-A row with **no signal** (empty category, error, and path) is **not** merged into
-a catch-all — it becomes its own singleton (`solo-<testRunId>`). Better an
-un-clustered test than a wrong cluster.
+**When the server returns no themes (`ready: false`)**, pass an empty
+`buildThemes` to `clustersFromThemes` and every failed test falls through to its
+own `solo-` cluster — i.e. **all tests become representatives**, each running a
+full per-test loop. Correctness over the cost collapse: no local guessing.
 
 ## Representative + siblings
 

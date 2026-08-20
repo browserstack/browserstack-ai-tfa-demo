@@ -52,11 +52,10 @@ reaper(csvPath, ttlSec, nowMs)              → reclaimed ids
 pendingRows(csvPath)                        → pending + pending-resume
 ```
 
-**Clustering — `lib/signature.mjs`**
+**Clustering — `lib/theme-clustering.mjs` + `lib/signature.mjs`**
 ```
-clusterAndPersist(csvPath, csvStateModule)          → clusters; WRITES cluster_id back. Use this.
-siblingPreSeed(csvPath, csvState, clusterId, repId) → {ok, pre_seed} | {ok:false, reason}
-clusterRows(rows)                                   → {rows, clusters}; mutates, does NOT persist
+clustersFromThemes(rows, themesResult, testsByThemeId) → {rows, clusters}; server themes → clusters (empty themes → every test a singleton). Mutates cluster_id; caller persists via writeRows.
+siblingPreSeed(csvPath, csvState, clusterId, repId)    → {ok, pre_seed} | {ok:false, reason}
 ```
 
 **Shared evidence — `lib/evidence-file.mjs`**
@@ -386,12 +385,8 @@ Each cluster gets one **representative** (full multi-turn loop) and `N−1`
 the expensive evidence hunt to O(distinct causes) while every test still lands a
 per-test RCA. Singleton clusters are just plain per-test loops.
 
-**Prefer the server's own clustering over recomputing it client-side.**
-**`clusterAndPersist` may ONLY be called after a `getBuildFailureThemes` call
-this pass returned `ready: false` (or errored) — never as a first move.** If
-you are about to call `clusterAndPersist` and cannot point to this pass's own
-`getBuildFailureThemes` call and its `ready: false` result, STOP — call
-`getBuildFailureThemes` first.
+**Clustering comes from the server's failure themes.** When the server has
+none, every failed test is simply its own representative (a singleton).
 
 1. Call `getBuildFailureThemes(buildUuid=<build id>)`. If nothing has ever
    been computed for this build, this triggers computation (one POST, same
@@ -418,34 +413,18 @@ you are about to call `clusterAndPersist` and cannot point to this pass's own
    The CSV is the one row set guaranteed fresh and from a successful seed
    (Step 2 only seeds after `listTestIds` succeeds) — always re-read it here
    rather than trusting a variable carried over from turns ago.
-3. **`ready: false`** — a **server-outage net, not the routine path.** The
-   trigger endpoint is deployed, so a never-computed build gets its themes from
-   the POST inside Step 1 and returns `ready: true`; `ready: false` now means
-   the server genuinely couldn't produce them (still computing past the poll
-   budget, a failure status, or `status: "trigger-unavailable"` — the trigger
-   call itself errored). Only then **fall back** to
-   **`clusterAndPersist(csvPath, csvStateModule)`** (`lib/signature.mjs`), not
-   `clusterRows` directly:
-
-   ```js
-   const clusters = clusterAndPersist(csvPath, await import("./lib/csv-state.mjs"));
-   ```
-
-   `clusterRows` assigns `cluster_id` **in place** but does NOT persist —
-   `const { clusters } = clusterRows(rows)` silently discards every
-   `cluster_id`, degrading to one coordinator per test. `clusterAndPersist`
-   writes back and verifies the count, so it cannot forget.
-
-   The fallback keeps the same `{ cluster_id, representative, siblings }`
-   contract the fan-out consumes, so nothing downstream needs to know which
-   path produced it.
+3. **`ready: false`** (the server genuinely couldn't produce themes — still
+   computing past the poll budget, a failure status, or `trigger-unavailable`)
+   → call `clustersFromThemes(readRows(csvPath), { buildThemes: [] }, {})`.
+   With no themes, every failed test falls through to its own `solo-` cluster —
+   i.e. **all tests become representatives**, each running its own full per-test
+   loop. No client-side clustering and no local guess; correctness over the cost
+   collapse when the server can't group.
 
 `clustersFromThemes` mutates each row's `cluster_id` in place but does NOT
 persist — it's pure/dependency-free by design. Write its rows back yourself
-with `csvState.writeRows(csvPath, rows)` before fan-out; `clusterAndPersist`
-already does this for the fallback path. Then verify either way: **if
-`cluster_id` is empty on any row, Step 3 did not take effect** — do not
-proceed, the run would silently cost O(tests) instead of O(causes).
+with `csvState.writeRows(csvPath, rows)` before fan-out, then verify: **if
+`cluster_id` is empty on any row, Step 3 did not take effect** — do not proceed.
 
 ## Step 4 — build-evidence pre-fetch (see `<pluginRoot>/skills/rca-build/references/evidence-routing.md` and `<pluginRoot>/lib/evidence-file.mjs`)
 

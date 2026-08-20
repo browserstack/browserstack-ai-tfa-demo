@@ -1,12 +1,10 @@
 # GitHub evidence — what to gather, and how to rule a suspect OUT
 
-The worst automated-RCA outcome is **confidently blaming an innocent PR**. This
-file is the contract for `product_code` / `deploy` / `ci` asks (the `github`
-capability): the **exact** evidence to gather, and a **falsification protocol**
-that tries to *disprove* each suspect before it enters `related_prs`.
+This file is the contract for `product_code` / `deploy` / `ci` asks (the
+`github` capability): the **exact** evidence to gather, and a **falsification
+protocol** that tries to *disprove* each suspect before it enters `related_prs`.
 
-> We do **not** ship a GitHub forensics harness or MCP tool. We specify what's
-> needed and use whatever the client already has — **GitHub MCP if available,
+> Uses whatever the client already has — **GitHub MCP if available,
 > else `gh`, else degrade** to an `unavailable` block.
 
 **Contents:** [Capability discovery](#capability-discovery-in-order) ·
@@ -55,24 +53,15 @@ TFA (a gate-recorded gap).
 This hunt routinely needs several `gh` calls that don't depend on each
 other's output: a commit-history check per candidate file in "changed paths
 vs failure signature," each row of the "Evidence each ask needs" table
-below, and each candidate PR's falsification check. **None of these need to
-see a prior result before running** — the only exception is when one call's
-output supplies a literal input to the next (e.g., you need a PR number
-back from a search before you can `gh pr view` it).
+below, and each candidate PR's falsification check. The only exception is
+when one call's output supplies a literal input to the next (e.g., you need
+a PR number back from a search before you can `gh pr view` it).
 
 Issue every independent probe as its own tool call **within the same
-message** — the same discipline `ai-tfa-coordinator.md`'s NEEDS_INFO step
-already requires across multiple asks (`Promise.all` / concurrent gather)
-applies here too, one level down, across multiple probes inside a single
-ask. One call per file path, fired one message at a time, waiting for each
-result before issuing the next, spends a full turn's think-time on every
-individual `gh api` round trip even though the call itself finishes in
-under two seconds — for a five-file changed-paths check that is the
-difference between one batched message and five serialized ones. Plan the
-full probe list first (every candidate file, every table row, every
-falsification check that has no dependency on another probe's result), then
-fire all of them together; only serialize the ones with a genuine
-input-from-output dependency.
+message**. Plan the full probe list first (every candidate file, every table
+row, every falsification check that has no dependency on another probe's
+result), then fire all of them together; only serialize the ones with a
+genuine input-from-output dependency.
 
 ## Evidence each ask needs (be specific — no fishing)
 
@@ -90,13 +79,10 @@ and passed in — reuse it; do not re-fetch per test.
 
 ## Field-filtering — project before you pull, every call
 
-The single most common way a gather call wastes context: pulling a full
-object when the ask only needs one or two fields from it. This applies to
-whichever connector resolved for `github` (most commonly the `gh` CLI today,
-or a GitHub MCP tool) — every call should already be filtered to the field(s)
-the ask needs, not filtered after the fact by reading past the noise. The
-same discipline applies to `infra` gather calls (`kubectl` or whatever the
-manifest resolved to), since the failure mode is identical.
+Every gather call should already be filtered to the field(s) the ask needs,
+not filtered after the fact by reading past the noise. This applies to
+whichever connector resolved for `github` and equally to `infra` gather
+calls (`kubectl` or whatever the manifest resolved to).
 
 | Need | Don't — pulls the whole object | Do — projects to the field(s) the ask needs |
 |---|---|---|
@@ -108,14 +94,10 @@ manifest resolved to), since the failure mode is identical.
 | Deploy / image state | `kubectl get deploy -n NS -o yaml` | `kubectl get deploy -n NS -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image'` |
 | Log sweep | a raw `--tail` dump | `kubectl logs POD --since=<window> --tail=2000 \| grep -E '<correlation token>\|ERROR\|Exception'` — filter by the correlation token, never a raw tail |
 
-**Never run the unfiltered form "to see the shape first."** An exploratory
-raw call costs the same context whether or not its output ends up in the
-digest — a bare repo or commit object routinely carries license/URL metadata
-and a multi-hundred-character signature block that no evidence ask ever
-consults. If the exact field path is genuinely unknown, learn the shape from
-one throwaway call against a cheap target, then filter every real call from
-that point on — never repeat the unfiltered form per repo, per PR, or per
-test.
+**Never run the unfiltered form "to see the shape first."** If the exact
+field path is genuinely unknown, learn the shape from one throwaway call
+against a cheap target, then filter every real call from that point on —
+never repeat the unfiltered form per repo, per PR, or per test.
 
 ## Falsification protocol — rule out, don't just rule in
 

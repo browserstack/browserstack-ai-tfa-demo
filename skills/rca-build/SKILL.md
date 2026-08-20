@@ -513,11 +513,8 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    baseline (never-green suite) → fall back to a configured baseline ref and
    note the weaker grounding — this note travels into the file, not just a
    spoken log line, so every coordinator sees it.
-6. **Resolve local clones ONCE** (`lib/repo-source.mjs`). File *contents* are
-   the largest remaining slice of github traffic, and most of it can be served
-   with no network at all when the machine already has the repos checked
-   out — a local `git show` returns the same bytes as `gh api` far faster,
-   with no round trip.
+6. **Resolve local clones ONCE** (`lib/repo-source.mjs`). Local `git show`
+   serves the same bytes as `gh api` with no network round trip.
 
    ```js
    const d = discoverWorkspaceRoot({ repos: reposValidated, from: pluginRoot });
@@ -540,8 +537,6 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    `pins` must be the **build-time commit shas** from `deployState`, never
    branch names — a local branch may be stale.
 
-   Doing this at the gate is the point: every coordinator then reads a map
-   instead of probing the filesystem itself.
 7. `recomputeCoverage(path, {repos, workloads}, nowMs)` and declare the
    resulting path in the gate summary alongside the capability manifest, so
    a human re-reading the run can find it.
@@ -567,13 +562,10 @@ Step 4b before moving on.
 one lightweight subagent via the Agent tool whose ONLY job is to call
 `tfaRcaTurn(testRunId=<rep>, message=<first-turn digest>)` once and emit one
 fixed-shape block as its final output — no evidence gathering, no loop, no
-drain. This is deliberately **not** a full `ai-tfa-coordinator` dispatch (that
-agent's whole design is the multi-turn evidence-gathering loop, far more
-machinery than "submit one message and return"); write a minimal,
-purpose-built inline prompt for this instead, and put the exact output
-contract below directly in that prompt — an Agent-tool result is free text,
-and with many of these dispatched concurrently the orchestrator has no other
-reliable way to tell which representative a given notification is even for.
+drain. Write a minimal, purpose-built inline prompt (not a full
+`ai-tfa-coordinator` dispatch), and put the exact output contract below
+directly in that prompt so the orchestrator can parse the result
+deterministically.
 
 ```
 TURN1_OUTPUT_START
@@ -586,22 +578,16 @@ asks: <NEEDS_INFO only — the asks array, verbatim; else "none">
 TURN1_OUTPUT_END
 ```
 
-That block — not prose, not a summary — is this subagent's entire final
-message. It is exactly what the orchestrator reads back off the
-task-notification to do the bookkeeping below: `status` selects the branch,
-`testRunId` is the join key back to the right CSV row / registry entry, and
-`threadId`/`turnId`/`glimpse`/`asks` are pasted straight into `flip()` or
-`recordTurn1()` with no re-interpretation needed.
+That block is this subagent's entire final message — `status` selects the
+branch, `testRunId` is the join key back to the CSV row / registry entry, and
+the remaining fields paste straight into `flip()` or `recordTurn1()`.
 
 Agent-tool dispatches return immediately (fire-and-forget). Fire off every
 representative's dispatch together, then **immediately proceed to Step 4's
 evidence pre-fetch — do not wait for any of them.**
 
-As each subagent finishes — on its own schedule, bounded only by
-`tfaRcaTurn`'s own ~90s in-call poll cap, so realistically within the first
-minute or two of the run — a task-notification carrying its `TURN1_OUTPUT`
-block arrives, interleaved with whichever Step 4 turn happens to be in flight
-at that moment. Handle each one the moment you are next free to, as pure
+As each subagent finishes, a task-notification carrying its `TURN1_OUTPUT`
+block arrives. Handle each one the moment you are next free to, as pure
 bookkeeping — no new tool calls needed for this part:
 
 1. `initTurn1Registry(turn1PathFor(buildId, config.paths.stateDir), buildId, nowMs)`
@@ -708,23 +694,16 @@ from other clusters, up to `concurrency` slots — so a fast cluster's siblings
 enter the very next batch instead of waiting out an unrelated slow
 representative.
 
-This distinction matters differently on each path:
-- **Opt-in `workflows/rca-batch.mjs`** achieves this structurally, for free:
+Path-specific behavior:
+- **Opt-in `workflows/rca-batch.mjs`** achieves this structurally:
   `pipeline(clusters, repStage, siblingStage)` has NO barrier between stages —
-  a cluster's siblings start the instant ITS OWN representative resolves,
-  fully interleaved with every other cluster's progress. Nothing to get wrong
-  here.
-- **Default direct Agent-tool dispatch** cannot be sub-batch-streaming the same
-  way, because a single assistant turn's parallel tool calls are a real
-  synchronization point: the orchestrator does not regain control until every
-  call in that turn's batch has returned. So within any one batch, a cluster
-  whose representative resolves early still cannot dispatch its siblings until
-  the WHOLE batch drains — the rolling-refill discipline above is what keeps
-  that batch-local wait from becoming a build-wide one, but it cannot eliminate
-  it entirely. **When cluster count exceeds `concurrency`, or when the
-  Workflow tool is available, prefer `workflows/rca-batch.mjs`** for
-  latency-sensitive builds — it is the only path with a true per-cluster (not
-  per-batch) guarantee.
+  a cluster's siblings start the instant ITS OWN representative resolves.
+- **Default direct Agent-tool dispatch** streams per-BATCH (a turn's parallel
+  tool calls are a synchronization point). The rolling-refill discipline above
+  keeps the batch-local wait from becoming a build-wide one. **When cluster
+  count exceeds `concurrency`, or when the Workflow tool is available, prefer
+  `workflows/rca-batch.mjs`** — it is the only path with a true per-cluster
+  guarantee.
 
 > **Concurrency comes from `config/rca.config.json` — always read it from
 > there, never hardcode.** The default path (direct Agent-tool dispatch) honors
@@ -743,10 +722,7 @@ This distinction matters differently on each path:
   the Workflow tool is available.
 
   **This path has no code enforcing the Step 4b handoff — you are the
-  enforcement.** Unlike `workflows/rca-batch.mjs` (which reads the registry in
-  code via `turn1Line()`) and `lib/loop.mjs` (which takes `turn1Result` as a
-  structural parameter), building a representative's dispatch prompt here is
-  entirely on you. **Before dispatching ANY representative, call
+  enforcement.** **Before dispatching ANY representative, call
   `readTurn1(turn1PathFor(buildId, stateDir), testRunId)` and fold the result
   into the prompt using this exact mapping — the two are distinct coordinator
   inputs (`agents/ai-tfa-coordinator.md`), never interchangeable:**
@@ -755,11 +731,7 @@ This distinction matters differently on each path:
   skip the dispatch entirely, use the CSV row's result directly. Do NOT fold a
   `NEEDS_INFO` result into a `resume` field, or vice versa — a coordinator
   reads these as two different shapes and a swapped one is silently wrong, not
-  rejected. Omit this translation altogether and Step 4b's pre-dispatch is
-  silently wasted: the coordinator submits turn 1 again on a brand-new thread,
-  abandoning the one Step 4b already started (not incorrect — the run still
-  resolves — just the entire latency win thrown away without any error to
-  notice it by).
+  rejected.
 - Opt-in `workflows/rca-batch.mjs` (Claude Code only) → use only when the
   Workflow tool's structured `pipeline()`/`parallel()` orchestration,
   `resumeFromRunId` resumability, or progress UI is worth the concurrency

@@ -1,11 +1,9 @@
 # Clustering
 
-Why: a red build's N failures usually trace to a handful of causes (one bad
-PR/deploy/shared helper). Running the full collaborative loop once per *cause*
-instead of once per *test* turns the dominant cost from **O(tests) → O(distinct
-causes)** — the only thing that makes "RCA for ALL failed tests, even thousands"
-feasible. But **every failed test must still show a per-test RCA in the TRA
-dashboard**, so clustering collapses the *evidence hunt*, not the *output*.
+Clustering runs the full collaborative loop once per *cause* instead of once per
+*test* — **O(tests) → O(distinct causes)**. Every failed test still shows a
+per-test RCA in the TRA dashboard; clustering collapses the *evidence hunt*, not
+the *output*.
 
 ## Source: the server's failure themes
 
@@ -54,10 +52,6 @@ Distinct failures can share an error string. A sibling's pre-seed turn is a
 - TFA returns `NEEDS_INFO` (the hypothesis does not hold for this
   test's logs) → the sibling **falls back to its own full loop**. The
   representative's cause is never stamped onto a sibling without log confirmation.
-
-This keeps correctness independent of the cost optimization: worst case, every
-sibling runs its own full loop (same as no clustering); best case, one deep run
-covers the whole cluster.
 
 ## Singletons
 

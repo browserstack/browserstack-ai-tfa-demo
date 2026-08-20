@@ -139,14 +139,33 @@ survives 1–3 is a real candidate; one that fails any is reported as ruled-out
 Each surviving/ruled-out suspect is one structured block so `related_prs`
 populates deterministically. **The canonical fillable format lives in
 [`../templates/suspect-packet.md`](../templates/suspect-packet.md)** (fields:
-pr, files, hunks, author, merged_at vs last_green vs started_at, verdict with
-rule-out reason, link) — copy it, don't retype it. A worked example (supported
+repo, pr, title, files, hunks, author, merged_at vs last_green vs started_at, verdict
+with rule-out reason, tag, link) — copy it, don't retype it. A worked example (supported
 + ruled-out side by side) is in
 [`../examples/sample-run.md`](../examples/sample-run.md).
 
 Only `verdict: supported` suspects should end up in TFA's `related_prs`. Ruled-out
 suspects stay in the thread as disconfirming evidence so TFA (and a human) can see
 the elimination, not just the conclusion.
+
+**Hand-off to TFA — the `pr_details` contract.** Every supported suspect is passed
+to `tfaRcaTurn` via its `prDetails` param as a structured object with **all six**
+required fields — `repo`, `number`, `title`, `author`, `link`, `tag`
+(`regression | latent`). Identity is `repo`+`number` (a number is unique only within
+its repo), and `link` must be the canonical `https://github.com/<repo>/pull/<number>`.
+This is what keeps the PR context correct end-to-end; a bare link/number in free text
+is not enough (that is what let the same `#861` collide across repos and 404 in
+AIR-607). A case with no causal PR emits no entry — never fabricate one.
+
+**`title` and `author` are mandatory-resolved from the PR, not the window scan.**
+Run `gh pr view <number> --repo <repo> --json title,author` (the same call already in
+the field-filtering table, batched with the falsification probes) and take `title` from
+`.title` and `author` from `.author.login`. Never pass the git merge-commit subject as
+the title, and never pass a placeholder such as `"unknown"` for author — both defeat the
+point (the dashboard `related_prs.author`/title would render the placeholder). If the
+field genuinely can't be resolved, state the gap; don't invent a value.
+
+The exact shape + the `regression`-vs-`latent` rule are in `../templates/suspect-packet.md`.
 
 ## Digest discipline
 

@@ -174,6 +174,67 @@ test("a failed read is not a verdict — the drain keeps reading and still lands
   assert.equal(reads, 2);
 });
 
+test("a PERSISTENT hard error stops the drain early instead of burning the budget", async () => {
+  const fx = load("soft-pending-drain.json");
+  let reads = 0;
+  const result = await runRcaLoop({
+    testRunId: fx.testRunId,
+    submit: replaySubmit([fx.turns[0]]), // always soft-PENDING
+    readTurn: async () => {
+      reads++;
+      throw new Error("Failed to get tfa turn result: TFA agent run failed");
+    },
+    // Budget allows 40 reads; the error cap must cut it off long before that.
+    config: { ...CONFIG, softPendingDrain: { maxWaitMs: 600_000, intervalMs: 1, maxReads: 40, maxErrorReads: 3 } },
+    sleep: noSleep,
+  });
+  assert.equal(result.status, "PENDING");
+  assert.equal(reads, 3, "stopped at maxErrorReads, not the 40-read budget");
+  assert.match(result.root_cause, /tfa-error/);
+  assert.equal(result.turnId, "c2e1a6fd-2243-4f93-bc69-62f298db062c"); // still resumable
+});
+
+test("an error-shaped RESULT (not thrown) also trips the fast-fail", async () => {
+  const fx = load("soft-pending-drain.json");
+  let reads = 0;
+  const result = await runRcaLoop({
+    testRunId: fx.testRunId,
+    submit: replaySubmit([fx.turns[0]]),
+    // The MCP tool reports the wedge as a returned payload, not an exception.
+    readTurn: async () => {
+      reads++;
+      return { status: "ERROR", message: "TFA agent run failed" };
+    },
+    config: { ...CONFIG, softPendingDrain: { maxWaitMs: 600_000, intervalMs: 1, maxReads: 40, maxErrorReads: 2 } },
+    sleep: noSleep,
+  });
+  assert.equal(result.status, "PENDING");
+  assert.equal(reads, 2);
+  assert.match(result.root_cause, /tfa-error/);
+});
+
+test("INTERMITTENT errors do not trip the fast-fail — a good read clears the streak", async () => {
+  const fx = load("soft-pending-drain.json");
+  const landed = fx.reads[2];
+  let reads = 0;
+  const result = await runRcaLoop({
+    testRunId: fx.testRunId,
+    submit: replaySubmit(fx.turns),
+    readTurn: async () => {
+      reads++;
+      // fail, ok, fail, ok, ... never 2 consecutive failures
+      if (reads % 2 === 1) throw new Error("transient 502");
+      return reads < 6 ? { status: "PENDING" } : landed;
+    },
+    config: { ...CONFIG, softPendingDrain: { maxWaitMs: 600_000, intervalMs: 1, maxReads: 40, maxErrorReads: 2 } },
+    manifest: GITHUB_AVAILABLE,
+    gather,
+    sleep: noSleep,
+  });
+  assert.equal(result.status, "RESOLVED", "flaky-but-recovering reads must still land");
+  assert.equal(reads, 6);
+});
+
 test("BLOCKED surfaced by a drain is terminal — no empty resubmits to the turn cap", async () => {
   const fx = load("soft-pending-drain.json");
   let submits = 0;

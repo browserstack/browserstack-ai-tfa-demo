@@ -29,16 +29,61 @@ standalone, driven by the batch workflow, a subagent dispatch, or the thin
 sequential harness (`lib/loop.mjs`). It is **generic over product and infra** —
 it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
 
+<use_parallel_tool_calls>
+For maximum efficiency, whenever you need to perform multiple independent
+operations, invoke all relevant tools simultaneously rather than sequentially.
+Prioritize calling tools in parallel whenever possible. For example, when
+checking commit history across several candidate files, run all those `gh`
+calls in parallel. When validating multiple connectors (github, infra, logs,
+metrics) or their scope probes, run all of those checks in parallel. When a
+NEEDS_INFO turn carries multiple asks, gather all of them in parallel. Err on
+the side of maximizing parallel tool calls rather than running too many tools
+sequentially — a real run measured 60-90 seconds of pure overhead per
+avoidable sequential call. The only exception is when one call's output is a
+literal input to another call; that pair, and only that pair, runs in order.
+</use_parallel_tool_calls>
+
 ## Inputs
 
+- `pluginRoot` — **required**, absolute path to this plugin's repo root. Every
+  `<pluginRoot>/...` path in this file (bin/ commands, reference docs, the API
+  reference in `skills/rca-build/SKILL.md`) is relative to this value, not to
+  whatever directory you were started in. Missing it is what causes a
+  coordinator to guess `references/<file>.md` against the wrong cwd and burn a
+  `find` recovering the real path — the dispatch prompt must state it up front.
 - `testRunId` — **required**, the integer test-run ID. Maps to the tool's `testRunId` arg.
 - `error_digest` — optional short error title + endpoint (NOT logs) for the first-turn message.
 - `pre_seed` — optional. For a **cluster sibling**: the representative's
   `root_cause` + suspect `related_prs`. When present, the first-turn message
   states the hypothesis and asks TFA to **confirm it against this test's own logs**.
 - `resume` — optional `{ threadId, turnId }` from a prior PENDING run.
+- `turn1_result` — optional `{ threadId, asks }`. Set only for a cluster
+  representative whose turn 1 was already pre-submitted by the orchestrator's
+  Step 4b pass (`skills/rca-build/SKILL.md` Step 4b, `lib/turn1-registry.mjs`)
+  and landed `NEEDS_INFO` — i.e. a real answer already exists, just not a
+  terminal one. When present, **do not submit turn 1** — start the loop
+  already at step 3 (ROUTE the asks) using `turn1_result.asks`, with
+  `threadId = turn1_result.threadId` and `turns_used` starting at `1`. Mutually
+  exclusive with `resume` and `pre_seed` per dispatch: a representative gets at
+  most one of `resume` (Step 4b's turn 1 was still soft-`PENDING`),
+  `turn1_result` (Step 4b's turn 1 already resolved to `NEEDS_INFO`), or
+  neither (Step 4b never ran, e.g. an unclustered rerun) — never more than one,
+  and never alongside `pre_seed`, which is sibling-only. A Step 4b turn 1 that
+  landed `RESOLVED` needs no coordinator dispatch at all: the orchestrator
+  flips that row straight to terminal and this agent is never invoked for it.
 - `manifest` — the validated capability manifest `{ capability: { available, via } }`
   (built once at the `/rca-build` gate — Part A).
+- `evidenceFile` — optional. Absolute path to the build-level pre-fetch
+  artifact (`lib/evidence-file.mjs`, `/rca-build` Step 4). Holds pre-digested
+  `github` (PR window, deploy state) and `logs`/`infra` (app-side sweep)
+  evidence, keyed by repo and by workload — gathered ONCE by the orchestrator
+  for every repo/workload this build's failures implicate. `Read` it before
+  any live gather call (see Operating Principle 0) — and treat it as
+  read-WRITE: a live gather that fills a gap or goes deeper is written back
+  via `contributeGithubEvidence`/`contributeLogsEvidence` (writing your own
+  per-writer shard, keyed by your `testRunId`) so later dispatches — this
+  test's own siblings, or another cluster sharing the same repo/workload —
+  benefit too.
 
 If `testRunId` is missing or not parseable as an integer, emit a `failed`
 `RCA_OUTPUT` block with `root_cause: "no testRunId provided"` and stop — do not
@@ -64,16 +109,218 @@ read-only and has no side effects, so a read is always safe to repeat.
 
 ## Operating principles
 
+0. **Read the pre-fetch first — through `evidence-show`, not `Read`/`cat`.**
+
+   ```bash
+   node <pluginRoot>/bin/evidence-show.mjs <evidenceFile> --summary   # start here
+   node <pluginRoot>/bin/evidence-show.mjs <evidenceFile> --prs       # falsify by mergedAt
+   node <pluginRoot>/bin/evidence-show.mjs <evidenceFile> --repo <org/repo>
+   ```
+
+   `Read`ing the path directly shows the orchestrator's **base file only** and
+   silently hides every contribution a prior coordinator wrote, because those
+   live in per-writer shards. This is not hypothetical: an agent reported "the
+   file has 2 repos" when the folded view had 5, including an 11-PR entry
+   another coordinator had already gathered — so it re-did that work. Only
+   `evidence-show` folds base + shards into the real view.
+
+   Start with `--summary` (one line per repo/workload) and open `--repo` for
+   the one you need; reading the whole JSON costs tokens for evidence about
+   failures that aren't yours. `--prs` prints `mergedAt | #num | title`, which
+   does the most falsification work per byte — anything merged *after* the
+   build started is disqualified without fetching a single diff (on one real
+   run that removed 11 of 22 candidates before any `gh pr view`).
+
+   Consult it before considering any live github/infra/logs call. It holds build-level
+   evidence (PR window, deploy state, log sweeps) already gathered once by the
+   orchestrator for the repos/workloads this build's failures implicate. Use
+   what it covers directly — its entries are already digest-shaped (an
+   `evidence-block.md`-style `block`); paste, don't re-digest. Only make a live
+   call for what it does NOT cover: a repo/workload it doesn't name, an entry
+   marked with a `gap` (a `gap` is never coverage — treat it exactly as if the
+   file didn't have that entry), or evidence genuinely specific to this one
+   test that a build-wide sweep window could plausibly have missed. For a
+   sibling (`pre_seed` present): the file's data about YOUR OWN test's
+   workload/repo is real evidence, not inheritance — reading it is fine; the
+   CONFIRMATION judgment against it must still be independently yours (see
+   principle 1 and the sibling note in "The loop").
+
+   **Write back what you gather live.** A live call that fills a gap, or goes
+   deeper than the file already had (a full diff instead of a summary, a PR
+   the pre-fetch never named, a log sweep that succeeded where the file
+   recorded one as gapped) is exactly the kind of build-level fact this file
+   exists to share — not just this test's own answer. Persist it via
+   `contributeGithubEvidence(evidenceFilePath, writerId, repo, patch, nowMs)`
+   or `contributeLogsEvidence(evidenceFilePath, writerId, workload, patch,
+   nowMs)` (`lib/evidence-file.mjs`), where **`writerId` is your own
+   `testRunId`** — that is what keeps writes safe. Each coordinator writes only
+   its own shard file under `<evidenceFilePath minus .json>.contrib/`, so
+   concurrent coordinators can never clobber each other or the orchestrator's
+   base pre-fetch; readers fold base + every shard back into one view
+   automatically. Write back before finishing this test, so a sibling
+   dispatched after you (or any other cluster sharing the same repo/workload)
+   reads the enriched entry instead of re-fetching what you just fetched.
+   Only write back genuinely new/deeper findings — never a no-op re-write of
+   an already-covered entry. It's a best-effort optimization, not a
+   correctness dependency: never block or retry on it.
+
+   **Route read-only lookups through the tool cache.** The evidence file
+   shares *digested findings*; the cache below shares *raw call results*, which
+   is where most duplicate work actually hides (measured on one real build:
+   `gh` was 37% of all coordinator tool calls, 46 of them byte-identical
+   commands re-run by different coordinators — one spec file fetched 12
+   times). Given `buildId` and your own `testRunId` as `writerId`:
+
+   - **Shell (`gh`/`kubectl`/`curl`/`git`)** — prefix the fetch with the
+     wrapper; it behaves exactly like the raw command (same stdout, same exit
+     code) but only executes on a miss:
+     `node <pluginRoot>/bin/cached-exec.mjs <buildId> <testRunId> '<command>'`
+     Wrap ONLY the fetch and pipe *outside* it, so different downstream
+     filters share one cached fetch:
+     `node .../cached-exec.mjs "$B" 3895 'gh api repos/o/r/contents/f' | jq -r .content | head -40`
+     One fetch per call — the wrapper refuses `;`/`&&`/backticks/redirects.
+   - **Repo file contents** — use the repo reader instead of `gh api
+     .../contents/...` directly. It serves the file from a local clone at the
+     pinned commit when the gate found one (~37ms, no network), and otherwise
+     falls through to the same cached `gh` call, so it is never worse:
+     `node <pluginRoot>/bin/repo-read.mjs <buildId> <testRunId> <org/repo> <sha> <path>`
+     The `<sha>` MUST be the commit sha from the evidence file's `deployState`
+     — a **branch name is refused**, because local clones are routinely stale
+     and would hand you code that never shipped while looking perfectly fine.
+     Check `localRepos` in the evidence file to see which repos are local; you
+     do not need to probe the filesystem, the gate already resolved it.
+   - **MCP data queries** (grafana/VictoriaLogs, `listTestIds`,
+     `getFailureLogs`) — check first, and store your digest on a miss:
+     `node <pluginRoot>/bin/cached-mcp.mjs <buildId> get <tool> '<argsJson>'`
+     (exit 0 = hit, use it and skip the MCP call; exit 1 = miss, make the call
+     then `... put <tool> '<argsJson>' <testRunId>` with the digest on stdin).
+     Worth it for expensive build-level queries several coordinators would
+     each re-run; skip it for a one-off only this test needs, since a miss
+     costs two extra calls.
+   - **NEVER cache `tfaRcaTurn` / `getTfaTurnResult` / `triggerRcaReport`** —
+     they are stateful, and the cache refuses them outright.
+   - Don't re-probe a connector the gate already validated (`gh auth status`,
+     `kubectl version`); the manifest above is the answer.
+   - Two wrapper gotchas, both hit in real use: **(i)** hit/miss banners go to
+     stderr so `| jq` works, but `2>&1 | jq` merges the banner into the pipe
+     and jq dies on it — don't redirect stderr into a pipe. **(ii)** a command
+     containing its own single quotes (e.g. `--jq '.[] | "\(.number)"'`) can't
+     be nested inside a single-quoted argument; pipe it in on stdin instead:
+     `printf '%s' '<command>' | node .../cached-exec.mjs <buildId> <writerId> -`.
+     Metacharacters *inside* a quoted argument are fine — only a standalone
+     shell operator is refused, and a pipe belongs outside the wrapper anyway.
+
+   **Never read an empty `prsInWindow` as "no PRs in the window."** An empty
+   list means "no PRs" ONLY when the entry also has `prsSearched: true`;
+   otherwise it was never populated and the two are indistinguishable in the
+   data. Check `coverage.reposWithUntrustedPrList` (or call
+   `hasTrustworthyPrList(doc, repo)`) before concluding anything from an empty
+   list — and when it is untrusted, run the PR search live. This is not
+   hypothetical: a pre-fetch once asserted 0 PRs for a repo that had 21,
+   which would have produced a confident "no culprit PR identified." When you
+   do run the search, contribute the result back — that records
+   `prsSearched` and spares everyone else the same trap.
 1. **Logs by TFA — the core contract.** Never seed logs in the first turn;
-   **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste, or
-   digest log content. Logs are TFA's job.
+   **skip every ask with `evidenceType === "test_logs"`**. Never fetch, paste,
+   or digest log content. Logs are TFA's job.
 2. **Read-only.** Every gather mechanism is read-only. Never write to a repo,
    cluster, ticket, or the run. Produce a block and stop.
 3. **Turn-cap** = `turnCap` from `config/rca.config.json` (default 6). If the cap
    is hit while still `NEEDS_INFO`, end as `PENDING` (note `turn-cap`) — never an
    extra turn, never a busy-wait.
-4. **One thread per test.** First turn omits `threadId`; capture it from the
-   response and reuse it on every follow-up. Never start a second thread.
+4. **One thread per test — with one narrow, deliberate exception (4b).** First
+   turn omits `threadId`; capture it from the response and reuse it on every
+   follow-up. Never start a second thread EXCEPT the single context-exceeded
+   restart 4b describes — that path exists precisely because the first
+   thread is provably unrecoverable, not as a general license to abandon
+   threads that are merely inconvenient.
+4b. **A drain ERROR kills the TURN, not always the THREAD — resubmit ONCE; if
+   that ALSO fails, RESTART with a condensed hypothesis rather than just
+   giving up.** `getTfaTurnResult` returning `TFA agent run failed` (or the
+   submit itself throwing it) is usually a dead turn, not a dead thread: a
+   fresh submit on the SAME `threadId` frequently succeeds immediately and
+   resolves at high confidence. So on the FIRST such failure, resubmit on
+   that same thread (counting it as a turn) — do NOT mint a new thread and do
+   NOT end the run `PENDING` on one failure alone.
+
+   **If THAT resubmit ALSO comes back `TFA agent run failed` — two
+   consecutive failures on the same thread with no successful real response
+   between them — this is confirmed (via real production logs, not a guess)
+   to be the backend's own `openai.BadRequestError: ...
+   'code': 'context_length_exceeded'`: the thread's accumulated history has
+   exceeded the model's context window, a structural condition that does NOT
+   clear on resubmit (unlike a genuinely transient wedge, which the first
+   retry already handles). Continuing to resubmit THIS thread wastes every
+   remaining turn — none can succeed. But the test itself is very likely
+   still resolvable; only this one thread's history is oversized. So:**
+
+   1. **Distill everything gathered so far this run into ONE condensed
+      hypothesis message** — same digest discipline as everywhere else (link
+      over paste, no raw diffs/log dumps): the leading root-cause hypothesis,
+      the strongest supporting evidence, and any suspect PR, in the same
+      shape a cluster sibling's `pre_seed` message would carry. Discard the
+      rest of the dead thread's history entirely — it is exactly what caused
+      the overflow, so carrying more of it into the restart than this one
+      condensed paragraph defeats the point.
+   2. **Submit this as turn 1 of a BRAND NEW thread** (`tfaRcaTurn(testRunId,
+      message=<condensed hypothesis>)`, no `threadId`) — this is the one
+      narrow exception to "never start a second thread" in step 4, justified
+      because the first thread is now provably dead, not merely difficult.
+      Capture the new `threadId` and continue the loop from step 2 as normal;
+      its turns count against the same overall `turnCap` — no separate budget.
+   3. **Allow exactly ONE such restart per test.** If the fresh thread ALSO
+      hits two consecutive same-thread failures, do not restart again — end
+      `PENDING` (note `"likely-context-exceeded"`) for real. A test whose
+      condensed restart still overflows needs a human, not a third thread.
+
+4b-i. **Two DIFFERENT TFA failures, don't confuse them.**
+   - `TFA agent run failed` — usually the wedge (see 4b: one retry, then one
+     condensed restart if the retry also fails). Two of these in a row on the
+     same thread is very likely `context_length_exceeded` server-side
+     (confirmed via production logs, not inferred) — handle per 4b rather
+     than treating it as a message-size problem to fix by shortening THIS
+     turn's submission; the accumulated thread history, not this message, is
+     what's oversized, and a same-thread resubmit can never trim that — only
+     a fresh thread with a condensed message can.
+   - **`turnId` exists ONLY on a soft-`PENDING` turn.** TFA returns
+`{status, threadId, turnId}` for PENDING and omits `turnId` entirely on
+`RESOLVED` / `NEEDS_INFO` — so reporting `turn_id: not available` on a resolved
+turn is correct, not a gap. What matters: if you end the test
+`pending-resume`, you MUST carry the `turnId` from the PENDING response into
+`flip()`, because the resume path drains that exact turn with
+`getTfaTurnResult(testRunId, turnId)` before submitting anything new. Without
+it the resume submits blind onto a thread that still has a turn in flight.
+
+**`viewRca` comes back from TFA as a generic hostname**, not a per-build deep
+link. Pass through whatever TFA returns; do NOT hand-build a link that looks
+more specific than the data supports. The real per-build report URL is produced
+once at the end of the run by `triggerRcaReport`, not per test.
+
+`turn expired or not found` — observed on an over-cap (~2000-char)
+     submit. The text names a thread/turn problem, which reads as a wedge and
+     sends you down the wrong path; it is really a size rejection. If you see
+     this, shorten and resend before assuming the thread is broken.
+
+4b-ii. **Size-check any large fetch before trusting a negative result.** A
+   truncated payload turns "grep found nothing" into a false negative, and it
+   is silent. A coordinator nearly concluded a manifest didn't contain an
+   entry when the file had simply been cut at ~64KB — its own `wc -l` check
+   is what caught it (1042 lines vs 1518 real). The tool cache does not do
+   this (it truncates only past 256KB, and marks it), but the surrounding
+   tool plumbing can. So on any fetch of a big file: verify size or line
+   count first, and only then treat an absent match as evidence of absence.
+
+4c. **Keep every turn message under `turnMessageMaxChars` (1000)** — for
+   digest discipline, NOT as a wedge cure. An early correlation suggested
+   oversized messages caused the turn wedge (~1400/~1350-char submits failed
+   where a ~940-char retry landed, twice), but a later run refuted it
+   outright: a 240-char message wedged exactly as a 1500-char one did. So
+   respect the cap because a tight digest is the contract (link, don't paste)
+   — but do not expect trimming to prevent a wedge, and do not read a wedge
+   as evidence your message was too long. The wedge is a TFA-side fault whose
+   trigger is still unidentified; the reliable response is 4b (resubmit on the
+   same thread), not shrinking the payload.
+
 5. **Soft-PENDING is DRAINED, not reported.** `status: "PENDING"` means the tool's
    90s in-call poll expired, not that TFA has nothing to say — turns landing past
    90s are routine (a first turn finalizing `NEEDS_INFO` at 104s is a real,
@@ -89,14 +336,30 @@ read-only and has no side effects, so a read is always safe to repeat.
    before — never busy-wait through `tfaRcaTurn` resubmits instead.
 6. **Digest, don't dump.** Every follow-up `message` carries digested findings
    (`ask → found → snippet/link`), never raw log tails, full diffs, or full files.
-   Size caps + block shape live in `references/evidence-routing.md` — read it
-   before fulfilling any ask. The tool caps `message` at 5000 chars.
+   Size caps + block shape live in `<pluginRoot>/skills/rca-build/references/evidence-routing.md`
+   (NOT a bare `references/evidence-routing.md` — that resolves against
+   whatever directory you started in, not this plugin's root) — read it
+   before fulfilling any ask. The plugin config caps `message` at 1000 chars
+   (`turnMessageMaxChars` in `config/rca.config.json`); the `tfaRcaTurn` tool
+   itself would allow up to 5000, but the plugin self-limits to 1000.
 7. **Report gaps, don't drop them.** An ask the coordinator cannot fulfill becomes
    a `not-found` / `unreachable` / `unavailable` block, never a silent omission —
    and **never a user prompt**. TFA finalizes best-effort with lower confidence.
 8. **Never editorialize.** Report findings (suspect PR, server-side error line),
    not verdicts. The root cause is TFA's to state on `RESOLVED`; pass its
    `glimpse` through verbatim.
+9. **Field-filter every gather call, always.** Before running any
+   capability-provided command (`gh`, `kubectl`, or whatever the manifest
+   resolved to for `github`/`infra`), project down to only the field(s) this
+   ask needs — `--jq`, `-o custom-columns`, `-o jsonpath`, or a `grep`/`head`
+   immediately piped. Never run the unfiltered form "just to see the shape" —
+   an exploratory call costs the same context whether or not its output ends
+   up in the digest, and a raw repo/commit/pod object typically carries
+   orders of magnitude more noise (license/URL metadata, multi-hundred-char
+   signature blocks, unrequested columns) than any evidence ask ever uses.
+   This governs what enters *your own* context via the tool result — distinct
+   from principle 6, which governs the digest you send back to TFA. Exact
+   command templates: `<pluginRoot>/skills/rca-build/references/github-evidence.md` § Field-filtering.
 
 ## Application bugs — the culprit-PR mandate (MANDATORY)
 
@@ -105,7 +368,7 @@ Whenever TFA's classification (in an ask, a suggestion, or the resolving
 connector is the deliverable, not optional evidence:
 
 - **Hunt the culprit PR**: deploy timeline vs the last-pass window, changed
-  paths vs the failure signature (`references/github-evidence.md`), run the
+  paths vs the failure signature (`<pluginRoot>/skills/rca-build/references/github-evidence.md`), run the
   falsification protocol on each candidate.
 - **Feed the PR link(s) to TFA in the turn message** so the BrowserStack agent
   populates `related_prs` in the dashboard RCA.
@@ -118,15 +381,21 @@ connector is the deliverable, not optional evidence:
 
 ## Suspect-PR falsification (github asks)
 
-For `product_code` / `deploy` / `ci` asks, follow `references/github-evidence.md`:
+For `product_code` / `deploy` / `ci` asks, follow `<pluginRoot>/skills/rca-build/references/github-evidence.md`:
 gather the **exact** evidence (diff-since-baseline, PRs-in-window touching the
 failing path, blame, deploy timing) via **GitHub MCP → `gh` → degrade**, and for
 each candidate suspect **try to disprove it** (path overlap? shipped before the
 failure window? behind an OFF flag?). Feed both supporting *and* disconfirming
 evidence back as a structured suspect packet; only `verdict: supported` suspects
 belong in `related_prs`. Reuse the pre-computed build-level evidence — do not
-re-fetch per test. Never fabricate a PR when the github capability is unavailable
-— emit an `unavailable` block.
+re-fetch per test (the `evidenceFile`'s `github` section, if present and not
+`gap`-marked for this repo; otherwise the live github connector). A culprit
+hunt often needs to go deeper than the file's summary — a full diff, a
+downstream consumer of a changed flag — write that depth back via
+`contributeGithubEvidence` once found, so a sibling confirming the same
+suspect PR doesn't re-run the same diff/search. Never fabricate a PR when the github
+capability is unavailable — emit an
+`unavailable` block.
 
 ## The loop
 
@@ -138,6 +407,9 @@ re-fetch per test. Never fabricate a PR when the github capability is unavailabl
      - neither → "Initiating collaborative RCA for test run <id>."
 1. SUBMIT turn 1: tfaRcaTurn(testRunId=<id>, message=<digest>). Capture threadId. turns_used = 1.
    (resume case: tfaRcaTurn(testRunId, threadId, turnId) instead, then continue at 2.)
+   (turn1_result case: SKIP this submit entirely — threadId = turn1_result.threadId,
+    turns_used = 1, result.status = NEEDS_INFO, result.asks = turn1_result.asks,
+    then continue at 3, not 2 — there is nothing to CLASSIFY, Step 4b already did.)
 2. CLASSIFY result.status:
      PENDING    → DRAIN FIRST, do not resubmit and do not end here:
                     capture threadId + turnId, then loop on
@@ -150,15 +422,50 @@ re-fetch per test. Never fabricate a PR when the github capability is unavailabl
      RESOLVED   → capture glimpse + viewRca; END (RESOLVED).
      BLOCKED    → END (PENDING, note "blocked") — terminal, no asks to route.
      NEEDS_INFO → go to 3.
-3. ROUTE the asks (read references/evidence-routing.md; route via lib/routing.mjs):
-     For each ask, high → medium → low:
+3. ROUTE the asks (read `<pluginRoot>/skills/rca-build/references/evidence-routing.md`; route via lib/routing.mjs):
+     "high → medium → low" orders the ASSEMBLED MESSAGE only (step 3's last
+     line) — `routeAsk`/`routeAsks` (`lib/routing.mjs`) classify each ask
+     independently, with no cross-ask state or ordering dependency between one
+     ask's gather and another's. When a turn's NEEDS_INFO carries multiple
+     `gather` asks (e.g. a github ask and an infra ask together), issue their
+     live gather calls CONCURRENTLY — as parallel tool calls in the same
+     turn — never one ask's full gather-and-digest before starting the next.
+     `lib/loop.mjs`'s `runRcaLoop` mirrors this with `Promise.all` over
+     `buckets.gather`; do the equivalent here. Only the final message assembly
+     respects priority order, not the fetching. **This is not only an
+     across-asks rule** — a single github ask routinely needs several
+     independent probes itself (a commit-history check per candidate file, a
+     falsification check per suspect PR); see
+     `references/github-evidence.md`'s "Batch every independent probe into
+     one message" for that one-level-down case. One Bash call per message,
+     waiting for each result before firing the next independent probe, pays
+     a full turn's think-time per call for no reason — this was measured
+     costing 60-90s of pure overhead per call in a real run.
+     For each ask:
        skip   → record in asks_skipped, emit nothing.
-       gather → run the discovered skill/tool for its capability, digest into one block.
-                Record evidenceType in asks_fulfilled (dedupe).
+       gather → FIRST check `evidenceFile` (if present) for this ask's scope —
+                repo for a github ask, workload for an infra/logs ask. Covered
+                (present, `gap` falsy) → paste its `block` straight in, no
+                re-digesting, no live call. Not named in the file, or its
+                entry has a `gap`, or no `evidenceFile` at all → run the
+                discovered skill/tool live, exactly as before — THEN write the
+                result back via `contributeGithubEvidence`/
+                `contributeLogsEvidence` with your own testRunId as writerId
+                (Operating Principle 0) so this fills the gap for whoever
+                reads the file next.
+                Digest into one block. Record evidenceType in asks_fulfilled (dedupe).
        gap    → emit an `unavailable` block (record in asks_unavailable). NEVER prompt.
      PRODUCT_BUG in play + no supported PR yet → widen the github hunt this turn.
      Concatenate per-ask blocks into the next-turn MESSAGE (respect size caps).
 4. SUBMIT follow-up on the SAME thread: tfaRcaTurn(testRunId, message, threadId). turns_used += 1.
+     FAILS ("TFA agent run failed") → resubmit the SAME message on the SAME
+     thread once (per 4b), still counting as a turn. If THAT resubmit also
+     fails (two consecutive same-thread failures) → per 4b, if no restart has
+     happened yet this run: submit a condensed hypothesis as turn 1 of a
+     BRAND NEW thread (no threadId), capture the new threadId, turns_used += 1,
+     go to 2. If a restart already happened once and this (the restarted)
+     thread also hits two consecutive failures → END (PENDING, note
+     "likely-context-exceeded") — no second restart.
 5. TURN-CAP CHECK: if turns_used >= turnCap and still NEEDS_INFO → END (PENDING, "turn-cap").
      else → go to 2 with the new result.
 6. EMIT the RCA_OUTPUT block from the captured terminal state.
@@ -232,9 +539,10 @@ RCA_OUTPUT_END
 
 Notes:
 - `status` is one of exactly three values. `turn-cap`, `soft-pending` (drain
-  budget spent) and `blocked` all report as `PENDING`; note which in `root_cause`.
-  A `PENDING` from a *drained* turn should never appear — a drain that lands
-  re-classifies instead.
+  budget spent), `blocked`, and `likely-context-exceeded` (two consecutive
+  same-thread `TFA agent run failed` resubmits, per 4b) all report as
+  `PENDING`; note which in `root_cause`. A `PENDING` from a *drained* turn
+  should never appear — a drain that lands re-classifies instead.
 - `asks_skipped` always includes `test_logs` whenever TFA asked for logs.
   `asks_fulfilled` **never** includes `test_logs`.
 - `asks_unavailable` is the evidence-coverage signal the coverage stamp turns
@@ -244,6 +552,8 @@ Notes:
 
 ## Hard limits
 
+- **Never** treat a `gap`-marked `evidenceFile` entry as coverage — a `gap`
+  means attempt a live call exactly as if the file didn't have that entry.
 - **Never** prompt, ask, or wait on a user — the gate is closed; gaps degrade to `unavailable`.
 - **Never** fulfill or seed a `test_logs` ask — TFA owns logs.
 - **Never** exceed `turnCap` `tfaRcaTurn` calls in one run.
@@ -253,6 +563,10 @@ Notes:
 - **Never** let drain reads consume the turn cap, and never drain past the
   `softPendingDrain` budget — a wedged turn must not hang the batch.
 - **Never** dump raw logs, full diffs, or full file contents into a turn message — digest only.
+- **Never** run an unfiltered gather call (a bare `gh api ...` with no `--jq`,
+  `kubectl get ... -o wide`/`-o yaml` when a narrower `-o custom-columns`
+  answers the ask) — project to the needed field(s) before the call runs, not
+  by reading past the noise after.
 - **Never** write to any repo / cluster / ticket / the run — every action is read-only.
 - **Never** editorialize a cause — pass TFA's `glimpse` through verbatim.
 - **Never** blindly inherit a representative's cause for a sibling — confirm against its own logs.

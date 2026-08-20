@@ -1,12 +1,13 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, chmodSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   csvPathFor,
   seed,
   readRows,
+  writeRows,
   claim,
   heartbeat,
   flip,
@@ -121,6 +122,28 @@ test("pendingRows returns only pending work", () => {
   assert.equal(pend[0].testRunId, "102");
 });
 
+// Regression: `flip` used to accept ONLY the lowercase CSV vocabulary and
+// return a bare `false` for anything else — including `RESOLVED`, the exact
+// value the RCA_OUTPUT contract mandates. A whole batch of coordinator results
+// was lost that way: they called flip, got a silent no-op, and the rows stayed
+// `pending` looking un-run.
+test("flip accepts the RCA_OUTPUT vocabulary and normalizes it", () => {
+  seed(csv, "build-1", TESTS);
+  assert.equal(flip(csv, 101, { rca_done: "RESOLVED", root_cause: "x" }, 1000), true);
+  assert.equal(readRows(csv).find((r) => r.testRunId === "101").rca_done, "resolved");
+
+  assert.equal(flip(csv, 102, { status: "PENDING" }, 1000), true);
+  assert.equal(readRows(csv).find((r) => r.testRunId === "102").rca_done, "pending-resume");
+});
+
+test("flip maps the output block's field names onto real columns", () => {
+  seed(csv, "build-1", TESTS);
+  flip(csv, 101, { rca_done: "resolved", thread_id: "chat:101", turn_id: "t-7" }, 1000);
+  const row = readRows(csv).find((r) => r.testRunId === "101");
+  assert.equal(row.threadId, "chat:101");
+  assert.equal(row.turnId, "t-7");
+});
+
 test("flip rejects a missing/non-terminal rca_done without mutating the row", () => {
   seed(csv, "build-1", TESTS);
   claim(csv, 101, "w1", 1000);
@@ -184,4 +207,109 @@ test("csvPathFor: sanitizes hostile ids and handles empty", () => {
 test("csvPathFor: stateDir override wins over temp", () => {
   const p = csvPathFor("b1", "/ci/artifacts");
   assert.equal(p, join("/ci/artifacts", "rca-state.b1.csv"));
+});
+
+// A foreign header must fail loudly, because writeRows only emits COLUMNS and
+// would silently drop anything it didn't recognise. A real legacy 10-column
+// file lost test_id and test_name this way while reporting success.
+test("readRows refuses a foreign schema instead of silently dropping columns", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-legacy-"));
+  const p = join(dir, "legacy.csv");
+  writeFileSync(p, "test_id,test_name,rca_done\nt1,login spec,pending\n", "utf8");
+
+  assert.throws(() => readRows(p), /unrecognised column/i,
+    "must name the problem rather than mangle the file");
+  assert.throws(() => readRows(p), /test_id/, "must say WHICH columns");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Known legacy spellings are still accepted — the guard is for genuinely
+// foreign schemas, not for every older name.
+test("readRows maps aliased header names rather than rejecting them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-alias-"));
+  const p = join(dir, "aliased.csv");
+  writeFileSync(p, "test_run_id,status,thread_id\n42,pending,th-1\n", "utf8");
+
+  const rows = readRows(p);
+  assert.equal(rows[0].testRunId, "42");
+  assert.equal(rows[0].rca_done, "pending");
+  assert.equal(rows[0].threadId, "th-1");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// mkdirSync's `mode` applies on CREATE only, so a directory made before the
+// hardening landed keeps 0755 forever — with root causes and culprit PRs in it.
+test("writeRows tightens a pre-existing world-readable state dir", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-perm-"));
+  const loose = join(dir, "loose");
+  mkdirSync(loose, { mode: 0o755 });
+  chmodSync(loose, 0o755); // as an older version would have left it
+
+  const csv = join(loose, "rca-state.b.csv");
+  writeRows(csv, []);
+
+  assert.equal(statSync(loose).mode & 0o777, 0o700, "existing dir must be tightened, not left open");
+  assert.equal(statSync(csv).mode & 0o777, 0o600);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// turnId only exists on a soft-PENDING turn, which is exactly the case that
+// produces pending-resume. Without it the resume path submits blind onto a
+// thread that still has a turn in flight — and the row looks healthy in the CSV.
+test("flipping to pending-resume without a turnId warns loudly", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-resume-"));
+  const csv = join(dir, "s.csv");
+  seed(csv, "b", [{ test_id: 1, test_name: "t" }, { test_id: 2, test_name: "u" }]);
+
+  const warnings = [];
+  const orig = console.warn;
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    flip(csv, 1, { rca_done: "pending-resume" }, 1000);
+    flip(csv, 2, { rca_done: "pending-resume", turnId: "abc-123" }, 1000);
+  } finally {
+    console.warn = orig;
+  }
+
+  const noTurn = warnings.filter((w) => /NO turnId/.test(w));
+  assert.equal(noTurn.length, 1, "exactly the seedless row must warn");
+  assert.match(noTurn[0], /submit blind/);
+  assert.equal(readRows(csv).find((r) => r.testRunId === "2").turnId, "abc-123");
+
+  // Still resumable either way — warning, not rejection.
+  assert.equal(readRows(csv).find((r) => r.testRunId === "1").rca_done, "pending-resume");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// "A PRODUCT_BUG RCA without a culprit PR is incomplete" was a prompt-only rule.
+// A stated "none — searched X" satisfies it; a blank field does not, and the two
+// are indistinguishable in the CSV.
+test("flip warns on a product bug with no PR evidence trail", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rca-pb-"));
+  const csv = join(dir, "s.csv");
+  seed(csv, "b", [{ test_id: 1 }, { test_id: 2 }, { test_id: 3 }]);
+
+  const warnings = [];
+  const orig = console.warn;
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    flip(csv, 1, { rca_done: "resolved", failure_type: "PRODUCT_BUG" }, 1);
+    flip(csv, 2, { rca_done: "resolved", failure_type: "PRODUCT_BUG", related_prs: ["https://x/pull/1"] }, 1);
+    flip(csv, 3, { rca_done: "resolved", failure_type: "PRODUCT_BUG", related_prs: "none — searched repo-a, repo-b in window" }, 1);
+  } finally {
+    console.warn = orig;
+  }
+
+  const pb = warnings.filter((w) => /EMPTY related_prs/.test(w));
+  assert.equal(pb.length, 1, "only the blank one warns");
+  assert.match(pb[0], /testRunId=1/);
+
+  // An honest dead end is compliant — must not be nagged.
+  assert.ok(!pb.some((w) => /testRunId=3/.test(w)), "a stated 'none, searched X' satisfies the rule");
+
+  rmSync(dir, { recursive: true, force: true });
 });

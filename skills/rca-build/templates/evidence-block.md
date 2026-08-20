@@ -6,12 +6,12 @@ the forbidden list: `../references/evidence-routing.md`.
 Fulfilled ask:
 
 ```
-ASK: <verbatim `what` from the TfaAsk, ≤ 120 chars>
+ASK: <verbatim `what` from the TfaAsk, ≤ 80 chars>
 TYPE: <evidenceType>
 FOUND: <yes | no | partial>
-SUMMARY: <1–3 sentences — the finding, in the agent's words. ≤ 400 chars>
+SUMMARY: <1 sentence — the finding, in the agent's words. ≤ 80 chars>
 SNIPPET:
-  <the load-bearing excerpt only — see size caps. Omit if a LINK fully carries it.>
+  <the load-bearing excerpt only, ≤ 4 lines — see size caps. Omit if a LINK fully carries it.>
 LINK: <permalink to the source — PR/commit/log-search/metrics panel/deploy record. Omit if N/A.>
 ```
 

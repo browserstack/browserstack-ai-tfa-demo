@@ -1,4 +1,4 @@
-# Failure-signature clustering
+# Clustering
 
 Why: a red build's N failures usually trace to a handful of causes (one bad
 PR/deploy/shared helper). Running the full collaborative loop once per *cause*
@@ -7,9 +7,38 @@ causes)** — the only thing that makes "RCA for ALL failed tests, even thousand
 feasible. But **every failed test must still show a per-test RCA in the TRA
 dashboard**, so clustering collapses the *evidence hunt*, not the *output*.
 
-The logic lives in `lib/signature.mjs`; this file is the protocol.
+## Two sources, one contract
 
-## The signature
+Both paths produce the identical `{ cluster_id, signature, members,
+representative, siblings }` shape, so nothing downstream (the fan-out
+workflow, the sequential harness) needs to know which one ran:
+
+- **Preferred — server-computed themes.** `lib/theme-clustering.mjs` →
+  `clustersFromThemes(rows, themesResult, testsByThemeId)`, fed from the
+  `getBuildFailureThemes` / `listTestsInFailureTheme` MCP tools (SKILL.md Step
+  3). `getBuildFailureThemes` is responsible for making themes exist, not just
+  reading them — if nothing has ever been computed for this build it triggers
+  computation (one POST, same call) and polls for `buildThemeWorkflow.status`
+  to reach `SUCCESS`. Cadence: one GET first, a single POST trigger only if no
+  themes exist yet (never re-fired), then GET every 3s up to a 90s wall-clock
+  ceiling — `ready: true` on `SUCCESS`, `ready: false` if the 90s is spent or
+  the status is `FAILED`/`ERROR`. The grouping reflects the
+  server's own root-cause clustering instead of a text-signature guess — two
+  failures with an identical error string but unrelated causes are not
+  conflated the way a client-side "signature" would be.
+- **Fallback — client-side failure signature.** `lib/signature.mjs` →
+  `clusterAndPersist(csvPath, csvStateModule)`, the original text-normalization
+  approach described below. This is a **server-outage net, not the routine path
+  for un-computed builds.** The trigger endpoint is deployed, so
+  `getBuildFailureThemes` makes themes exist for a fresh build (one POST, same
+  call) and returns `ready: true` — a never-analyzed build no longer degrades
+  to signatures. `ready: false` now means the server genuinely couldn't produce
+  themes: still computing past the poll budget, a failure status, or
+  `status: "trigger-unavailable"` (the trigger call itself errored). Only then
+  does this fallback engage, keeping the run resilient when o11y is unavailable
+  rather than aborting or exploding to one coordinator per test.
+
+## The signature (fallback path only)
 
 Computed from the trimmed failure detail `listTestIds(includeFailureDetail=true)`
 already returns on each row — **no extra probe turns**:

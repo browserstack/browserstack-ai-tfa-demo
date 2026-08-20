@@ -22,6 +22,8 @@ documented across this set, and the prose-budget check measures this set plus th
 body. Paths are `pluginRoot`-qualified because a subagent starts in an unknown cwd.
 
 - `<pluginRoot>/skills/rca-setup/references/api-reference.md`
+- `<pluginRoot>/skills/rca-setup/references/context-api.md` (shared with `rca-build`,
+  so the signatures both skills need live in one file rather than two copies)
 - `<pluginRoot>/skills/rca-setup/references/capability-sequence.md`
 - `<pluginRoot>/skills/rca-setup/references/verification-failures.md`
 - `<pluginRoot>/skills/rca-setup/references/context-resolution.md`

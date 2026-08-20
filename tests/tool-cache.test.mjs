@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   toolCacheDirFor, cacheKey, mcpCacheKey, cacheGet, cachePut, cacheStats,
   isCacheable, isCacheableMcp, isRunnable, redact, tokenize, splitPipeline,
-  isProbeRunnable, isPermittedProbeLeader,
+  SNAPSHOT_MAX_AGE_MS, VOLATILITY,
 } from "../lib/tool-cache.mjs";
 
 let dir;
@@ -220,12 +220,64 @@ test("tokenize keeps injection payloads as ONE literal argument", () => {
   assert.deepEqual(argv, ["gh", "api", "repos/a;rm -rf /"]);
 });
 
-test("MCP: stateful tools are never cacheable", () => {
-  assert.equal(isCacheableMcp("mcp__grafana__query_loki_logs"), true);
-  assert.equal(isCacheableMcp("mcp__browserstack__listTestIds"), true);
-  assert.equal(isCacheableMcp("mcp__browserstack__tfaRcaTurn"), false);
-  assert.equal(isCacheableMcp("mcp__browserstack__getTfaTurnResult"), false);
-  assert.equal(isCacheableMcp("mcp__browserstack__triggerRcaReport"), false);
+test("a tool whose answer is expected to change is never cacheable", () => {
+  // This test previously asserted listTestIds IS cacheable. That enshrined a defect
+  // the repo already documents: reusing a held-over listTestIds result caused a
+  // real production failure in-process, and caching it reintroduced the same reuse
+  // across processes. Same for the themes computation, which has an explicit
+  // not-ready → ready transition — a cached not-ready pins the fallback forever.
+  for (const stateful of [
+    "mcp__browserstack__tfaRcaTurn",
+    "mcp__browserstack__getTfaTurnResult",
+    "mcp__browserstack__triggerRcaReport",
+    "mcp__browserstack__listTestIds",
+    "mcp__browserstack__getBuildFailureThemes",
+    "mcp__browserstack__listTestsInFailureTheme",
+    "mcp__acme__submit_job",
+    "mcp__acme__create_incident",
+  ]) {
+    assert.equal(isCacheableMcp(stateful), false, stateful);
+  }
+
+  // A read whose answer does not depend on when you ask stays cacheable — that is
+  // the entire value of the cache.
+  for (const readOnly of ["mcp__grafana__query_loki_logs", "mcp__github__get_repository"]) {
+    assert.equal(isCacheableMcp(readOnly), true, readOnly);
+  }
+});
+
+test("a snapshot expires; a stable entry does not", () => {
+  // capturedAtMs was written by cachePut and read by NOTHING, so there was no TTL
+  // at all: a resume hours later reused the original run's live state. MUTATION:
+  // make cacheGet ignore nowMs and the first two assertions fail.
+  const t0 = 1_000_000;
+  cachePut(dir, "snap", { command: "kubectl get pods", stdout: "Running", volatility: VOLATILITY.SNAPSHOT }, t0);
+  cachePut(dir, "stable", { command: "read at sha", stdout: "contents", volatility: VOLATILITY.STABLE }, t0);
+
+  assert.ok(cacheGet(dir, "snap", t0 + 1000), "a fresh snapshot is a hit");
+  assert.equal(cacheGet(dir, "snap", t0 + SNAPSHOT_MAX_AGE_MS + 1), null, "a stale snapshot is a MISS");
+  assert.ok(cacheGet(dir, "stable", t0 + 30 * 24 * 3600 * 1000), "a commit-pinned read never goes stale");
+});
+
+test("a hit reports its age and whether it was truncated", () => {
+  // Both are load-bearing for what the caller may conclude: reusing a snapshot is
+  // an assertion about the past, and a truncated payload turns "grep found nothing"
+  // into a false negative.
+  const t0 = 5_000_000;
+  cachePut(dir, "aged", { command: "c", stdout: "x", volatility: VOLATILITY.STABLE }, t0);
+  const hit = cacheGet(dir, "aged", t0 + 90_000);
+  assert.equal(hit.ageMs, 90_000);
+  assert.equal(hit.volatility, VOLATILITY.STABLE);
+  assert.equal(hit.truncated, false);
+});
+
+test("an entry written before volatility existed is treated as a snapshot", () => {
+  // The conservative direction: a wrongly-expired stable entry costs one refetch, a
+  // wrongly-reused snapshot costs a wrong conclusion.
+  const t0 = 7_000_000;
+  const rec = cachePut(dir, "legacy", { command: "c", stdout: "x" }, t0);
+  assert.equal(rec.volatility, VOLATILITY.SNAPSHOT, "and cachePut defaults it that way too");
+  assert.equal(cacheGet(dir, "legacy", t0 + SNAPSHOT_MAX_AGE_MS + 1), null);
 });
 
 test("mcpCacheKey is argument-order independent but value sensitive", () => {
@@ -270,121 +322,4 @@ test("CONCURRENCY: same key written twice stays readable and consistent", () => 
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w1", stdout: "same-bytes" }, 1000);
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w2", stdout: "same-bytes" }, 2000);
   assert.equal(cacheGet(dir, k).stdout, "same-bytes");
-});
-
-// ---- the probe gate ---------------------------------------------------------
-//
-// This is the boundary between a command string that arrived as DATA — from
-// config/rca.config.json, from a customer-supplied overlay, or from a connector
-// skill under ~/.claude/skills — and execFile. It shipped with no direct tests at
-// all: its only coverage was incidental, through validateTable fixtures, so the
-// reject paths below had never once executed.
-
-test("a destructive verb is refused however it is attached", () => {
-  // The verb scan compared whole argv tokens, so the space-separated form was
-  // caught and the attached form was not — on a read-only path holding the
-  // customer's real credentials.
-  // Refusal is the contract; WHICH guard fires is not. Some of these trip the
-  // pre-existing MUTATING scan first, which is an equally correct refusal.
-  const refused = [
-    ["gh api repos/x --method=DELETE", ["gh"]],
-    ["gh api repos/x --method DELETE", ["gh"]],
-    ["docker rm container", ["docker"]],
-    ["aws s3 rm s3://bucket/key", ["aws"]],
-    ["kubectl delete pod x", ["kubectl"]],
-    ["nomad job run x.nomad", ["nomad"]],
-    ["pm2 delete all", ["pm2"]],
-  ];
-  for (const [cmd, leaders] of refused) {
-    assert.equal(isProbeRunnable(cmd, { leaders }).ok, false, `${cmd} must be refused`);
-  }
-
-  // The attached form specifically, which is the hole this closed: no shell
-  // metacharacter, nothing the MUTATING scan matches, and the verb rides in as a
-  // flag VALUE where a whole-token comparison cannot see it.
-  const attached = isProbeRunnable("gh api repos/x --method=DELETE", { leaders: ["gh"] });
-  assert.match(attached.reason, /destructive verb/, "the attached form must be caught by the verb scan");
-});
-
-test("the read-only status probes each runtime actually ships are accepted", () => {
-  // The mirror of the test above: a denylist that also refuses the real probes
-  // would have been caught here rather than by every customer at once.
-  const cases = [
-    ["kubectl version --request-timeout=5s", ["kubectl"]],
-    ["docker version", ["docker"]],
-    ["aws sts get-caller-identity", ["aws"]],
-    ["nomad status", ["nomad"]],
-    ["pm2 jlist", ["pm2"]],
-    ["logcli labels", ["logcli"]],
-    ["promtool --version", ["promtool"]],
-    ["gh api repos/acme/api", ["gh"]],
-  ];
-  for (const [cmd, leaders] of cases) {
-    const r = isProbeRunnable(cmd, { leaders });
-    assert.equal(r.ok, true, `${cmd} must be accepted: ${r.reason ?? ""}`);
-  }
-});
-
-test("a backslash-escaped quote cannot hide a shell operator", () => {
-  // firstUnquoted had no escape rule while tokenize did, so the two disagreed
-  // about where quotes ended: `\"` left the text OUTSIDE quotes for the tokenizer
-  // and INSIDE them for the scanner, and the `;` between went unseen.
-  const hidden = String.raw`gh api repos/x\";id;:\"`;
-  const r = isProbeRunnable(hidden, { leaders: ["gh"] });
-  assert.equal(r.ok, false, "an escaped-quote operator must be refused");
-  assert.match(r.reason, /metacharacter/);
-
-  // And the idiom the escape rule exists for still works: a quoted jq filter.
-  const jq = isProbeRunnable(`gh api repos/x --jq ".[] | \\"x\\""`, { leaders: ["gh"] });
-  assert.equal(jq.ok, true, `a quoted jq filter must still be accepted: ${jq.reason ?? ""}`);
-});
-
-test("a probe leader must be in the catalog, not merely non-interpreter", () => {
-  // Every previous rejection case used an interpreter name, so the "not in the
-  // permitted catalog" branch had never run.
-  for (const leader of ["npm", "terraform", "ansible", "psql", "mysql"]) {
-    const r = isPermittedProbeLeader(leader);
-    assert.equal(r.ok, false, `${leader} is not a probe leader`);
-  }
-  for (const leader of ["gh", "kubectl", "docker", "aws", "nomad", "pm2", "logcli", "promtool"]) {
-    assert.equal(isPermittedProbeLeader(leader).ok, true, leader);
-  }
-});
-
-test("an interpreter is refused as a probe leader whatever else the row says", () => {
-  for (const leader of ["bash", "sh", "zsh", "python3", "node", "ruby", "perl", "xargs", "ssh", "nc"]) {
-    const r = isPermittedProbeLeader(leader);
-    assert.equal(r.ok, false, leader);
-  }
-});
-
-test("looksLikeSecret is never weaker than redact", async () => {
-  // redact() protects a file in temp; looksLikeSecret protects a file that gets
-  // COMMITTED. The committed-artifact guard was measurably the weaker of the two:
-  // it missed `token=<hex>` and `Basic <base64>`, both of which redact catches.
-  // Asserting the relationship rather than a case list keeps it that way.
-  const { looksLikeSecret } = await import("../lib/verify.mjs");
-  const { EMBEDDED, BENIGN } = await import("./helpers/fake-credentials.mjs");
-
-  // Direction 1 — never weaker. Anything redact flags, looksLikeSecret must flag.
-  // This is the relationship that was broken: `token=<hex>` and `Basic <base64>`
-  // were redacted out of a temp file and written verbatim into a committed one.
-  for (const c of Object.values(EMBEDDED)) {
-    if (redact(c) === c) continue; // redact misses it too — direction 2 covers that
-    assert.equal(
-      looksLikeSecret(c).secret,
-      true,
-      `looksLikeSecret must flag anything redact flags — missed ${JSON.stringify(c)}`,
-    );
-  }
-
-  // Direction 2 — strictly stronger where it must be. A URL with userinfo is the
-  // shape of an answer to "which log endpoint?", and redact does not catch it.
-  assert.equal(redact(EMBEDDED.urlUserinfo), EMBEDDED.urlUserinfo, "precondition: redact misses this");
-  assert.equal(looksLikeSecret(EMBEDDED.urlUserinfo).secret, true, "the committed-file guard must not");
-
-  // And neither direction may swallow a real answer.
-  for (const b of BENIGN) {
-    assert.equal(looksLikeSecret(b).secret, false, `must not flag a legitimate value: ${b}`);
-  }
 });

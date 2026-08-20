@@ -1,11 +1,9 @@
 {
   "$comment": "Central config for the /rca-build RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals \u2014 connectors are discovered and probe-validated at the gate into the capability manifest (see skills/rca-build/references/evidence-routing.md). No reportFile: the plugin never writes a local RCA report \u2014 the full report lives on the Test Observability UI (triggerRcaReport).",
-  "mcpServerName": "bstack",
   "$concurrencyComment": "Max coordinator subagents run in parallel during Step 5 fan-out. HONORED LITERALLY on the default path (direct Agent-tool dispatch of ai-tfa-coordinator subagents \u2014 one message, up to `concurrency` tool-use blocks per batch) and by the sequential harness (lib/loop.mjs). Only a SOFT target on the opt-in Workflow-tool path (workflows/rca-batch.mjs), which the Workflow runtime hard-caps at min(16, cpu cores - 2) regardless of this value \u2014 that cap is architectural and cannot be raised from this repo. See SKILL.md Step 5.",
   "concurrency": 20,
   "turnCap": 6,
   "turnMessageMaxChars": 1000,
-  "pollSoftPendingMs": 90000,
   "$softPendingDrainComment": "tfaRcaTurn abandons its in-call poll at pollSoftPendingMs (90s) and returns a soft PENDING while the TFA agent keeps working \u2014 turns finalizing past 90s are routine. On a soft PENDING the loop READS the same turnId via getTfaTurnResult on this budget before it routes asks or submits anything further; reads do not consume turnCap. Only when the budget is spent does the run end PENDING (pending-resume row).",
   "$maxErrorReadsComment": "A soft PENDING is drained on the full budget below, but a HARD read failure (a thrown error, or a result whose status/message says the TFA agent run failed) is a different signal: it will not resolve by asking again. After this many CONSECUTIVE failed reads the drain stops early and the row ends PENDING with a `tfa-error` note, still resumable. A single good read clears the streak. Measured motivation: on one real build, drain reads plus their sleeps were 23% of all coordinator tool calls, and the four tests that wedged this way were the four slowest in the batch.",
   "softPendingDrain": {
@@ -15,7 +13,6 @@
     "maxErrorReads": 3
   },
   "reaperHeartbeatTtlSec": 600,
-  "errorSummaryMaxChars": 200,
   "paths": {
     "$comment": "State CSV path is ALWAYS derived per build via lib/csv-state.mjs csvPathFor(buildId, stateDir): the build id is in the filename (no cross-build collisions) and the default directory is OS temp (<tmpdir>/bstack-rca/), so the harness never pollutes the invoking workspace. Set stateDir only to retain the CSV somewhere specific (e.g. a CI artifact dir).",
     "stateDir": ""
@@ -67,49 +64,40 @@
       "discoveryHints": []
     }
   },
-  "$capabilitiesComment": "The capability table (R7). Keyed by CAPABILITY, joined to evidenceRouting by capability name \u2014 deliberately a sibling block, not rows inside evidenceRouting. buildManifest() enumerates Object.values(evidenceRouting) and reads entry.capability off every value, so a capability-keyed row placed in there becomes an evidenceType entry, and a row naming a new capability injects a phantom manifest entry that unavailableCapabilities() then reports to the user and to TFA as a missing connector. Nothing enumerates top-level config keys, so a sibling is safe. The capability set is derived from evidenceRouting and is exactly {github, infra, logs, metrics, other} \u2014 ci/product_code/deploy are evidenceTypes routing to github, k8s routes to infra, and test_logs carries no capability at all.",
+  "$capabilitiesComment": "The capability table. Keyed by CAPABILITY, joined to evidenceRouting by name \u2014 a sibling block, not rows inside evidenceRouting, because buildManifest enumerates Object.values(evidenceRouting) and a capability-keyed row placed there becomes a phantom manifest entry. Rows DESCRIBE, they do not instruct. There are no probe commands here: a command string arriving as data with a customer value interpolated into it required a command-execution gate, an interpolation guard and a per-executable probe table, and produced a shell-injection escape, an attached-flag bypass and a write-tool dispatch on the MCP route regardless. It was also never generic \u2014 a fingerprint list only knows the vendors someone wrote down, so a New Relic customer matched nothing and was told to install promtool. `intent` is what the agent reasons from instead; `seedHints` are hints for the common cases and are NEVER authoritative \u2014 an agent assignment always wins.",
   "$probeComment": "Probes are validated by isProbeRunnable() in lib/tool-cache.mjs, NOT by isRunnable(). isRunnable exists to judge cacheability: it allows pipelines into ALLOWED_FILTER (which includes python3, awk, sed) and restricts leaders to gh/kubectl/curl/git \u2014 so it both permits `curl X | python3` and refuses `docker ps`. Probe rules instead: one command, no pipeline, no operators, no redirects, no mutation, and a leader present in BOTH the global catalog and this row's own fingerprint executables. Placeholders are brace-form {field}; an unquoted < is read as a file redirect and rejected.",
   "capabilities": {
     "github": {
       "mandatory": true,
       "resolvable": "partial",
-      "fingerprints": {
+      "intent": "Read the product's code and its merged-PR history. Verified means: a specific repository is readable AND the base branch's merged-PR list can be listed, because the culprit-PR hunt is the run's entire output. Reached through a git-forge CLI or an MCP server for one \u2014 whichever this machine has.",
+      "seedHints": {
         "executables": [
           "gh"
         ],
         "mcp": [
-          "github-mcp",
           "github"
         ],
         "files": [
-          ".github/",
-          ".github/workflows/"
+          ".github/"
         ]
       },
-      "probe": "gh api repos/{repo}",
-      "mcpProbe": {
-        "tool": "{githubMcpTool}",
-        "args": {
-          "repo": "{repo}"
-        }
-      },
-      "scopeProbe": "gh pr list --base {branch} --limit 1",
       "scopeFields": {
         "repos": {
-          "consumer": "PR-window search and path-overlap falsification (skills/rca-build/references/github-evidence.md)"
+          "consumer": "PR-window search and path-overlap falsification (references/github-evidence.md)"
         },
         "subpaths": {
-          "consumer": "path-overlap falsification (skills/rca-build/references/github-evidence.md)"
+          "consumer": "path-overlap falsification inside a monorepo (references/github-evidence.md)"
         },
         "baseBranch": {
-          "consumer": "merged-PR window for the culprit hunt (Step 4 gh pr list --search merged:from..to)"
+          "consumer": "the merged-PR window the Step 4 culprit hunt searches"
         }
-      },
-      "$fingerprintsComment": "The `files` fingerprint marks RELEVANCE, not availability. A .github/ directory proves the repo uses GitHub \u2014 worth asking its scope questions about \u2014 but proves nothing about whether this machine can reach the API, and gh or an MCP server are the only routes that can verify. discover() therefore routes a file-only match to `relevant` rather than `discovered`, so it raises the questions without claiming the capability. Claiming it made discovery report github available while verification refused on the same machine."
+      }
     },
     "infra": {
       "resolvable": "partial",
-      "fingerprints": {
+      "intent": "Reach the runtime the service under test actually runs on \u2014 a container orchestrator, a scheduler, a serverless platform, a process manager, a plain VM. There is no default: identify what THIS team uses. Verified means the runtime answers for the specific scope named below, not merely that some runtime CLI exists on PATH.",
+      "seedHints": {
         "executables": [
           "kubectl",
           "docker",
@@ -128,102 +116,68 @@
       },
       "scopeFields": {
         "runtimeKind": {
-          "consumer": "which infra probe applies at all (Gate Part A records the KIND in the manifest)"
+          "consumer": "recorded as the manifest's `via`, so a coordinator knows which runtime it is talking to"
         },
         "namespace": {
-          "consumer": "kubectl scope for Step 4 per-workload sweeps"
+          "consumer": "the scope Step 4's per-workload sweeps target"
         },
         "workloads": {
-          "consumer": "failure-signature to workload routing for Step 4 log sweeps"
-        }
-      },
-      "$probesComment": "One probe cannot serve five runtimes. This row fingerprints kubectl, docker, aws, nomad and pm2, and a single `kubectl ...` probe meant a Nomad or ECS machine had a kubectl command built for it, failed, and had that failure recorded as ITS scope being invalid \u2014 the technology bias the setup flow exists to avoid. Keyed by the executable the route matched; templateFor() in lib/verify.mjs selects on it. A runtime with no meaningful namespace declares a capability probe and no scopeProbe, which honestly reports the capability as reachable and its scope as unverified.",
-      "probesByExecutable": {
-        "kubectl": {
-          "probe": "kubectl version --request-timeout=5s",
-          "scopeProbe": "kubectl get pods -n {namespace} --request-timeout=5s"
-        },
-        "docker": {
-          "probe": "docker version"
-        },
-        "aws": {
-          "probe": "aws sts get-caller-identity",
-          "scopeProbe": "aws ecs list-services --cluster {namespace}"
-        },
-        "nomad": {
-          "probe": "nomad status"
-        },
-        "pm2": {
-          "probe": "pm2 jlist"
+          "consumer": "maps a failure signature to the workload whose logs Step 4 sweeps"
         }
       }
     },
     "logs": {
       "resolvable": "partial",
-      "fingerprints": {
+      "intent": "Query the application's own logs \u2014 NOT test logs, which TFA owns and this run never gathers. Any log store: hosted, self-run, or a CLI against one. Verified means a query against the named index or stream returns, so a Step 4 sweep will find something to read.",
+      "seedHints": {
         "executables": [
           "logcli"
         ],
         "mcp": [
+          "log",
           "kibana",
           "loki",
-          "victorialogs",
           "splunk",
           "datadog",
-          "chitragupta"
+          "elastic"
         ]
-      },
-      "mcpProbe": {
-        "tool": "{logsMcpTool}",
-        "args": {
-          "index": "{logIndex}",
-          "limit": 1
-        }
       },
       "scopeFields": {
         "logIndex": {
-          "consumer": "Step 4 per-workload log sweep target"
+          "consumer": "the index or stream Step 4's per-workload log sweep queries"
         },
         "serviceNames": {
-          "consumer": "failure-signature to service mapping for the log sweep"
+          "consumer": "maps a failure signature to the service whose logs to sweep in Step 4"
         }
-      },
-      "probe": "logcli labels",
-      "$probeComment": "logcli is a real Loki query client, so a machine that has it can be verified over the CLI. Before this the row fingerprinted logcli but declared only an mcpProbe, so a machine WITH logcli and no MCP server was told its log scope was invalid."
+      }
     },
     "metrics": {
       "resolvable": "partial",
-      "fingerprints": {
+      "intent": "Read resource and saturation signals \u2014 memory, CPU, error rate, latency \u2014 so a failure that looks functional can be recognised as pressure instead. Any metrics backend. Verified means a query returns for the named scope.",
+      "seedHints": {
         "executables": [
           "promtool"
         ],
         "mcp": [
+          "metric",
           "prometheus",
           "grafana",
           "instana",
-          "bifrost",
-          "datadog"
+          "datadog",
+          "newrelic",
+          "dynatrace"
         ]
-      },
-      "mcpProbe": {
-        "tool": "{metricsMcpTool}",
-        "args": {
-          "query": "up",
-          "limit": 1
-        }
       },
       "scopeFields": {
         "metricsNamespace": {
-          "consumer": "memory/CPU pressure lookup during evidence gathering"
+          "consumer": "scopes the memory/CPU pressure lookup Step 4 runs alongside the log sweep"
         }
-      },
-      "probe": "promtool --version",
-      "$probeComment": "promtool is a config linter rather than a query client, so this proves the tool is present and no more \u2014 deliberately weak, but a truthful weak signal beats the false scope-invalid gap a missing CLI probe produced on every promtool machine."
+      }
     },
     "other": {
       "resolvable": "always-asked",
       "exemptFromDiscoveryReport": true,
-      "$comment": "The catch-all for a stack discovery cannot classify. By definition it has nothing to fingerprint, so it declares no fingerprints, probe, mcpProbe or scopeProbe \u2014 permitted because resolvable is always-asked. exemptFromDiscoveryReport keeps it out of the user-facing 'not available' line: it can never match a fingerprint, so reporting it every run would be noise. The manifest and the TFA-facing declaration still mark it unavailable.",
+      "$comment": "The catch-all for a stack nothing else classifies. By definition it has nothing to recognise, so it declares no seedHints and no intent \u2014 permitted because resolvable is always-asked. exemptFromDiscoveryReport keeps it out of the human-facing 'not available' line, where it would appear every single run; the manifest and the TFA-facing declaration still mark it unavailable.",
       "scopeFields": {}
     }
   }

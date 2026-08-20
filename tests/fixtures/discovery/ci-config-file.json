@@ -1,6 +1,6 @@
 {
-  "name": "a CI config file fingerprints GITHUB, not a ci capability",
-  "$why": "evidenceRouting.ci maps to capability github. There is no ci capability, so .github/workflows/ must resolve github \u2014 as RELEVANCE, not availability: a config file cannot verify API access, so it raises github's scope questions without claiming the capability.",
+  "name": "a CI config file marks GITHUB relevant, and claims no capability",
+  "$why": "evidenceRouting.ci maps to capability github; there is no ci capability. A config file cannot prove API access, so it raises github's scope questions as RELEVANCE without claiming the route \u2014 claiming it made discovery and verification disagree on the same machine.",
   "env": {
     "executables": [],
     "mcpServers": [],
@@ -19,6 +19,12 @@
     ],
     "relevant": [
       "github"
-    ]
+    ],
+    "questions": [
+      "github.repos",
+      "github.subpaths",
+      "github.baseBranch"
+    ],
+    "unassigned": []
   }
 }

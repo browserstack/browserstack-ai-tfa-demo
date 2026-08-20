@@ -1,13 +1,32 @@
 {
-  "name": "metrics resolved from a session MCP server, no CLI present",
+  "name": "metrics resolved from a session MCP tool name, no CLI present",
+  "$why": "env.mcpServers holds the agent's own tool names verbatim; hint matching is one-way containment, so no parsing is needed.",
   "env": {
-    "executables": ["git"],
-    "mcpServers": ["mcp__prometheus__execute_query", "claude_ai_Slack"],
+    "executables": [
+      "git"
+    ],
+    "mcpServers": [
+      "mcp__prometheus__execute_query",
+      "claude_ai_Slack"
+    ],
     "repoFiles": []
   },
   "expect": {
-    "available": ["metrics"],
-    "unavailable": ["github", "infra", "logs", "other"],
-    "via": { "metrics": "mcp__prometheus__execute_query" }
+    "available": [
+      "metrics"
+    ],
+    "unavailable": [
+      "github",
+      "infra",
+      "logs",
+      "other"
+    ],
+    "via": {
+      "metrics": "mcp__prometheus__execute_query"
+    },
+    "unassigned": [
+      "git",
+      "claude_ai_Slack"
+    ]
   }
 }

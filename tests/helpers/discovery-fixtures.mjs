@@ -24,12 +24,14 @@ export function knownCapabilities(fixtures = discoveryFixtures()) {
   );
 }
 
-/** Every route any fixture's environment provides, plus the `via` values expected. */
+/** Every route any fixture's environment provides, plus the `via` values expected
+ *  and anything an agent assignment names. */
 export function knownRoutes(fixtures = discoveryFixtures()) {
   return new Set([
     ...fixtures.flatMap((fx) => Object.values(fx.expect.via ?? {})),
     ...fixtures.flatMap((fx) => fx.env.executables ?? []),
     ...fixtures.flatMap((fx) => fx.env.mcpServers ?? []),
     ...fixtures.flatMap((fx) => fx.env.repoFiles ?? []),
+    ...fixtures.flatMap((fx) => Object.values(fx.assigned ?? {}).map((a) => a.via)),
   ]);
 }

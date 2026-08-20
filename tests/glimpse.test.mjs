@@ -1,53 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { coverageStamp, classifyCoverage } from "../lib/coverage.mjs";
 import { renderGlimpse } from "../lib/glimpse.mjs";
 
 // ---- coverage stamp --------------------------------------------------------
-
-test("full coverage keeps TFA confidence", () => {
-  const s = coverageStamp({
-    asksFulfilled: ["product_code"],
-    asksUnavailable: [],
-    tfaConfidence: "high",
-  });
-  assert.equal(s.coverage, "full");
-  assert.equal(s.band, "high");
-});
-
-test("partial coverage caps a high TFA confidence at medium", () => {
-  const s = coverageStamp({
-    asksFulfilled: ["product_code"],
-    asksUnavailable: ["kibana"],
-    tfaConfidence: "high",
-  });
-  assert.equal(s.coverage, "partial");
-  assert.equal(s.band, "medium");
-  assert.deepEqual(s.unavailable, ["kibana"]);
-});
-
-test("thin coverage (nothing fulfilled, gaps) caps at low", () => {
-  const s = coverageStamp({
-    asksFulfilled: [],
-    asksUnavailable: ["infra", "metrics"],
-    tfaConfidence: "high",
-  });
-  assert.equal(s.coverage, "thin");
-  assert.equal(s.band, "low");
-});
-
-test("unknown TFA confidence floors to low even at full coverage", () => {
-  const s = coverageStamp({ asksFulfilled: [], asksUnavailable: [], tfaConfidence: "unknown" });
-  assert.equal(s.coverage, "full");
-  assert.equal(s.band, "low");
-});
-
-test("classifyCoverage dedupes and handles empties", () => {
-  assert.equal(classifyCoverage(["a", "a"], []), "full");
-  assert.equal(classifyCoverage([], ["x"]), "thin");
-});
-
-// ---- glimpse (the ONLY in-client output — no local report) ------------------
 
 test("empty batch renders a valid glimpse, no crash", () => {
   const txt = renderGlimpse([], { buildId: "b1" });

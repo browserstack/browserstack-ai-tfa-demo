@@ -1,9 +1,29 @@
 {
   "name": "gh on PATH, nothing else",
-  "env": { "executables": ["gh", "git"], "mcpServers": [], "repoFiles": [] },
+  "$why": "`git` is now reported unassigned rather than suppressed by a hardcoded ignore-list. The agent judges whether a tool matters; a list got that wrong in both directions \u2014 it named `git` on every run and could never have named a vendor nobody listed.",
+  "env": {
+    "executables": [
+      "gh",
+      "git"
+    ],
+    "mcpServers": [],
+    "repoFiles": []
+  },
   "expect": {
-    "available": ["github"],
-    "unavailable": ["infra", "logs", "metrics", "other"],
-    "via": { "github": "gh" }
+    "available": [
+      "github"
+    ],
+    "unavailable": [
+      "infra",
+      "logs",
+      "metrics",
+      "other"
+    ],
+    "via": {
+      "github": "gh"
+    },
+    "unassigned": [
+      "git"
+    ]
   }
 }

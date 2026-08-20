@@ -100,14 +100,30 @@ test("gate-critical lib exports are actually invoked outside tests", () => {
     // A call site is `fn(` minus the declarations. Prose counts: for the adapter
     // exports the CALLER is an agent following a fenced snippet, so a `resolveIntake({`
     // in SKILL.md is a real driver — that is what test 3 below pins in place.
+    // Count only drivers: a call in lib/ or bin/ source, or one inside a fenced
+    // code block an agent is meant to execute. An api-reference SIGNATURE line
+    // matches `fn(` exactly as well as a real call — and test 4 below REQUIRES
+    // that line to exist for every documented export, so counting prose made the
+    // two guards cancel out and every export passed automatically. That is how
+    // reportableUnavailable sat here, shipped and driven by nothing, while a
+    // comment on this very list called it "the exact bug class this test catches".
     const decls = (haystack.match(new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${fn}\\b`, "g")) ?? []).length;
-    const invocations = (haystack.match(new RegExp(`\\b${fn}\\s*\\(`, "g")) ?? []).length - decls;
+    const inSource = (src.join("\n").match(new RegExp(`\\b${fn}\\s*\\(`, "g")) ?? []).length - decls;
+    const fenced = fencedBlocks(prompts).join("\n");
+    const inFence = (fenced.match(new RegExp(`\\b${fn}\\s*\\(`, "g")) ?? []).length;
     assert.ok(
-      invocations >= 1,
-      `${fn} is declared ${decls}x and called ${invocations}x outside tests — defined but never driven`,
+      inSource + inFence >= 1,
+      `${fn} has no driver: ${inSource} call(s) in lib/bin and ${inFence} in an executable ` +
+        `fenced block. A signature line in a reference does not drive anything.`,
     );
   }
 });
+
+/** Text inside ``` fences — the blocks an agent executes, as opposed to the
+ *  signature indexes it reads. */
+function fencedBlocks(text) {
+  return [...String(text).matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]);
+}
 
 // The adapter that feeds the setup context into the run skill's gate is PROSE — a
 // markdown edit, not a function call the module system can verify. So the prompt
@@ -122,7 +138,7 @@ test("gate-critical lib exports are actually invoked outside tests", () => {
 // resolveIntake rather than reimplementing precedence in prose. String presence and
 // block ordering are both satisfied by a hand-rolled reimplementation. Test 2
 // above is what catches that, which is why resolveIntake is on its list.
-test("the run skill's gate wires the setup context in, above the connector defaults", () => {
+test("the run skill's gate wires the setup context in, and carves out its refusals", () => {
   const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
 
   assert.match(
@@ -134,18 +150,18 @@ test("the run skill's gate wires the setup context in, above the connector defau
       "position of invocation args and inference to whoever reads it",
   );
 
-  // Anchored on `resolveIntake(` rather than on the adapter's marker sentence. The
-  // invariant is "the gate resolves context before consulting connector defaults",
-  // which survives milestone 2 deleting the scaffolding; pinning the marker prose
-  // would mean the rewrite has to edit this test, which is exactly the friction
-  // that keeps scaffolding alive.
-  const resolvesContext = skill.indexOf("resolveIntake(");
-  const intakeDefaults = skill.indexOf("Check the selected connector skill's own intake-defaults");
-  assert.ok(resolvesContext > 0, "Part B must call resolveIntake");
-  assert.ok(intakeDefaults > 0, "and the intake-defaults paragraph must still be there");
+  // The ADAPTER is gone — this rewrite was the milestone that deleted it, so there
+  // is no "intake-defaults paragraph" left to sit above. What survives, and what
+  // actually mattered, is that the context is translated BEFORE it is resolved:
+  // resolveIntake matches keys exactly, so handing it the raw artifact leaves the
+  // repo fields unresolved and the gate re-asks for answers setup already proved.
+  const translate = skill.indexOf("intakeFromContext(");
+  const resolve = skill.indexOf("resolveIntake(");
+  assert.ok(translate > 0, "Part B must translate the context through intakeFromContext");
+  assert.ok(resolve > 0, "Part B must call resolveIntake");
   assert.ok(
-    resolvesContext < intakeDefaults,
-    "resolveIntake must be reached BEFORE intake defaults — below them the context is invisible",
+    translate < resolve || skill.includes("intakeFromContext(read.context)"),
+    "the translation must reach resolveIntake, not sit beside it",
   );
 
   // A JS fence naming the function, following the discoverWorkspaceRoot snippet
@@ -163,13 +179,18 @@ test("the run skill's gate wires the setup context in, above the connector defau
   // The adapter's refusals contradict a Hard rule. An unamended contradiction is
   // not a tie: this repo's own gate history records agents following the emphatic
   // rule they encountered rather than the intended one.
-  assert.match(
-    skill,
-    /never a blocker — \*\*except the\s+start-of-run context refusals\*\*/,
-    "the Hard rules list must carve out the start-of-run refusals, not merely sit beside them",
+  // The carve-out must be stated where the "never a blocker" rule is stated, not
+  // merely somewhere in the file. Bold markers are not the property — this repo's
+  // gate history records agents following the most emphatic rule they encountered
+  // rather than the intended one, so an unamended contradiction is not a tie.
+  // Asserted twice because the rule appears twice: at Gate close and in Hard rules.
+  const carveOuts = [...skill.matchAll(/never a blocker[^.\n]*(?:\n[^.\n]*)?/gi)]
+    .filter((m) => /except/i.test(m[0]) && /start-of-run context refusals/i.test(m[0]));
+  assert.ok(
+    carveOuts.length >= 2,
+    `both "never a blocker" statements must carve out the start-of-run refusals; ` +
+      `found ${carveOuts.length}`,
   );
-  assert.match(skill, /Never a blocker — except the start-of-run context refusals/,
-    "and Gate close must carry the same carve-out");
 });
 
 // The root cause of the 23% discovery tax was DRIFT: helpers were added faster
@@ -188,7 +209,6 @@ test("the run skill's gate wires the setup context in, above the connector defau
 // exists to prevent. Hence: every owner, not any owner.
 const OWNERS = {
   "build-cleanup.mjs": ["rca-build"],
-  "coverage.mjs": ["rca-build"],
   "csv-state.mjs": ["rca-build"],
   "evidence-cache.mjs": ["rca-build"],
   "evidence-file.mjs": ["rca-build"],
@@ -215,7 +235,7 @@ const INTERNAL = new Set([
   "emptyEvidenceFile", "writeEvidenceFile", "contribDirFor", "contribPathFor",
   "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache",
   "replaySubmit", "replayRead", "normalize", "computeSignature",
-  "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
+  "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit", "clusterRows",
   "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
   "unavailableCapabilities", "renderGlimpse", "toolCacheDirFor", "cacheKey",
   "isCacheable", "splitPipeline",
@@ -223,8 +243,6 @@ const INTERNAL = new Set([
   // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
   "isRunnable", "tokenize", "isCacheableMcp", "redact", "cacheGet",
   "cachePut", "cacheStats", "mcpCacheKey",
-  // probe validation — imported by lib/capability-table.mjs, never by an agent.
-  "isProbeRunnable", "isPermittedProbeLeader",
   // replay seam, same classification as loop.mjs's replaySubmit/replayRead
   "replayProbe",
 ]);

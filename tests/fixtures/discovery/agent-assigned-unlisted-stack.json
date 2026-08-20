@@ -1,0 +1,57 @@
+{
+  "name": "a stack no hint names is fully available once the agent assigns it",
+  "$why": "Fly.io, Coralogix and Dynatrace appear in no seedHint. Before the agent could assign routes, this customer matched nothing, was never even ASKED for a metrics scope, and was told to install promtool.",
+  "env": {
+    "executables": [
+      "flyctl",
+      "gh"
+    ],
+    "mcpServers": [
+      "mcp__coralogix__query",
+      "mcp__dynatrace__metrics"
+    ],
+    "repoFiles": [
+      "fly.toml"
+    ]
+  },
+  "assigned": {
+    "github": {
+      "via": "gh",
+      "kind": "executable",
+      "why": "git forge CLI"
+    },
+    "infra": {
+      "via": "flyctl",
+      "kind": "executable",
+      "why": "fly.toml deploys; flyctl is the runtime CLI"
+    },
+    "logs": {
+      "via": "mcp__coralogix__query",
+      "kind": "mcp",
+      "why": "Coralogix is the log store"
+    },
+    "metrics": {
+      "via": "mcp__dynatrace__metrics",
+      "kind": "mcp",
+      "why": "Dynatrace holds resource metrics"
+    }
+  },
+  "expect": {
+    "available": [
+      "github",
+      "infra",
+      "logs",
+      "metrics"
+    ],
+    "unavailable": [
+      "other"
+    ],
+    "via": {
+      "github": "gh",
+      "infra": "flyctl",
+      "logs": "mcp__coralogix__query",
+      "metrics": "mcp__dynatrace__metrics"
+    },
+    "unassigned": []
+  }
+}

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildManifest, unavailableCapabilities } from "../lib/routing.mjs";
-import { makeEvidenceCache, resolveBaseline } from "../lib/evidence-cache.mjs";
+import { resolveBaseline } from "../lib/evidence-cache.mjs";
 
 const CONFIG = {
   evidenceRouting: {
@@ -40,29 +40,6 @@ test("unavailableCapabilities lists what the client can't get", () => {
   const manifest = buildManifest(CONFIG, [{ capability: "github" }]);
   const unavailable = unavailableCapabilities(manifest).sort();
   assert.deepEqual(unavailable, ["infra", "metrics", "other"]);
-});
-
-test("evidence cache computes once and reuses across calls", async () => {
-  const cache = makeEvidenceCache();
-  let calls = 0;
-  const fn = async () => {
-    calls++;
-    return { prs: ["#1"] };
-  };
-  const a = await cache.compute("repo", "abc..def", "deploy", fn);
-  const b = await cache.compute("repo", "abc..def", "deploy", fn);
-  assert.equal(calls, 1);
-  assert.deepEqual(a, b);
-  assert.equal(cache.size(), 1);
-});
-
-test("evidence cache key distinguishes commit ranges", async () => {
-  const cache = makeEvidenceCache();
-  let calls = 0;
-  const fn = async () => ++calls;
-  await cache.compute("repo", "r1", "deploy", fn);
-  await cache.compute("repo", "r2", "deploy", fn);
-  assert.equal(calls, 2);
 });
 
 test("resolveBaseline uses last-green when present, else flags fallback", () => {

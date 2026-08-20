@@ -96,21 +96,16 @@ and unfulfillable variants) — copy it, don't retype it. Shape:
 
 | Field / scope | Soft target | Hard ceiling | On exceed |
 |---|---|---|---|
-| `SUMMARY` | ≤ 60 chars | 80 chars | Tighten to the finding; drop restatement of the ask |
-| `SNIPPET` per ask | ≤ 4 lines | 8 lines | Keep the load-bearing lines; replace the rest with `… (N lines elided — see LINK)` |
-| Code diff in a `product_code` snippet | ≤ 1 hunk | 2 hunks | Show changed lines only, no context lines; link the full PR |
-| Whole next-turn `message` | ≤ 40 lines | 80 lines (and ≤ `turnMessageMaxChars`) | Drop `low`-priority asks first; keep every `high` ask's block |
+| `SUMMARY` | ≤ 300 chars | 400 chars | Tighten to the finding; drop restatement of the ask |
+| `SNIPPET` per ask | ≤ 20 lines | 40 lines | Keep the load-bearing lines; replace the rest with `… (N lines elided — see LINK)` |
+| Code diff in a `product_code` snippet | ≤ 1 hunk | 3 hunks | Show changed lines + 3 lines context; link the full PR |
+| Whole next-turn `message` | ≤ 200 lines | 400 lines (and ≤ `turnMessageMaxChars`) | Drop `low`-priority asks first; keep every `high` ask's block |
 | Asks fulfilled per turn | all `high` + `medium` | — | Defer `low` asks to a later turn rather than truncating a `high` ask |
 
 Truncation rule of thumb: **never truncate a `high`-priority ask's block to fit a
 `low`-priority one.** Drop the low block whole; keep the high block intact. The
-whole-message ceiling honors `turnMessageMaxChars` from
-`config/rca.config.json`, now set to **1000 chars** — a plugin-configured
-self-limit, tighter than the underlying tool's actual hard cap (the
-`tfaRcaTurn` MCP tool itself allows up to 5000 chars per `message`; the plugin
-just chooses not to use all of it). At this budget, expect at most 2-3 ask
-blocks per turn before hitting the ceiling — defer lower-priority asks to a
-follow-up turn rather than cramming everything into one.
+whole-message ceiling also honors `turnMessageMaxChars` from
+`config/rca.config.json` (the tool caps `message` at 5000 chars).
 
 ### What never goes in a digest
 

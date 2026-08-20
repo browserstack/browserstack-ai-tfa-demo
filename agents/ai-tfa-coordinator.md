@@ -198,7 +198,7 @@ read-only and has no side effects, so a read is always safe to repeat.
    On any fetch of a big file: verify size or line count first, and only then
    treat an absent match as evidence of absence.
 
-4c. **Keep every turn message under `turnMessageMaxChars` (1000)** — for
+4c. **Keep every turn message under `turnMessageMaxChars` (5000)** — for
    digest discipline (link, don't paste). Do not expect trimming to prevent
    wedges; the wedge is a TFA-side fault. The reliable response is 4b
    (resubmit), not shrinking the payload.
@@ -216,9 +216,7 @@ read-only and has no side effects, so a read is always safe to repeat.
    Size caps + block shape live in `<pluginRoot>/skills/rca-build/references/evidence-routing.md`
    (NOT a bare `references/evidence-routing.md` — that resolves against
    whatever directory you started in, not this plugin's root) — read it
-   before fulfilling any ask. The plugin config caps `message` at 1000 chars
-   (`turnMessageMaxChars` in `config/rca.config.json`); the `tfaRcaTurn` tool
-   itself would allow up to 5000, but the plugin self-limits to 1000.
+   before fulfilling any ask. The tool caps `message` at 5000 chars.
 7. **Report gaps, don't drop them.** An ask the coordinator cannot fulfill becomes
    a `not-found` / `unreachable` / `unavailable` block, never a silent omission —
    and **never a user prompt**. TFA finalizes best-effort with lower confidence.

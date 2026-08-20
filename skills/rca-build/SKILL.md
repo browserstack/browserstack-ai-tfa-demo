@@ -187,22 +187,11 @@ product-scoped — a workspace may hold none, one, or several product families
 (e.g. `<product-a>-*`, `<product-b>-*`, whatever the user has). After the `ls`,
 pick the _product family_ whose connector skills apply to THIS build:
 
-**REQUIRED before you open any single family's SKILL.md: list every family the
-`ls` output actually returned, one line each, THEN check each one's failure-
-signature match — never open just the first (or only) one you happen to
-notice and stop there.** This has gone wrong on a real run: the `ls` returned
-three families (`a11y-*`, `tm-*`, `tra-*`), the build's actual failures were
-accessibility/Workflow-Analyzer domain, and the orchestrator read only
-`tra-regression-context` (a TRA/Observability connector whose declared lanes
-don't include accessibility at all) — never opened `a11y-regression-context`,
-the one that actually matched. That silently produced "exactly one family, use
-it" behavior even though three were present, and the mismatch then had to be
-patched by asking the user two separate questions Part B says never to ask.
-**If you are about to read one family's SKILL.md and cannot recite the other
-families the `ls` output also returned, STOP — you skipped the enumeration.**
-The failure-signature check (step 2 below) is what catches a family that looks
-present but doesn't actually own this build's failures; skipping straight to
-one file is exactly how a wrong-family read reaches Part B undetected.
+**Enumerate every family the `ls` returned before opening any one of them**, then
+pick by failure-signature match (step 2 below) — never open just the first family
+and stop. Reading only one when several are present silently degrades to
+"exactly one family, use it" and lands a wrong-family read in Part B. If you can't
+recite the other families the `ls` returned, you skipped this — stop and enumerate.
 
 - **Zero families found** → **nudge the user in the gate summary**:
   "No connector-shaped skills found under `.claude/skills/` — proceeding with
@@ -576,8 +565,8 @@ leaves the other free to reintroduce the bug.
    `initEvidenceFile(path, buildId, nowMs)`.
 2. **Scope the pre-fetch to the full union, never a single guess:**
    - **Repos** — every repo in Gate Part A's scope-probe-validated
-     `repos_validated` list (e.g. a VRT-lane build validates `frontend` +
-     `railsApp`; an nl2steps build validates `misc-services` + `ai-sdk-node`).
+     `repos_validated` list (a build's failures often span several repos —
+     validate the full set the connector maps, not one guessed repo).
    - **Workloads** — the union of workloads every cluster's **representative**
      implicates, via the active connector skill's failure-signature→workload
      routing table (never one workload guessed from the first failing test).

@@ -35,8 +35,8 @@ workflow, the sequential harness) needs to know which one ran:
   to signatures. `ready: false` now means the server genuinely couldn't produce
   themes: still computing past the poll budget, a failure status, or
   `status: "trigger-unavailable"` (the trigger call itself errored). Only then
-  does this fallback engage, keeping the run resilient when o11y is unavailable
-  rather than aborting or exploding to one coordinator per test.
+  does this fallback engage, keeping the run resilient when the server-side
+  clustering is unavailable rather than aborting or exploding to one coordinator per test.
 
 ## The signature (fallback path only)
 

@@ -10,9 +10,9 @@ import {
   readEvidenceFile,
   writeEvidenceFile,
   setBaseline,
-  setGithubEvidence,
+  setCodeEvidence,
   setLogsEvidence,
-  contributeGithubEvidence,
+  contributeCodeEvidence,
   contributeLogsEvidence,
   contribDirFor,
   contribPathFor,
@@ -64,49 +64,49 @@ test("initEvidenceFile creates the file with the given buildId", () => {
 
 test("initEvidenceFile is idempotent — does not clobber an existing file", () => {
   initEvidenceFile(file, "build-1", 1000);
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "x" } }, 2000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "x" } }, 2000);
   const before = readEvidenceFile(file);
   const again = initEvidenceFile(file, "build-1", 9999);
   assert.deepEqual(again, before);
 });
 
-test("setGithubEvidence and setLogsEvidence coexist without clobbering each other", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "a-deploy" } }, 1000);
-  setLogsEvidence(file, "workload-1", { gap: null, kubectlSweep: { block: "w1-logs" } }, 1000);
+test("setCodeEvidence and setLogsEvidence coexist without clobbering each other", () => {
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "a-deploy" } }, 1000);
+  setLogsEvidence(file, "workload-1", { gap: null, sweeps: [{ via: "logcli", block: "w1-logs" }] }, 1000);
   const doc = readEvidenceFile(file);
-  assert.equal(doc.github["org/a"].deployState.block, "a-deploy");
-  assert.equal(doc.logs["workload-1"].kubectlSweep.block, "w1-logs");
+  assert.equal(doc.code["org/a"].deployState.block, "a-deploy");
+  assert.equal(doc.logs["workload-1"].sweeps[0].block, "w1-logs");
 });
 
-test("setGithubEvidence for a second repo does not disturb the first", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
-  setGithubEvidence(file, "org/b", { gap: null, deployState: { block: "b" } }, 1000);
+test("setCodeEvidence for a second repo does not disturb the first", () => {
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
+  setCodeEvidence(file, "org/b", { gap: null, deployState: { block: "b" } }, 1000);
   const doc = readEvidenceFile(file);
-  assert.equal(doc.github["org/a"].deployState.block, "a");
-  assert.equal(doc.github["org/b"].deployState.block, "b");
+  assert.equal(doc.code["org/a"].deployState.block, "a");
+  assert.equal(doc.code["org/b"].deployState.block, "b");
 });
 
-test("setGithubEvidence twice for the SAME repo overwrites only that repo", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "old" } }, 1000);
-  setGithubEvidence(file, "org/b", { gap: null, deployState: { block: "b" } }, 1000);
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "new" } }, 2000);
+test("setCodeEvidence twice for the SAME repo overwrites only that repo", () => {
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "old" } }, 1000);
+  setCodeEvidence(file, "org/b", { gap: null, deployState: { block: "b" } }, 1000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "new" } }, 2000);
   const doc = readEvidenceFile(file);
-  assert.equal(doc.github["org/a"].deployState.block, "new");
-  assert.equal(doc.github["org/b"].deployState.block, "b"); // untouched
+  assert.equal(doc.code["org/a"].deployState.block, "new");
+  assert.equal(doc.code["org/b"].deployState.block, "b"); // untouched
 });
 
 test("setBaseline records baseline and suspectWindow without touching github/logs", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
   setBaseline(file, { ref: "sha123", isFallback: false }, { reposRequested: ["org/a"] }, 2000);
   const doc = readEvidenceFile(file);
   assert.deepEqual(doc.baseline, { ref: "sha123", isFallback: false });
   assert.deepEqual(doc.suspectWindow, { reposRequested: ["org/a"] });
-  assert.equal(doc.github["org/a"].deployState.block, "a"); // untouched
+  assert.equal(doc.code["org/a"].deployState.block, "a"); // untouched
 });
 
 test("recomputeCoverage: a covered repo/workload has no gap; a missing one is gapped", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
-  setLogsEvidence(file, "w1", { gap: null, kubectlSweep: { block: "w1" } }, 1000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
+  setLogsEvidence(file, "w1", { gap: null, sweeps: [{ via: "logcli", block: "w1" }] }, 1000);
   const coverage = recomputeCoverage(
     file,
     { repos: ["org/a", "org/b"], workloads: ["w1", "w2"] },
@@ -119,14 +119,14 @@ test("recomputeCoverage: a covered repo/workload has no gap; a missing one is ga
 });
 
 test("recomputeCoverage: a present entry with a non-null gap is NOT covered", () => {
-  setGithubEvidence(file, "org/a", { gap: "gh auth failed for this repo" }, 1000);
+  setCodeEvidence(file, "org/a", { gap: "gh auth failed for this repo" }, 1000);
   const coverage = recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 2000);
   assert.deepEqual(coverage.reposCovered, []);
   assert.deepEqual(coverage.reposGapped, ["org/a"]);
 });
 
 test("recomputeCoverage persists onto the file (readable afterwards)", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "a" } }, 1000);
   recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 2000);
   const doc = readEvidenceFile(file);
   assert.deepEqual(doc.coverage.reposCovered, ["org/a"]);
@@ -134,20 +134,20 @@ test("recomputeCoverage persists onto the file (readable afterwards)", () => {
 
 test("a block string with newlines and quotes round-trips through JSON unchanged", () => {
   const block = 'ASK: did X change?\nTYPE: product_code\nFOUND: yes\nSUMMARY: "quoted" finding\nSNIPPET: line1\nline2';
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block } }, 1000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block } }, 1000);
   const doc = readEvidenceFile(file);
-  assert.equal(doc.github["org/a"].deployState.block, block);
+  assert.equal(doc.code["org/a"].deployState.block, block);
 });
 
 test("contribute writes a shard, never the base file", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "base" } }, 1000);
-  contributeGithubEvidence(file, "3895581484", "org/a", {
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "base" } }, 1000);
+  contributeCodeEvidence(file, "3895581484", "org/a", {
     deployState: { block: "coordinator's full diff" },
   }, 2000);
   // base is untouched...
-  assert.equal(readBaseFile(file).github["org/a"].deployState.block, "base");
+  assert.equal(readBaseFile(file).code["org/a"].deployState.block, "base");
   // ...but the folded view shows the contribution
-  assert.equal(readEvidenceFile(file).github["org/a"].deployState.block, "coordinator's full diff");
+  assert.equal(readEvidenceFile(file).code["org/a"].deployState.block, "coordinator's full diff");
 });
 
 test("contribPathFor: one file per writer, under the build's contrib dir", () => {
@@ -162,81 +162,111 @@ test("contribPathFor sanitizes a hostile writerId", () => {
 });
 
 test("CONCURRENCY: two writers on the same repo both survive (no lost update)", () => {
-  setGithubEvidence(file, "org/a", {
+  setCodeEvidence(file, "org/a", {
     gap: null, deployState: { block: "base" }, prsInWindow: [{ pr: "#1" }],
   }, 1000);
   // Interleave the two writers the way real concurrent coordinators would:
   // each reads, then each writes — under a single shared file this is exactly
   // the sequence that drops the first writer's update.
-  contributeGithubEvidence(file, "writerA", "org/a", { prsInWindow: [{ pr: "#2", by: "A" }] }, 2000);
-  contributeGithubEvidence(file, "writerB", "org/a", { prsInWindow: [{ pr: "#3", by: "B" }] }, 2000);
-  const prs = readEvidenceFile(file).github["org/a"].prsInWindow.map((p) => p.pr).sort();
+  contributeCodeEvidence(file, "writerA", "org/a", { prsInWindow: [{ pr: "#2", by: "A" }] }, 2000);
+  contributeCodeEvidence(file, "writerB", "org/a", { prsInWindow: [{ pr: "#3", by: "B" }] }, 2000);
+  const prs = readEvidenceFile(file).code["org/a"].prsInWindow.map((p) => p.pr).sort();
   assert.deepEqual(prs, ["#1", "#2", "#3"]); // base + BOTH contributions
 });
 
 test("CONCURRENCY: two writers on the same workload both survive", () => {
-  contributeLogsEvidence(file, "writerA", "w1", { kubectlSweep: { block: "A found 3 lines" } }, 1000);
-  contributeLogsEvidence(file, "writerB", "w1", { victorialogs: { block: "B found 5xx" } }, 1000);
+  // Keyed by the SOURCE, not by a fixed slot. The entry used to have exactly two
+  // slots named `kubectlSweep` and `victorialogs`, so a team on a third log source
+  // had nowhere to write and a team on neither carried two permanently-null fields.
+  contributeLogsEvidence(file, "writerA", "w1", { sweeps: [{ via: "flyctl", block: "A found 3 lines" }] }, 1000);
+  contributeLogsEvidence(file, "writerB", "w1", { sweeps: [{ via: "mcp__coralogix__query", block: "B found 5xx" }] }, 1000);
   const w = readEvidenceFile(file).logs["w1"];
-  assert.equal(w.kubectlSweep.block, "A found 3 lines");
-  assert.equal(w.victorialogs.block, "B found 5xx");
+  const by = Object.fromEntries(w.sweeps.map((x) => [x.via, x.block]));
+  assert.deepEqual(by, { flyctl: "A found 3 lines", "mcp__coralogix__query": "B found 5xx" });
+});
+
+test("any number of log sources coexist, and each names itself", () => {
+  for (const via of ["logcli", "mcp__splunk__search", "mcp__newrelic__logs", "journalctl"]) {
+    contributeLogsEvidence(file, `w-${via}`, "w1", { sweeps: [{ via, block: `${via} block` }] }, 1000);
+  }
+  const sweeps = readEvidenceFile(file).logs["w1"].sweeps;
+  assert.equal(sweeps.length, 4, "no fixed slot count");
+  assert.deepEqual(sweeps.map((s) => s.via).sort(),
+    ["journalctl", "logcli", "mcp__newrelic__logs", "mcp__splunk__search"]);
+});
+
+test("a sweep that does not name its source is dropped", () => {
+  // `via` is what makes the shape generic; without it the entry is an anonymous
+  // blob nothing can attribute, which is the state the two named slots created.
+  contributeLogsEvidence(file, "w1", "w1", { sweeps: [{ block: "from somewhere" }] }, 1000);
+  assert.deepEqual(readEvidenceFile(file).logs["w1"].sweeps, []);
+});
+
+test("a real sweep clears a recorded gap; an empty one does not", () => {
+  setLogsEvidence(file, "w1", { gap: "no log route on this machine" }, 1000);
+  contributeLogsEvidence(file, "wA", "w1", { sweeps: [{ via: "logcli", block: "found it" }] }, 2000);
+  assert.equal(readEvidenceFile(file).logs["w1"].gap, null);
+
+  setLogsEvidence(file, "w2", { gap: "no log route on this machine" }, 1000);
+  contributeLogsEvidence(file, "wB", "w2", { sweeps: [{ via: "logcli", gap: "403" }] }, 2000);
+  assert.ok(readEvidenceFile(file).logs["w2"].gap, "a sweep with no content leaves the gap standing");
 });
 
 test("fold: real contributed evidence beats a base-recorded gap", () => {
-  setGithubEvidence(file, "org/a", { gap: "gh auth failed" }, 1000);
-  contributeGithubEvidence(file, "w1", "org/a", {
+  setCodeEvidence(file, "org/a", { gap: "gh auth failed" }, 1000);
+  contributeCodeEvidence(file, "w1", "org/a", {
     gap: null, deployState: { block: "reachable after all" },
   }, 2000);
-  const entry = readEvidenceFile(file).github["org/a"];
+  const entry = readEvidenceFile(file).code["org/a"];
   assert.equal(entry.gap, null);
   assert.equal(entry.deployState.block, "reachable after all");
 });
 
 test("fold: a contributed gap does NOT overwrite real base evidence", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "real base evidence" } }, 1000);
-  contributeGithubEvidence(file, "w1", "org/a", { deployState: { gap: "my call failed" } }, 2000);
-  assert.equal(readEvidenceFile(file).github["org/a"].deployState.block, "real base evidence");
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "real base evidence" } }, 1000);
+  contributeCodeEvidence(file, "w1", "org/a", { deployState: { gap: "my call failed" } }, 2000);
+  assert.equal(readEvidenceFile(file).code["org/a"].deployState.block, "real base evidence");
 });
 
 test("fold: same PR number contributed later wins (deeper finding replaces placeholder)", () => {
-  setGithubEvidence(file, "org/a", {
+  setCodeEvidence(file, "org/a", {
     gap: null, prsInWindow: [{ pr: "#9011", verdict: "unassessed", files: null }],
   }, 1000);
-  contributeGithubEvidence(file, "w1", "org/a", {
+  contributeCodeEvidence(file, "w1", "org/a", {
     prsInWindow: [{ pr: "#9011", verdict: "supported", files: ["Foo.java"] }],
   }, 2000);
-  const prs = readEvidenceFile(file).github["org/a"].prsInWindow;
+  const prs = readEvidenceFile(file).code["org/a"].prsInWindow;
   assert.equal(prs.length, 1);
   assert.equal(prs[0].verdict, "supported");
 });
 
 test("fold: contributing a repo the pre-fetch never named", () => {
-  contributeGithubEvidence(file, "w1", "org/brand-new", {
+  contributeCodeEvidence(file, "w1", "org/brand-new", {
     prsInWindow: [{ pr: "#8912", verdict: "supported" }],
   }, 1000);
-  assert.equal(readEvidenceFile(file).github["org/brand-new"].prsInWindow[0].pr, "#8912");
+  assert.equal(readEvidenceFile(file).code["org/brand-new"].prsInWindow[0].pr, "#8912");
 });
 
 test("fold: clusterIds union across base and multiple shards", () => {
-  setLogsEvidence(file, "w1", { gap: null, clusterIds: ["c-A"], kubectlSweep: { block: "x" } }, 1000);
+  setLogsEvidence(file, "w1", { gap: null, clusterIds: ["c-A"], sweeps: [{ via: "logcli", block: "x" }] }, 1000);
   contributeLogsEvidence(file, "w1writer", "w1", { clusterIds: ["c-B"] }, 2000);
   contributeLogsEvidence(file, "w2writer", "w1", { clusterIds: ["c-C"] }, 2000);
   assert.deepEqual(readEvidenceFile(file).logs["w1"].clusterIds.sort(), ["c-A", "c-B", "c-C"]);
 });
 
 test("fold: a corrupt shard is skipped, not fatal", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "base" } }, 1000);
-  contributeGithubEvidence(file, "good", "org/a", { prsInWindow: [{ pr: "#2" }] }, 2000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "base" } }, 1000);
+  contributeCodeEvidence(file, "good", "org/a", { prsInWindow: [{ pr: "#2" }] }, 2000);
   writeFileSync(contribPathFor(file, "corrupt"), "{not json", "utf8");
   const doc = readEvidenceFile(file); // must not throw
-  assert.equal(doc.github["org/a"].prsInWindow[0].pr, "#2");
+  assert.equal(doc.code["org/a"].prsInWindow[0].pr, "#2");
 });
 
 test("recomputeCoverage counts a coordinator-filled gap as covered", () => {
-  setGithubEvidence(file, "org/a", { gap: "unreachable at pre-fetch time" }, 1000);
+  setCodeEvidence(file, "org/a", { gap: "unreachable at pre-fetch time" }, 1000);
   let cov = recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 2000);
   assert.deepEqual(cov.reposGapped, ["org/a"]);
-  contributeGithubEvidence(file, "w1", "org/a", { gap: null, deployState: { block: "got it" } }, 3000);
+  contributeCodeEvidence(file, "w1", "org/a", { gap: null, deployState: { block: "got it" } }, 3000);
   cov = recomputeCoverage(file, { repos: ["org/a"], workloads: [] }, 4000);
   assert.deepEqual(cov.reposCovered, ["org/a"]);
   assert.deepEqual(cov.reposGapped, []);
@@ -247,8 +277,8 @@ test("recomputeCoverage counts a coordinator-filled gap as covered", () => {
 // a file asserted 0 PRs for a repo that actually had 21, which would have let
 // a coordinator conclude "no culprit PR" with false confidence.
 test("empty prsInWindow is NOT coverage unless the search is recorded", () => {
-  setGithubEvidence(file, "org/never-searched", { gap: null, deployState: { block: "d" }, prsInWindow: [] }, 1000);
-  setGithubEvidence(file, "org/searched-empty", { gap: null, deployState: { block: "d" }, prsInWindow: [], prsSearched: true }, 1000);
+  setCodeEvidence(file, "org/never-searched", { gap: null, deployState: { block: "d" }, prsInWindow: [] }, 1000);
+  setCodeEvidence(file, "org/searched-empty", { gap: null, deployState: { block: "d" }, prsInWindow: [], prsSearched: true }, 1000);
   const cov = recomputeCoverage(file, { repos: ["org/never-searched", "org/searched-empty"], workloads: [] }, 2000);
   // Both repos ARE covered (each has deploy state) — but only one has a PR
   // list safe to read as "no PRs in window".
@@ -257,9 +287,9 @@ test("empty prsInWindow is NOT coverage unless the search is recorded", () => {
 });
 
 test("hasTrustworthyPrList distinguishes searched-empty from never-populated", () => {
-  setGithubEvidence(file, "org/a", { gap: null, prsInWindow: [] }, 1000);
-  setGithubEvidence(file, "org/b", { gap: null, prsInWindow: [], prsSearched: true }, 1000);
-  setGithubEvidence(file, "org/c", { gap: null, prsInWindow: [{ pr: "#1" }] }, 1000);
+  setCodeEvidence(file, "org/a", { gap: null, prsInWindow: [] }, 1000);
+  setCodeEvidence(file, "org/b", { gap: null, prsInWindow: [], prsSearched: true }, 1000);
+  setCodeEvidence(file, "org/c", { gap: null, prsInWindow: [{ pr: "#1" }] }, 1000);
   const doc = readEvidenceFile(file);
   assert.equal(hasTrustworthyPrList(doc, "org/a"), false);
   assert.equal(hasTrustworthyPrList(doc, "org/b"), true);
@@ -267,26 +297,26 @@ test("hasTrustworthyPrList distinguishes searched-empty from never-populated", (
 });
 
 test("contributing a PR list records that the search actually ran", () => {
-  contributeGithubEvidence(file, "w1", "org/a", { prsInWindow: [] }, 1000);
+  contributeCodeEvidence(file, "w1", "org/a", { prsInWindow: [] }, 1000);
   assert.equal(hasTrustworthyPrList(readEvidenceFile(file), "org/a"), true);
 });
 
 test("prsSearched is sticky — a later non-searching contributor cannot downgrade it", () => {
-  setGithubEvidence(file, "org/a", { gap: null, prsInWindow: [{ pr: "#1" }], prsSearched: true }, 1000);
-  contributeGithubEvidence(file, "w1", "org/a", { deployState: { block: "just deploy info" } }, 2000);
-  assert.equal(readEvidenceFile(file).github["org/a"].prsSearched, true);
+  setCodeEvidence(file, "org/a", { gap: null, prsInWindow: [{ pr: "#1" }], prsSearched: true }, 1000);
+  contributeCodeEvidence(file, "w1", "org/a", { deployState: { block: "just deploy info" } }, 2000);
+  assert.equal(readEvidenceFile(file).code["org/a"].prsSearched, true);
 });
 
 test("a pre-existing loose-mode file is tightened to 0600 on the next write", () => {
   writeEvidenceFile(file, emptyEvidenceFile("b", 0));
   chmodSync(file, 0o644); // simulate a file left by a pre-hardening run
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "x" } }, 1000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "x" } }, 1000);
   assert.equal(statSync(file).mode & 0o777, 0o600);
 });
 
 test("evidence file and contribution shards are owner-only (0600)", () => {
-  setGithubEvidence(file, "org/a", { gap: null, deployState: { block: "private PR detail" } }, 1000);
-  contributeGithubEvidence(file, "w1", "org/a", { prsInWindow: [{ pr: "#1" }] }, 2000);
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { block: "private PR detail" } }, 1000);
+  contributeCodeEvidence(file, "w1", "org/a", { prsInWindow: [{ pr: "#1" }] }, 2000);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(contribPathFor(file, "w1")).mode & 0o777, 0o600);
 });
@@ -342,16 +372,16 @@ test("stalenessOf refuses to call a future timestamp fresh", async () => {
 // got an empty map — silently downgrading every local read to a network call.
 test("deployShas prefers the explicit field and falls back to the summary", async () => {
   const dir = mkdtempSync(join(tmpdir(), "rca-pins-"));
-  const { evidencePathFor, initEvidenceFile, setGithubEvidence, deployShas } =
+  const { evidencePathFor, initEvidenceFile, setCodeEvidence, deployShas } =
     await import("../lib/evidence-file.mjs");
   const p = evidencePathFor("b-pins", dir);
   initEvidenceFile(p, "b-pins", 1);
 
-  setGithubEvidence(p, "org/explicit", { deployState: { sha: "abc1234", summary: "" } }, 2);
-  setGithubEvidence(p, "org/prose", {
+  setCodeEvidence(p, "org/explicit", { deployState: { sha: "abc1234", summary: "" } }, 2);
+  setCodeEvidence(p, "org/prose", {
     deployState: { summary: "Branch tip on main at build start = cd88535b (deploy proxy). Redeploy stamped 260731135020Z." },
   }, 3);
-  setGithubEvidence(p, "org/none", { deployState: { summary: "no sha here" } }, 4);
+  setCodeEvidence(p, "org/none", { deployState: { summary: "no sha here" } }, 4);
 
   const { pins, source } = deployShas(p);
   assert.equal(pins["org/explicit"], "abc1234");
@@ -373,16 +403,16 @@ test("deployShas prefers the explicit field and falls back to the summary", asyn
 // collided on a single dedupe key.
 test("numberless PRs do not collapse into one another", async () => {
   const dir = mkdtempSync(join(tmpdir(), "rca-prkey-"));
-  const { evidencePathFor, initEvidenceFile, contributeGithubEvidence, readEvidenceFile } =
+  const { evidencePathFor, initEvidenceFile, contributeCodeEvidence, readEvidenceFile } =
     await import("../lib/evidence-file.mjs");
   const p = evidencePathFor("b-prkey", dir);
   initEvidenceFile(p, "b-prkey", 1);
 
-  contributeGithubEvidence(p, "w1", "org/r", {
+  contributeCodeEvidence(p, "w1", "org/r", {
     prsSearched: true,
     prsInWindow: [{ title: "first" }, { title: "second" }, { title: "third" }],
   }, 2);
-  const got = readEvidenceFile(p).github["org/r"].prsInWindow;
+  const got = readEvidenceFile(p).code["org/r"].prsInWindow;
   assert.equal(got.length, 3, "three distinct unnumbered PRs must all survive");
   assert.deepEqual(got.map((x) => x.title), ["first", "second", "third"]);
 
@@ -391,15 +421,15 @@ test("numberless PRs do not collapse into one another", async () => {
 
 test("numbered PRs still merge across writers, string or numeric", async () => {
   const dir = mkdtempSync(join(tmpdir(), "rca-prnum-"));
-  const { evidencePathFor, initEvidenceFile, contributeGithubEvidence, readEvidenceFile } =
+  const { evidencePathFor, initEvidenceFile, contributeCodeEvidence, readEvidenceFile } =
     await import("../lib/evidence-file.mjs");
   const p = evidencePathFor("b-prnum", dir);
   initEvidenceFile(p, "b-prnum", 1);
 
-  contributeGithubEvidence(p, "w1", "org/r", { prsInWindow: [{ pr: "#10", title: "a" }] }, 2);
-  contributeGithubEvidence(p, "w2", "org/r", { prsInWindow: [{ pr: 10, title: "a-updated" }] }, 3);
+  contributeCodeEvidence(p, "w1", "org/r", { prsInWindow: [{ pr: "#10", title: "a" }] }, 2);
+  contributeCodeEvidence(p, "w2", "org/r", { prsInWindow: [{ pr: 10, title: "a-updated" }] }, 3);
 
-  const got = readEvidenceFile(p).github["org/r"].prsInWindow;
+  const got = readEvidenceFile(p).code["org/r"].prsInWindow;
   assert.equal(got.length, 1, "'#10' and 10 are the same PR");
   assert.equal(got[0].title, "a-updated", "later writer wins");
 
@@ -411,12 +441,12 @@ test("numbered PRs still merge across writers, string or numeric", async () => {
 // contribution shard. The file now announces that in its own first bytes.
 test("a raw read of the base file announces that it is partial", async () => {
   const dir = mkdtempSync(join(tmpdir(), "rca-warn-"));
-  const { evidencePathFor, initEvidenceFile, setGithubEvidence, readEvidenceFile, readBaseFile } =
+  const { evidencePathFor, initEvidenceFile, setCodeEvidence, readEvidenceFile, readBaseFile } =
     await import("../lib/evidence-file.mjs");
   const { readFileSync } = await import("node:fs");
   const p = evidencePathFor("b-warn", dir);
   initEvidenceFile(p, "b-warn", 1);
-  setGithubEvidence(p, "org/r", { deployState: { sha: "abc1234" } }, 2);
+  setCodeEvidence(p, "org/r", { deployState: { sha: "abc1234" } }, 2);
 
   const raw = readFileSync(p, "utf8");
   const head = raw.slice(0, 400);
@@ -430,18 +460,18 @@ test("a raw read of the base file announces that it is partial", async () => {
     assert.equal(doc._WHY, undefined);
   }
   // And the real content still round-trips.
-  assert.equal(readEvidenceFile(p).github["org/r"].deployState.sha, "abc1234");
+  assert.equal(readEvidenceFile(p).code["org/r"].deployState.sha, "abc1234");
 
   rmSync(dir, { recursive: true, force: true });
 });
 
 test("markers survive repeated writes without accumulating", async () => {
   const dir = mkdtempSync(join(tmpdir(), "rca-warn2-"));
-  const { evidencePathFor, initEvidenceFile, setGithubEvidence } = await import("../lib/evidence-file.mjs");
+  const { evidencePathFor, initEvidenceFile, setCodeEvidence } = await import("../lib/evidence-file.mjs");
   const { readFileSync } = await import("node:fs");
   const p = evidencePathFor("b-w2", dir);
   initEvidenceFile(p, "b-w2", 1);
-  for (let i = 0; i < 3; i++) setGithubEvidence(p, `org/r${i}`, { deployState: { sha: "abc1234" } }, i + 2);
+  for (let i = 0; i < 3; i++) setCodeEvidence(p, `org/r${i}`, { deployState: { sha: "abc1234" } }, i + 2);
 
   const raw = readFileSync(p, "utf8");
   assert.equal(raw.split("_READ_ME_FIRST").length - 1, 1, "exactly one marker, not one per write");

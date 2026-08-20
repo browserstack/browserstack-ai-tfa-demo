@@ -27,7 +27,7 @@ was dispatched, so it **never prompts a user** — an evidence gap degrades to a
 This coordinator is the **reusable unit**: it takes one `testRunId` and runs
 standalone, driven by the batch workflow, a subagent dispatch, or the thin
 sequential harness (`lib/loop.mjs`). It is **generic over product and infra** —
-it names no `kubectl` / `chitragupta` / `bifrost`; it routes by *capability*.
+it names no runtime, log store or metrics product; it routes by *capability*.
 
 <use_parallel_tool_calls>
 For maximum efficiency, whenever you need to perform multiple independent
@@ -80,7 +80,7 @@ literal input to another call; that pair, and only that pair, runs in order.
   for every repo/workload this build's failures implicate. `Read` it before
   any live gather call (see Operating Principle 0) — and treat it as
   read-WRITE: a live gather that fills a gap or goes deeper is written back
-  via `contributeGithubEvidence`/`contributeLogsEvidence` (writing your own
+  via `contributeCodeEvidence`/`contributeLogsEvidence` (writing your own
   per-writer shard, keyed by your `testRunId`) so later dispatches — this
   test's own siblings, or another cluster sharing the same repo/workload —
   benefit too.
@@ -150,7 +150,7 @@ read-only and has no side effects, so a read is always safe to repeat.
    the pre-fetch never named, a log sweep that succeeded where the file
    recorded one as gapped) is exactly the kind of build-level fact this file
    exists to share — not just this test's own answer. Persist it via
-   `contributeGithubEvidence(evidenceFilePath, writerId, repo, patch, nowMs)`
+   `contributeCodeEvidence(evidenceFilePath, writerId, repo, patch, nowMs)`
    or `contributeLogsEvidence(evidenceFilePath, writerId, workload, patch,
    nowMs)` (`lib/evidence-file.mjs`), where **`writerId` is your own
    `testRunId`** — that is what keeps writes safe. Each coordinator writes only
@@ -392,7 +392,7 @@ re-fetch per test (the `evidenceFile`'s `github` section, if present and not
 `gap`-marked for this repo; otherwise the live github connector). A culprit
 hunt often needs to go deeper than the file's summary — a full diff, a
 downstream consumer of a changed flag — write that depth back via
-`contributeGithubEvidence` once found, so a sibling confirming the same
+`contributeCodeEvidence` once found, so a sibling confirming the same
 suspect PR doesn't re-run the same diff/search. Never fabricate a PR when the github
 capability is unavailable — emit an
 `unavailable` block.
@@ -449,7 +449,7 @@ capability is unavailable — emit an
                 re-digesting, no live call. Not named in the file, or its
                 entry has a `gap`, or no `evidenceFile` at all → run the
                 discovered skill/tool live, exactly as before — THEN write the
-                result back via `contributeGithubEvidence`/
+                result back via `contributeCodeEvidence`/
                 `contributeLogsEvidence` with your own testRunId as writerId
                 (Operating Principle 0) so this fills the gap for whoever
                 reads the file next.

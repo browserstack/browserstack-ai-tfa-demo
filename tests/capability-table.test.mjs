@@ -34,7 +34,7 @@ function stub({ routing, capabilities } = {}) {
   return {
     evidenceRouting: routing ?? {
       test_logs: { owner: "tfa", skip: true },
-      product_code: { capability: "github", discoveryHints: ["gh"] },
+      product_code: { capability: "github" },
     },
     capabilities: capabilities ?? {
       github: {

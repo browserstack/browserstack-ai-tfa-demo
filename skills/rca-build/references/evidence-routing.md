@@ -10,8 +10,8 @@ coordinator never seeds logs and never fulfills a `test_logs` ask. Every other
 `evidenceType` routes to a capability that is gathered via **whatever skill/tool
 the client actually has** for it (discovered **and validated** once into the
 capability manifest — see `SKILL.md` § Gate Part A). There are **no `kubectl` /
-`chitragupta` /
-`bifrost` literals here** — that is the whole point of going generic.
+product literals here** — no runtime, log store or metrics vendor. That is the
+whole point of routing by capability.
 
 **Contents:** [How asks are processed](#how-a-turns-asks-are-processed) ·
 [Routing table](#routing-table-capability-not-tool) ·
@@ -59,7 +59,7 @@ An ask that cannot be fulfilled is **never silently dropped** — it becomes a
 | `deploy` | `github` | deploy timeline via the GitHub capability (releases/tags + deploy record) |
 | `ci` | `github` | CI config + run history via the GitHub capability |
 | `infra` / `k8s` | `infra` | **whatever runtime connector the user has** — k8s/EKS, ECS, docker, Nomad, plain VMs, PM2, … Discovered and probed at the gate, NEVER assumed to be Kubernetes; the manifest records the kind (`via`) |
-| `kibana` | `logs` | whatever log-search skill the client has (kibana or other) |
+| `kibana` | `logs` | whatever log store the client has — the key is TFA's wire literal, not a product requirement |
 | `metrics` | `metrics` | whatever metrics skill the client has |
 | `other` | `other` | best-effort by ask text; else a `not-found` block |
 

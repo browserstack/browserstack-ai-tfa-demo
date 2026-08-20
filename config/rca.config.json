@@ -1,5 +1,5 @@
 {
-  "$comment": "Central config for the /rca-build RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals \u2014 connectors are discovered and probe-validated at the gate into the capability manifest (see skills/rca-build/references/evidence-routing.md). No reportFile: the plugin never writes a local RCA report \u2014 the full report lives on the Test Observability UI (triggerRcaReport).",
+  "$comment": "Central config for the /rca-build RCA harness. Product and infra values live here rather than in code. The `capabilities` block DESCRIBES capabilities and never instructs: no probe commands, because a command string arriving as data with customer scope interpolated in required a whole execution gate and produced an injection escape anyway. Vendor names appear ONLY as `seedHints` \u2014 non-authoritative hints for the common cases, which an agent assignment always overrides. That distinction is the point: a hint list can never know the customer's stack, and one that pretended to told New Relic users to install promtool. No reportFile: the plugin never writes a local RCA report \u2014 the full report lives on the Test Observability UI (triggerRcaReport).",
   "$concurrencyComment": "Max coordinator subagents run in parallel during Step 5 fan-out. HONORED LITERALLY on the default path (direct Agent-tool dispatch of ai-tfa-coordinator subagents \u2014 one message, up to `concurrency` tool-use blocks per batch) and by the sequential harness (lib/loop.mjs). Only a SOFT target on the opt-in Workflow-tool path (workflows/rca-batch.mjs), which the Workflow runtime hard-caps at min(16, cpu cores - 2) regardless of this value \u2014 that cap is architectural and cannot be raised from this repo. See SKILL.md Step 5.",
   "concurrency": 20,
   "turnCap": 6,
@@ -23,46 +23,30 @@
       "skip": true
     },
     "product_code": {
-      "capability": "github",
-      "discoveryHints": [
-        "github-mcp",
-        "gh"
-      ]
+      "capability": "github"
     },
     "deploy": {
-      "capability": "github",
-      "discoveryHints": [
-        "github-mcp",
-        "gh"
-      ]
+      "capability": "github"
     },
     "ci": {
-      "capability": "github",
-      "discoveryHints": [
-        "github-mcp",
-        "gh"
-      ]
+      "capability": "github"
     },
     "infra": {
-      "capability": "infra",
-      "discoveryHints": []
+      "capability": "infra"
     },
     "k8s": {
-      "capability": "infra",
-      "discoveryHints": []
+      "capability": "infra"
     },
     "kibana": {
-      "capability": "logs",
-      "discoveryHints": []
+      "capability": "logs"
     },
     "metrics": {
-      "capability": "metrics",
-      "discoveryHints": []
+      "capability": "metrics"
     },
     "other": {
-      "capability": "other",
-      "discoveryHints": []
-    }
+      "capability": "other"
+    },
+    "$comment": "Inbound evidenceType -> capability. The KEYS are the TFA agent's wire vocabulary, not ours: `k8s` and `kibana` arrive as those literals and route to the generic `infra` and `logs` capabilities, which is exactly the indirection this map exists for. Several evidenceTypes share one capability (product_code, deploy and ci all route to github), which is why the capability table is a sibling block rather than rows in here."
   },
   "$capabilitiesComment": "The capability table. Keyed by CAPABILITY, joined to evidenceRouting by name \u2014 a sibling block, not rows inside evidenceRouting, because buildManifest enumerates Object.values(evidenceRouting) and a capability-keyed row placed there becomes a phantom manifest entry. Rows DESCRIBE, they do not instruct. There are no probe commands here: a command string arriving as data with a customer value interpolated into it required a command-execution gate, an interpolation guard and a per-executable probe table, and produced a shell-injection escape, an attached-flag bypass and a write-tool dispatch on the MCP route regardless. It was also never generic \u2014 a fingerprint list only knows the vendors someone wrote down, so a New Relic customer matched nothing and was told to install promtool. `intent` is what the agent reasons from instead; `seedHints` are hints for the common cases and are NEVER authoritative \u2014 an agent assignment always wins.",
   "$probeComment": "Probes are validated by isProbeRunnable() in lib/tool-cache.mjs, NOT by isRunnable(). isRunnable exists to judge cacheability: it allows pipelines into ALLOWED_FILTER (which includes python3, awk, sed) and restricts leaders to gh/kubectl/curl/git \u2014 so it both permits `curl X | python3` and refuses `docker ps`. Probe rules instead: one command, no pipeline, no operators, no redirects, no mutation, and a leader present in BOTH the global catalog and this row's own fingerprint executables. Placeholders are brace-form {field}; an unquoted < is read as a file redirect and rejected.",

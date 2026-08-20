@@ -36,7 +36,7 @@ const folded = readEvidenceFile(filePath);
 }
 
 if (mode === "--repo") {
-  console.log(JSON.stringify(folded.github?.[arg] ?? null, null, 2));
+  console.log(JSON.stringify(folded.code?.[arg] ?? null, null, 2));
   process.exit(0);
 }
 
@@ -47,9 +47,9 @@ if (mode === "--repo") {
 // and getting there previously required piping --repo's raw JSON through an
 // ad-hoc node one-liner.
 if (mode === "--prs") {
-  const repos = arg ? [arg] : Object.keys(folded.github ?? {});
+  const repos = arg ? [arg] : Object.keys(folded.code ?? {});
   for (const repo of repos) {
-    const e = folded.github?.[repo];
+    const e = folded.code?.[repo];
     if (!e) { console.log(`${repo}: (not in evidence file)`); continue; }
     const prs = e.prsInWindow ?? [];
     const trust = e.prsSearched === true || prs.length > 0 ? "" : "  [LIST NOT TRUSTWORTHY — never searched]";
@@ -76,11 +76,11 @@ const dir = contribDirFor(filePath);
 const shards = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
 
 console.log(`build            : ${folded.buildId}`);
-console.log(`base repos       : ${Object.keys(base.github ?? {}).length}`);
+console.log(`base repos       : ${Object.keys(base.code ?? {}).length}`);
 console.log(`contribution shards: ${shards.length} (${shards.map((s) => s.replace(".json", "")).join(", ") || "none"})`);
 console.log("");
 console.log("github (folded):");
-for (const [repo, e] of Object.entries(folded.github ?? {})) {
+for (const [repo, e] of Object.entries(folded.code ?? {})) {
   const prs = (e.prsInWindow ?? []).length;
   const trust = hasTrustworthyPrList(folded, repo) ? "trustworthy" : "PR LIST NOT TRUSTWORTHY (never searched)";
   console.log(`  ${repo}: ${prs} PR(s), deployState=${e.deployState ? "yes" : "no"}, gap=${e.gap ?? "none"} — ${trust}`);
@@ -88,9 +88,13 @@ for (const [repo, e] of Object.entries(folded.github ?? {})) {
 console.log("");
 console.log("logs (folded):");
 for (const [wl, e] of Object.entries(folded.logs ?? {})) {
-  const k = e.kubectlSweep?.gap ? "gapped" : e.kubectlSweep ? "present" : "absent";
-  const v = e.victorialogs?.gap ? "gapped" : e.victorialogs ? "present" : "absent";
-  console.log(`  ${wl}: kubectl=${k}, victorialogs=${v}, gap=${e.gap ?? "none"}`);
+  // One line per source actually used. This printed `kubectl=` and `victorialogs=`
+  // unconditionally — two product names shown to every customer, including the
+  // ones running neither, whose output was two `absent` fields forever.
+  const sweeps = (e.sweeps ?? []).length
+    ? (e.sweeps ?? []).map((s) => `${s.via}=${s.gap ? "gapped" : s.block ? "present" : "absent"}`).join(", ")
+    : "no sweeps recorded";
+  console.log(`  ${wl}: ${sweeps}, gap=${e.gap ?? "none"}`);
 }
 if (folded.coverage?.reposWithUntrustedPrList?.length) {
   console.log("");

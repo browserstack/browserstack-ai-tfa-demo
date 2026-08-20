@@ -5,10 +5,10 @@ import { routeAsk, routeAsks, orderAsks, TEST_LOGS } from "../lib/routing.mjs";
 const CONFIG = {
   evidenceRouting: {
     test_logs: { owner: "tfa", skip: true },
-    product_code: { capability: "github", discoveryHints: ["github-mcp", "gh"] },
-    infra: { capability: "infra", discoveryHints: [] },
-    k8s: { capability: "infra", discoveryHints: [] },
-    other: { capability: "other", discoveryHints: [] },
+    product_code: { capability: "github" },
+    infra: { capability: "infra" },
+    k8s: { capability: "infra" },
+    other: { capability: "other" },
   },
 };
 

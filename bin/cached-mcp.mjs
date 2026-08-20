@@ -16,7 +16,7 @@
 // one cheap local read, so it wins on latency and on tokens whenever the
 // cached payload is a digest smaller than the raw response. A miss costs two
 // extra calls (the probe + the store), so this is worth it for **expensive,
-// broadly-reusable, build-level queries** — a VictoriaLogs sweep, a
+// broadly-reusable, build-level queries** — a the log store sweep, a
 // `listTestIds`, a `getFailureLogs` several coordinators would each re-run —
 // and NOT worth it for a one-off lookup only this test will ever need.
 //

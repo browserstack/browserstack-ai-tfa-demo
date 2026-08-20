@@ -97,9 +97,15 @@ Build-level evidence, gathered once, read by every coordinator.
 ```
 evidencePathFor(buildId, stateDir="")     initEvidenceFile(path, buildId, nowMs)
 setBaseline(path, baseline, suspectWindow, nowMs)   setLocalRepos(path, repos, nowMs)
-setGithubEvidence(path, repo, entry, nowMs)         setLogsEvidence(path, workload, entry, nowMs)
-contributeGithubEvidence(path, writerId, repo, patch, nowMs)   ← coordinators write HERE
+setCodeEvidence(path, repo, entry, nowMs)           setLogsEvidence(path, workload, entry, nowMs)
+    code entry: {deployState:{block,gap}, prsInWindow:[...], prsSearched, gap}
+    logs entry: {clusterIds, sweeps:[{via, block, gap}], gap}
+        one sweep per log source ACTUALLY USED, each naming the tool or server it
+        came from. There is no fixed slot per vendor: a team on three log sources
+        records three, a team on one records one.
+contributeCodeEvidence(path, writerId, repo, patch, nowMs)     ← coordinators write HERE
 contributeLogsEvidence(path, writerId, workload, patch, nowMs)
+    a sweep with no `via` is dropped — an unattributable blob proves nothing
 readEvidenceFile(path)  folds base + shards      readBaseFile(path)  base ONLY
 deployShas(pathOrDoc) → {pins:{repo:sha}, source}
 recomputeCoverage(path, {repos, workloads}, nowMs)

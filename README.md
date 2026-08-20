@@ -27,9 +27,10 @@ claude --plugin-dir ./
 ```
 
 The plugin auto-configures on load: the `bstack` MCP server (from `.mcp.json`),
-the `rca-build` skill, and the `ai-tfa-coordinator` agent are all discovered by
-convention. (There is deliberately **no** command file named `rca-build` — a
-command and skill sharing a name collide and the skill body fails to load.)
+the `rca-setup` and `rca-build` skills, and the `ai-tfa-coordinator` agent are all
+discovered by convention. (There is deliberately **no** command file named after
+either skill — a command and skill sharing a name collide and the skill body fails
+to load. That is also why anything that "prints the setup command" names a skill.)
 
 ### Cursor & Codex
 
@@ -43,13 +44,60 @@ discovery, deeplink) is in **[INTEGRATION.md](INTEGRATION.md)**.
 
 ## Usage
 
+Two skills. The first runs **once per repo**; the second runs per red build.
+
+### 1. Set up, once
+
+```
+/rca-setup
+```
+
+Discovers what your machine already has — `gh`, `kubectl`, MCP servers, repo
+fingerprints — then asks only for the scope it cannot discover: which repos are
+yours, which subpaths inside a monorepo, which branch regression runs against,
+which namespace, which log index. Every answer is verified with a live read
+before it is kept.
+
+Then **commit and push the context it writes**:
+
+```bash
+git add .rca-context.json && git commit -m "chore: add RCA setup context"
+```
+
+This step is the point of the file. It holds no credential values — only
+environment-variable *names* — so it is safe to review in a PR, and a teammate who
+clones the repo is asked for credentials and nothing else. Skip the commit and
+every teammate does the whole interview again.
+
+**GitHub is mandatory.** `gh` or a GitHub MCP server, and nothing else — without
+the code changes and the PRs merged into the branch under test there is no culprit
+PR to name, which is the entire output. Setup says so plainly and stops. Everything
+else (app logs, pipeline/CI, infra runtime, metrics/APM) is optional and degrades
+to a recorded gap that travels into the report.
+
+Interrupted, or blocked on GitHub? Setup writes a **partial** context, so coming
+back costs a re-verify rather than the whole interview.
+
+**Headless (`claude -p`) does not interview.** It loads and validates an existing
+context and fails fast when there is none — there is no synchronous human to
+answer. A first context has to be produced interactively, on a developer machine,
+and committed. A CI-only consumer cannot bootstrap one.
+
+### 2. Run, per red build
+
 ```
 /rca-build <build-id>
 /rca-build build_id=<id> https://github.com/org/repo/pull/123
 ```
 
 Args: a build id (bare, `build_id=`, or a dashboard link) plus optional PR URLs
-/ repo hints.
+/ repo hints. Copy the command straight from the AI Agents Report — the build id
+is already in it.
+
+The run refuses to start in three cases, before any analysis: no context is
+resolvable, the context is present but unreadable (a merge conflict or a schema
+mismatch — reported as *that*, never as "no context"), or GitHub is not verified in
+it. Each names the file and the fix.
 
 ## The single gate
 
@@ -62,11 +110,13 @@ The run has exactly **one gate** before execution, with two parts:
    recorded and declared to the TFA agent ("I don't have logs/metrics access") —
    never a blocker.
 2. **Requirements** — intake fields (product repo, automation repo, branches,
-   PRs in play, build id) are resolved **by assumption** wherever possible
-   (invocation args, `gh repo view`, current branch). At most **one**
-   consolidated question may be asked at gate close, and only for genuinely
-   non-assumable, load-bearing fields. Headless (`claude -p`) never asks: a
-   missing build id fails fast; everything else is a recorded gap.
+   PRs in play, build id) are resolved in a fixed precedence: **build metadata →
+   invocation args → the persisted `rca-setup` context → connector intake defaults
+   → inference**. A field the context verified is used as given and is never
+   re-asked, which is what makes the repeat loop quiet. At most **one**
+   consolidated question may be asked at gate close, and only for a field no tier
+   supplies. Headless (`claude -p`) never asks: a missing build id fails fast;
+   everything else is a recorded gap.
 
 **After the gate closes, the run never asks you anything again** — RCA
 execution is fully autonomous. Evidence gaps degrade to "unavailable" back to

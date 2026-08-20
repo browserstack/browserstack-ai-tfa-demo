@@ -513,66 +513,39 @@ resolved or recorded no `root_cause` — **do not dispatch that sibling yet**.
 Never hand-roll the seed: without this guard, siblings degenerate into full
 independent investigations at representative-level cost.
 
-Drive the cluster work-list, **`concurrency` (default 20) at a time**:
-representatives deep, siblings one-turn-confirm. Eagerly persist to the CSV/WAL
-(claim → heartbeat → flip) so the run is resumable.
+Drive the cluster work-list **`concurrency` at a time** — read `concurrency` from
+`config/rca.config.json`, never hardcode a number: representatives deep, siblings
+one-turn-confirm. Eagerly persist to the CSV/WAL (claim → heartbeat → flip) so the
+run is resumable. Keep it a **rolling queue, not two rigid phases**: as each batch
+returns, refill up to `concurrency` by mixing freed representatives' siblings (via
+`siblingPreSeed`) with not-yet-dispatched representatives from other clusters —
+never "all representatives, then all siblings," which idles a fast cluster's
+siblings behind an unrelated slow representative.
 
-**"Per cluster, not global" is a rolling work-queue, not two rigid phases.**
-Do NOT dispatch "all representatives first, then all siblings" as two fixed
-mega-batches — that reintroduces a global-ish wait: any cluster's siblings
-would sit idle until every representative in the current batch lands, not just
-their own. Instead, whenever a batch of dispatches returns, immediately refill
-the next batch by mixing (a) siblings of whichever representatives just
-resolved (via `siblingPreSeed`) with (b) any not-yet-dispatched representatives
-from other clusters, up to `concurrency` slots — so a fast cluster's siblings
-enter the very next batch instead of waiting out an unrelated slow
-representative.
+Dispatch path, in preference order:
 
-Path-specific behavior:
-- **Opt-in `workflows/rca-batch.mjs`** achieves this structurally:
-  `pipeline(clusters, repStage, siblingStage)` has NO barrier between stages —
-  a cluster's siblings start the instant ITS OWN representative resolves.
-- **Default direct Agent-tool dispatch** streams per-BATCH (a turn's parallel
-  tool calls are a synchronization point). The rolling-refill discipline above
-  keeps the batch-local wait from becoming a build-wide one. **When cluster
-  count exceeds `concurrency`, or when the Workflow tool is available, prefer
-  `workflows/rca-batch.mjs`** — it is the only path with a true per-cluster
-  guarantee.
-
-> **Concurrency comes from `config/rca.config.json` — always read it from
-> there, never hardcode.** The default path (direct Agent-tool dispatch) honors
-> the JSON value literally (batches of `concurrency`, one message per batch).
-> The opt-in `workflows/rca-batch.mjs` path caps it lower (see that bullet
-> below); if you need literal fan-out, use the default path.
-
-- **Default (all hosts, including Claude Code) → direct Agent-tool dispatch.**
-  Read `concurrency` from `config/rca.config.json` and dispatch
-  `tfa-rca:ai-tfa-coordinator` subagents in batches of that size (one message,
-  up to `concurrency` tool-use blocks per batch), refilling each next batch per
-  the rolling work-queue discipline above — never two rigid all-reps /
-  all-siblings phases. Outside the Workflow runtime, so the JSON value is
-  honored literally; but it streams per-BATCH, not per-cluster — prefer
-  `workflows/rca-batch.mjs` whenever cluster count exceeds `concurrency` and
-  the Workflow tool is available.
-
-  **This path has no code enforcing the Step 4b handoff — you are the
-  enforcement.** **Before dispatching ANY representative, call
-  `readTurn1(turn1PathFor(buildId, stateDir), testRunId)` and fold the result
-  into the prompt using this exact mapping — the two are distinct coordinator
-  inputs (`agents/ai-tfa-coordinator.md`), never interchangeable:**
-  `PENDING` → `resume: {threadId, turnId}`; `NEEDS_INFO` → `turn1_result:
-  {threadId, asks}`; no registry entry with the CSV row already `resolved` →
-  skip the dispatch entirely, use the CSV row's result directly. Do NOT fold a
-  `NEEDS_INFO` result into a `resume` field, or vice versa — a coordinator
-  reads these as two different shapes and a swapped one is silently wrong, not
-  rejected.
-- Opt-in `workflows/rca-batch.mjs` (Claude Code only) → use only when the
-  Workflow tool's structured `pipeline()`/`parallel()` orchestration,
-  `resumeFromRunId` resumability, or progress UI is worth the concurrency
-  trade.
-- Hosts without the Workflow runtime and without Agent-tool fan-out → drive
-  the sequential harness `lib/loop.mjs` (`runRcaLoop`) one test at a time.
-  Same contract, same no-prompt rule.
+- **`workflows/rca-batch.mjs`** (Claude Code, when the Workflow tool is available) —
+  `pipeline(clusters, repStage, siblingStage)` has no barrier between stages, so a
+  cluster's siblings start the instant ITS OWN representative resolves: the only path
+  with a true per-cluster guarantee. Prefer it whenever cluster count exceeds
+  `concurrency` (also the path for `resumeFromRunId` resumability / progress UI). It
+  caps concurrency below the JSON value; use the default path if you need literal
+  fan-out.
+- **Direct Agent-tool dispatch** (default, all hosts) — dispatch
+  `tfa-rca:ai-tfa-coordinator` subagents in batches of `concurrency` (one message, up
+  to `concurrency` tool-use blocks), refilling per the rolling queue above. Honors the
+  JSON value literally, but streams per-batch, not per-cluster.
+  **This path has no code enforcing the Step 4b handoff — you are the enforcement.**
+  Before dispatching ANY representative, call `readTurn1(turn1PathFor(buildId,
+  stateDir), testRunId)` and fold the result into the prompt using this exact mapping
+  — distinct coordinator inputs (`agents/ai-tfa-coordinator.md`), never
+  interchangeable: `PENDING` → `resume: {threadId, turnId}`; `NEEDS_INFO` →
+  `turn1_result: {threadId, asks}`; no registry entry with the CSV row already
+  `resolved` → skip the dispatch, use the CSV row's result directly. A swapped field
+  is silently wrong, not rejected.
+- **Sequential harness `lib/loop.mjs`** (`runRcaLoop`) — hosts without the Workflow
+  runtime and without Agent-tool fan-out, one test at a time. Same contract, same
+  no-prompt rule.
 
 Subagents/coordinators return compact `RCA_OUTPUT` blocks, never transcripts. A
 coordinator that dies becomes a recorded `failed` row — one stuck test never
@@ -587,10 +560,10 @@ bare `references/<file>.md`.
 
 **Coordinator prompts MUST also point at the API reference instead of letting
 the coordinator re-derive it.** State plainly in the dispatch prompt: "Function
-signatures for `lib/*.mjs` are documented at `<pluginRoot>/skills/rca-build/SKILL.md`
-§ API reference — read that section once if a signature is needed; do not
-`grep`/`Read`/`cat` the `lib/` source to re-derive a signature already
-documented there."
+signatures for `lib/*.mjs` are documented at
+`<pluginRoot>/skills/rca-build/references/api.md` — read it once if a signature is
+needed; do not `grep`/`Read`/`cat` the `lib/` source to re-derive a signature
+already documented there."
 
 **Coordinator prompts MUST name every connector-shaped skill on the manifest.**
 Each dispatch prompt lists, per capability, the resolved connector skill from

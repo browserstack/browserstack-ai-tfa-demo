@@ -124,7 +124,9 @@ function run(argv, input) {
 }
 
 let fetched;
-const hit = cacheGet(dir, key);
+// nowMs is REQUIRED for the staleness check to run at all: a snapshot past
+// SNAPSHOT_MAX_AGE_MS must read as a MISS, and cacheGet cannot know the time.
+const hit = cacheGet(dir, key, Date.now());
 if (hit) {
   banner(`[tool-cache HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B]`);
   fetched = hit.stdout;

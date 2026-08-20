@@ -103,7 +103,8 @@ try {
 const key = mcpCacheKey(tool, args);
 
 if (verb === "get") {
-  const hit = cacheGet(dir, key);
+  // nowMs is what enables the staleness check — see lib/tool-cache.mjs cacheGet.
+  const hit = cacheGet(dir, key, Date.now());
   if (!hit) {
     banner(`[mcp-cache MISS ${key} ${tool}] — make the MCP call, then 'put' the digest`);
     process.exit(1);

@@ -23,7 +23,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileAt, discoverWorkspaceRoot } from "../lib/repo-source.mjs";
-import { toolCacheDirFor, cacheKey, cacheGet, cachePut } from "../lib/tool-cache.mjs";
+import { toolCacheDirFor, cacheKey, cacheGet, cachePut, VOLATILITY } from "../lib/tool-cache.mjs";
 
 const [, , buildId, writerId, repo, sha, path, ...flags] = process.argv;
 if (!buildId || !writerId || !repo || !sha || !path) {
@@ -93,7 +93,7 @@ console.error(`[repo-read -> remote] ${local.reason}`);
 const dir = toolCacheDirFor(buildId, process.env.RCA_STATE_DIR ?? "");
 const cmd = `gh api repos/${repo}/contents/${path}?ref=${sha}`;
 const key = cacheKey(cmd);
-const hit = cacheGet(dir, key);
+const hit = cacheGet(dir, key, Date.now());
 if (hit) {
   console.error(`[repo-read CACHE HIT ${key} — captured by ${hit.writerId ?? "?"}, ${hit.bytes}B]`);
   process.stdout.write(hit.stdout);
@@ -112,7 +112,9 @@ try {
 }
 
 if (out.trim() !== "") {
-  cachePut(dir, key, { command: cmd, writerId, stdout: out, exitCode: 0 }, Date.now());
+  // STABLE: the key pins a sha, so this content cannot change. Left on the
+  // SNAPSHOT default it would expire in 15 minutes for no reason.
+  cachePut(dir, key, { command: cmd, writerId, stdout: out, exitCode: 0, volatility: VOLATILITY.STABLE }, Date.now());
   console.error(`[repo-read REMOTE ${out.length}B — cached]`);
 }
 process.stdout.write(out);

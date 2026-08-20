@@ -201,6 +201,11 @@ Cluster from `readRows(csvPath)` — the CSV Step 2 seeded — not from a `listT
 result held over from earlier in the turn. A held-over result has cost a real run
 correctness.
 
+```js
+// {testRunId: clusterId} — your grouping. Ids are yours; only stability matters.
+const clusters = persistClusters(csvPath, csvState, assignment);
+```
+
 ## Step 4 — evidence
 
 Routing in `references/evidence-routing.md`; the culprit-PR protocol in
@@ -211,6 +216,23 @@ PR window for each repo, the deploy state, the log sweep per workload. Write it 
 the shared evidence file so every coordinator reads the same bytes.
 
 Fetches for different repos and different workloads are independent — one batch.
+
+**Read from local clones where you can.** Resolve them once at the gate and record
+the result, or every file read goes over the network — on one measured run file
+contents were 126 of 407 forge calls.
+
+```js
+const { root } = discoverWorkspaceRoot({ repos, from: process.cwd() });
+const local = resolveLocalRepos({ repos, pins: deployShas(evidencePath).pins, workspaceRoot: root });
+setLocalRepos(evidencePath, local, Date.now());   // coordinators read this, never re-probe
+```
+
+Then, once the gathers land, derive coverage from what actually has a gap-free
+entry rather than from what you tried:
+
+```js
+recomputeCoverage(evidencePath, { repos, workloads }, Date.now());
+```
 
 **Read-only lookups go through the tool cache** (`bin/cached-exec.mjs`,
 `bin/cached-mcp.mjs`). Two things it needs from you:

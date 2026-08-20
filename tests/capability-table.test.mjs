@@ -262,3 +262,34 @@ test("the catch-all is suppressed from the human-facing line only", () => {
   assert.deepEqual(reportableUnavailable(["infra", "logs", "other"], table), ["infra", "logs"]);
   assert.deepEqual(reportableUnavailable(["infra", "other"], {}), ["infra", "other"], "no table means no suppression");
 });
+
+test("an overlay cannot add a scope field to the MANDATORY capability", () => {
+  // scopeFields feeds validateVerification's `declared` set and thence the gate's
+  // coverage check, so an overlay-added field could be the one verified target
+  // that satisfies the only gate able to stop a run — with repos and baseBranch
+  // never checked. MUTATION: remove the mandatory guard and this passes.
+  const { table, violations } = mergeOverlay(realConfig().capabilities, {
+    github: { scopeFields: { dashboardUrl: { consumer: "the RCA report link" } } },
+  });
+  assert.deepEqual(codes(violations), ["overlay-forbidden-field"]);
+  assert.deepEqual(Object.keys(table.github.scopeFields).sort(), ["baseBranch", "repos", "subpaths"]);
+});
+
+test("an overlay cannot wipe the mandatory capability's recognition", () => {
+  // Fixed for scopeFields and missed for seedHints in the same commit, six lines
+  // apart. `{github:{seedHints:{}}}` left github unrecognisable on a machine that
+  // had `gh`, so its gate blocked a fully capable setup.
+  const { table, violations } = mergeOverlay(realConfig().capabilities, { github: { seedHints: {} } });
+  assert.deepEqual(violations, []);
+  assert.deepEqual(table.github.seedHints.executables, ["gh"], "shipped hints survive an empty overlay");
+});
+
+test("an overlay MAY still add hints for a capability it does not own the gate for", () => {
+  const { table, violations } = mergeOverlay(realConfig().capabilities, {
+    metrics: { seedHints: { mcp: ["newrelic"] }, scopeFields: { acct: { consumer: "scopes the query" } } },
+  });
+  assert.deepEqual(violations, []);
+  assert.deepEqual(table.metrics.seedHints.mcp, ["newrelic"]);
+  assert.ok(Object.keys(table.metrics.scopeFields).includes("acct"));
+  assert.ok(Object.keys(table.metrics.scopeFields).includes("metricsNamespace"), "merged, not replaced");
+});

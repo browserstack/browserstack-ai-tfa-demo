@@ -1,54 +1,64 @@
 # Verification failures
 
-Load this file **before running the first probe**. It defines what verification
-proves, what a failure record must contain, and how GitHub differs from everything
-else.
+Load this file **before verifying anything**. It defines what verification proves,
+what a report must contain, and how GitHub differs from everything else.
 
 **Contents:** [What counts as verified](#what-counts-as-verified) ·
-[The record](#every-failure-record) · [Error classes](#error-classes) ·
-[Gap classes](#gap-classes) · [GitHub is binary](#github-is-binary) ·
-[Secrets](#secrets)
+[The report](#what-you-report) · [Gap classes](#gap-classes) ·
+[GitHub is binary](#github-is-binary) · [Secrets](#secrets)
 
 ## What counts as verified
 
 A live read against the **resolved scope** — not the presence of a tool, and not
 the presence of a credential. A runtime CLI being on PATH says nothing about
-whether `prod` exists or whether this credential can see it.
+whether `prod` exists or whether this credential can see it. What counts for a
+given capability is stated in that row's `intent` in `config/rca.config.json`;
+read it, because it differs by capability.
 
 **Per target, not per tool.** A capability valid for `acme/api` and 404 on
 `acme/ghost` stays valid for `acme/api`; the failure is a scoped gap. Collapsing
 that into a dead capability is what makes a coordinator degrade to "unavailable"
 over one bad value.
 
-Probes come from the table and are validated before they run — and the
-*interpolated* command is re-validated immediately before execution, because the
-template was checked against `{repo}`, not against what the customer typed.
+**You choose the check.** There are no probe commands in the table. There were —
+templates with the customer's scope interpolated in — and that design needed a
+command gate, an interpolation guard and a per-runtime probe table to be safe,
+produced a shell-injection escape anyway, and still could not verify a stack
+nobody had listed. How to read a Fly.io app, a Coralogix index or a Dynatrace
+scope is your judgement.
 
-## Every failure record
+## What you report
 
-Four things, always:
+`validateVerification` takes your report and holds you to this shape:
 
 | Field | Why |
 |---|---|
-| the failing field | which answer to fix |
-| an error class | *what kind* of failure, never the raw text |
-| the env-var name | safe to record; the value never is |
-| a next action | non-empty, always — a diagnostic with no next step is how someone gets stuck |
+| `field` | which answer to fix — and it must be one the row DECLARES |
+| `value` | what you checked it against |
+| `ok` | your verdict for this target |
+| `checkedBy` | **what you actually ran**, with its scoping arguments |
+| `gap.class` | one of the three below, on a failure |
+| `gap.nextAction` | non-empty, always — a diagnostic with no next step strands someone |
 
-Plus a `suggestion` when the value looks like a typo. `nearMatch` returns null
-rather than a guess when nothing is close: a confident wrong suggestion sends
-someone to correct a value that was already right.
+`checkedBy` is the load-bearing one. **A target reported `ok` with no `checkedBy`
+is recorded `unverified`, not verified** — a claim with no named check carries no
+information, and this is precisely what stopped a capability probe standing in for
+a scope it had never read. Name the tool or command AND the arguments that scoped
+it, specifically enough that a reader can tell what was proven.
 
-**Raw provider output never reaches a record.** It is reduced to a class and
-dropped — not redacted and kept, because a redacted string still carries whatever
-the redactor's patterns missed, and these records can end up committed.
+A target you could reach but could not prove is `{ok: false, state: "unverified"}`
+and needs no gap: nothing is wrong, there is simply no evidence. That is a real
+state, not a soft failure.
 
-## Error classes
+**Raw provider output never reaches a report.** Reduce a failure to its class and
+its next action; the bytes stay in your context. Not redacted-and-kept, because a
+redacted string still carries whatever the redactor missed, and this record can end
+up committed. `validateVerification` refuses a `raw`/`stdout`/`stderr`/`body` key
+anywhere in the shape, and strips it rather than passing it on.
 
-`not-installed` · `not-authenticated` · `unauthorized` · `forbidden` ·
-`not-found` · `network` · `unknown`
-
-Say the class and the next action. Never paste the provider's sentence.
+If a value looks like a typo, say so in the `nextAction` — but only when you are
+confident. A wrong suggestion sends someone to correct a value that was already
+right, which costs more than saying nothing.
 
 ## Gap classes
 

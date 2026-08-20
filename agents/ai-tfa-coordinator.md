@@ -416,7 +416,7 @@ each candidate suspect **try to disprove it** (path overlap? shipped before the
 failure window? behind an OFF flag?). Feed both supporting *and* disconfirming
 evidence back as a structured suspect packet; only `verdict: supported` suspects
 belong in `related_prs`. Reuse the pre-computed build-level evidence — do not
-re-fetch per test (the `evidenceFile`'s `github` section, if present and not
+re-fetch per test (the `evidenceFile`'s `code` section, if present and not
 `gap`-marked for this repo; otherwise the live github connector). A culprit
 hunt often needs to go deeper than the file's summary — a full diff, a
 downstream consumer of a changed flag — write that depth back via

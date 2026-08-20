@@ -19,7 +19,7 @@ appears here. Adding a `lib/` module without documenting its exports here fails 
 ## Capability table
 
 `lib/capability-table.mjs` — pure. The caller supplies the parsed config
-(`loadConfig` in `lib/routing.mjs` is the single file reader) and an optional overlay.
+(read and parse `config/rca.config.json` yourself — one `JSON.parse`, no helper) and an optional overlay.
 
 ```
 loadCapabilityTable(config, overlay=null) → {table, violations}

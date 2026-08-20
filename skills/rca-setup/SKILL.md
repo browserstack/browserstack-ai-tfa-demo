@@ -72,6 +72,13 @@ is this team's runtime, that a metrics MCP server is their metrics — and pass 
 `assigned`, which beats a hint unconditionally. A hint list only knows the vendors
 someone wrote down, and most customers are not on that list.
 
+```js
+const { table, violations } = loadCapabilityTable(config, read?.context?.capabilities);
+const plan = planInterview({ table, env, assigned, connectorSkills });
+// plan.questions is the interview. plan.relevant is "your repo shows this but this
+// machine cannot reach it" — ask its questions anyway; a teammate inherits them.
+```
+
 Nothing here is executed, so it is cheap enough to
 run before the greeting. Load the table with `loadCapabilityTable`; a non-empty
 `violations` array is a bug in the shipped config, not a customer problem — report
@@ -108,23 +115,75 @@ the owned subpaths and GitHub's path-overlap test is their only consumer.
 
 ## Step 4 — verify
 
-Follow `<pluginRoot>/skills/rca-setup/references/verification-failures.md`. Live
-read per resolved target through `verifyCapability`, and `verifyGithub` for GitHub.
-Per target, not per tool.
+Follow `<pluginRoot>/skills/rca-setup/references/verification-failures.md`.
 
-`runProbe` is the seam: `lib/` cannot invoke an MCP tool or spawn a process, so YOU
-execute and hand back the result. Call the verifier — never re-implement
-`scrubFailure`, `classifyGap` or `nearMatch` from the prose in that reference:
+**What "verified" means is stated per capability**, in that row's `intent` in
+`config/rca.config.json`. Read it. For infra it says the runtime must answer for
+the named scope, "not merely that some runtime CLI exists on PATH" — that
+distinction is the whole point, and it differs by capability.
+
+**You run the check.** `lib/` cannot spawn a process or invoke an MCP tool, and it
+no longer builds commands for you to run: how to verify a Fly.io app, a Coralogix
+index or a Dynatrace scope is your judgement. Do it per resolved target, not per
+tool — a capability valid for one repo and 404 on another stays valid for the one
+that passed.
+
+**Then report what you actually checked**, and hand it to `validateVerification`:
 
 ```js
-const result = verifyGithub({
-  row, scope, env, candidates,
-  prList,                             // on the MCP route this IS the base-branch evidence
-  runProbe: (req) => req.kind === "mcp"
-    ? mcpResultFor(req.tool, req.args)   // you invoke it; return {ok, raw, scopes?}
-    : execProbe(req.command),            // execFile(argv[0], argv.slice(1)) — no shell
+const { result, violations } = validateVerification({
+  capability: "metrics",
+  row: table.metrics,
+  result: {
+    verified: true,
+    via: "mcp__dynatrace__metrics",          // the tool or server you used
+    targets: [{
+      field: "metricsNamespace",              // must be a field the row declares
+      value: "prod-eu",
+      ok: true,
+      checkedBy: "mcp__dynatrace__metrics timeseries builtin:host.mem.used, scope prod-eu -> 1 series",
+    }],
+    scopes: ["metrics.read"],                 // when the provider reports them
+  },
 });
 ```
+
+`checkedBy` is the load-bearing field: name the command, tool call or API request
+AND the scoping arguments, specifically enough that a reader can tell what was
+proven. **A target reported `ok` with no `checkedBy` is recorded `unverified`, not
+verified** — a claim with no named check carries no information, and this is what
+stops a capability probe standing in for a scope it never read.
+
+A target you could reach but could not prove is `{ok: false, state: "unverified"}`
+and needs no gap: nothing is wrong, there is simply no evidence.
+
+A failure needs `gap: {class, nextAction}` where `class` is one of `GAP_CLASS` and
+`nextAction` is non-empty. The three classes prescribe opposite remedies — install
+something locally, re-ask the team's scope, or fix a credential's rights — so
+choosing among them from the evidence is your call and nothing derives it for you.
+
+`violations` names anything wrong with the report itself: `unsupported-claim`,
+`undeclared-target-field`, `bad-gap-class`, `gap-without-next-action`,
+`via-missing`, `targets-missing`, `verified-without-a-checked-target`,
+`secret-in-result`, `raw-output-in-result`. Fix the report and re-validate; a
+non-empty `violations` is your mistake, not the customer's.
+
+**Never put raw provider output in the report.** Reduce a failure to its class and
+next action — the bytes stay in your context. `validateVerification` refuses a
+`raw`/`stdout`/`stderr`/`body` key anywhere in the shape, and refuses any
+credential-shaped string, because this record reaches a committed file.
+
+For GitHub, pass the validated result through the gate as well — it is the
+mandatory capability and its refusal is binary:
+
+```js
+const gate = githubGate(result);          // result from validateVerification
+if (gate.blocking) stop(gate.message, gate.nextAction);
+```
+ On an MCP route with no command to run for
+the base branch, the merged-PR count you obtain IS that target's evidence — put
+the count in `checkedBy` and run `prWindowWarning` on it, because an empty window
+predicts a dead culprit hunt and persists into the context.
 
 If a customer pastes a credential value at any point: refuse it, do not echo it,
 give rotation guidance, and continue asking for the variable name instead.

@@ -394,7 +394,37 @@ test("the reads every runtime actually uses stay cacheable", () => {
     "logcli labels",
     "promtool --version",
     "git log --oneline -5",
+    // Piped reads: the write check applies to the FETCH SEGMENT only. Applied to
+    // the whole string, a filter word vetoed the fetch — `| grep -i restart`
+    // refused the canonical CrashLoopBackOff read, and a refusal is exit 2 with
+    // empty stdout, which through a silenced pipe is indistinguishable from
+    // "no results".
+    "kubectl describe pod api-7f9 -n prod | grep -i restart",
+    "kubectl get pods -n prod -o wide | grep -c Restart",
+    "gh api repos/a/b | jq .name",
+    "gh pr list --json number | jq '.[] | select(.number > 10)'",
+    // Reads whose PATH or NAME contains a verb substring.
+    "gh api repos/o/r/contents/src/update-user.js",
+    "git show abc:src/sync-service/index.ts",
+    "kubectl get pods -n payments-sync",
+    "kubectl rollout status deploy/api -n prod",
+    "kubectl get deploy payment-sync -o yaml",
   ]) {
     assert.equal(isCacheable(read), true, `${read} must stay cacheable`);
+  }
+});
+
+test("a camelCase write tool is not cacheable", () => {
+  // `[^a-z]` under the /i flag is canonicalised to exclude A-Z as well, so the
+  // boundary never fired before an uppercase letter and every camelCase tool read
+  // as cacheable. A `get` HIT tells the agent to SKIP the call, so a hit on a
+  // write tool means the write never happens while the agent believes it did.
+  for (const t of ["mcp__acme__createRcaTicket", "mcp__acme__submitJob", "mcp__x__triggerBuild",
+                   "mcp__acme__deleteReport", "mcp__acme__submit_job", "mcp__acme__trigger_build"]) {
+    assert.equal(isCacheableMcp(t), false, t);
+  }
+  for (const t of ["mcp__grafana__query_loki_logs", "mcp__github__get_repository",
+                   "mcp__dynatrace__metrics", "mcp__loki__queryRange"]) {
+    assert.equal(isCacheableMcp(t), true, t);
   }
 });

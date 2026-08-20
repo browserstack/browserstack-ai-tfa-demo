@@ -321,3 +321,90 @@ test("an empty PR window warns, persists, and names the branch it checked", () =
   assert.match(w.message, /release\/2026-08/);
   assert.equal(prWindowWarning({ mergedCount: 3, branch: "main" }), null);
 });
+
+// ---- the mandatory gate needs COVERAGE, not one lucky target ----------------
+
+test("GitHub with a verified repo and a FAILED base branch does not pass the gate", () => {
+  // `verified` is an OR over targets, so this returned verified:true with zero
+  // violations and the gate waved it through — sending the run to its single
+  // deliverable, the culprit-PR hunt over that branch, with the branch proven
+  // unreachable and nothing said about it. The row's own intent says "a repository
+  // is readable AND the base branch's merged-PR list can be listed".
+  //
+  // MUTATION: drop the `uncovered` check in githubGate and this fails.
+  const row = table.github;
+  const { result } = validateVerification({
+    capability: "github",
+    row,
+    result: {
+      verified: true,
+      via: "gh",
+      targets: [
+        ok("repos", "acme/api", "gh api repos/acme/api -> 200"),
+        { field: "baseBranch", value: "nope", ok: false,
+          gap: { class: GAP_CLASS.SCOPE_INVALID, nextAction: "Confirm the base branch." } },
+      ],
+    },
+  });
+  const gate = githubGate(result, row);
+  assert.equal(gate.blocking, true, "partial GitHub must block");
+  assert.match(gate.message, /baseBranch/);
+  assert.match(gate.nextAction, /Confirm the base branch/);
+});
+
+test("GitHub with a target simply MISSING does not pass either", () => {
+  const row = table.github;
+  const { result } = validateVerification({
+    capability: "github", row,
+    result: { verified: true, via: "gh", targets: [ok("repos", "acme/api", "gh api -> 200")] },
+  });
+  const gate = githubGate(result, row);
+  assert.equal(gate.blocking, true, "an omitted field is not a verified one");
+  assert.match(gate.message, /baseBranch|subpaths/);
+});
+
+test("GitHub with every declared field verified passes", () => {
+  const row = table.github;
+  const { result } = validateVerification({
+    capability: "github", row,
+    result: {
+      verified: true, via: "gh",
+      targets: Object.keys(row.scopeFields).map((f) => ok(f, `v-${f}`, `checked ${f}`)),
+    },
+  });
+  assert.equal(githubGate(result, row).blocking, false);
+});
+
+test("the gate fails CLOSED on a missing or mis-shaped result", () => {
+  // Every non-match used to return {blocking:false}, so a skipped or thrown
+  // validateVerification, or a differently-cased capability key, waved the run
+  // past the one gate that can stop it. A gate whose default is proceed is not one.
+  for (const bad of [undefined, null, {}, { capability: "" }, { verified: true }]) {
+    assert.equal(githubGate(bad).blocking, true, `githubGate(${JSON.stringify(bad)}) must block`);
+  }
+  assert.equal(githubGate({ capability: "logs", verified: false }).blocking, false,
+    "but a non-mandatory capability still never blocks");
+});
+
+test("a target reported ok while carrying a gap is contradictory and reported", () => {
+  // The gap checks are skipped for ok:true, so an unknown class and an empty
+  // nextAction rode into the committed context labelled "verified".
+  const r = validateVerification({
+    capability: "logs", row: table.logs,
+    result: { verified: true, via: "x",
+      targets: [{ field: "logIndex", value: "a", ok: true, checkedBy: "q",
+                  gap: { class: "nonsense", nextAction: "" } }] },
+  });
+  assert.ok(codes(r.violations).includes("verified-with-gap"));
+});
+
+test("a failed gap with no next action never prints 'undefined'", () => {
+  const r = validateVerification({
+    capability: "github", row: table.github,
+    result: { verified: false, via: "gh",
+      targets: [{ field: "repos", value: "acme/web", ok: false, gap: { class: GAP_CLASS.SCOPE_INVALID } }] },
+  });
+  const gate = githubGate(r.result, table.github);
+  assert.doesNotMatch(gate.message, /undefined/, gate.message);
+  assert.ok(gate.nextAction.trim().length > 0);
+});

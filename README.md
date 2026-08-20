@@ -6,7 +6,7 @@ MCP client (Claude Code / Cursor / Codex).
 
 The plugin wraps three stable MCP tools — `listTestIds`, `tfaRcaTurn`, and
 `triggerRcaReport` (from the `bstack` MCP server) — and adds the harness that
-batches RCA over a whole build, clusters failures by signature, routes evidence
+batches RCA over a whole build, groups failures by cause, routes evidence
 requests to whatever skills/tools the client already has, and lands a per-test
 RCA in the TRA (Test Observability) dashboard.
 
@@ -38,8 +38,7 @@ The MCP core (`listTestIds` + `tfaRcaTurn` + `triggerRcaReport`) and the
 skill/agent layer port to both — Cursor uses `.cursor-plugin/plugin.json` +
 `.cursor-mcp.json`, Codex uses `~/.codex/config.toml` (see
 `codex-mcp.example.toml`). The only Claude-specific piece is the batch *dynamic
-workflow*; on Cursor/Codex the same batch runs via subagents or the sequential
-harness (`lib/loop.mjs`). Full per-host wiring (MCP config, skill/agent
+workflow*; on Cursor/Codex the same batch runs via subagents. Full per-host wiring (MCP config, skill/agent
 discovery, deeplink) is in **[INTEGRATION.md](INTEGRATION.md)**.
 
 ## Usage
@@ -124,9 +123,8 @@ the TFA agent, which finalizes best-effort.
 
 ## Output
 
-When every test is terminal, the run prints a terse **glimpse table**
-(`testRunId → cluster → status → confidence one-liner`), calls
-`triggerRcaReport(buildUuid)`, and prints:
+When every test is terminal, the run prints a **status count**, calls
+`triggerRcaReport(buildUuid)`, and prints the link:
 
 ```
 Full report on the Test Observability UI: <viewReport link>

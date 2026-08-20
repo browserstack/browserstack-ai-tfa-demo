@@ -13,13 +13,16 @@ deliberately skipped, or proven broken:
 | `failed` | Verification ran and the value is wrong or unreachable. |
 | `unverified` | Corrected at the gate, but re-verification did not pass within its round budget. **GitHub can never end here** — see below. |
 
-**The "not available" list comes from `reportableUnavailable`, never from the raw
-set.** `unavailableCapabilities(manifest)` takes only the manifest and cannot read a
-table field, so `other` — the catch-all, which can never be recognised — would
-be reported every single run. Print
-`reportableUnavailable(unavailableCapabilities(manifest), table)`; it honours
-`exemptFromDiscoveryReport`. The manifest and the TFA-facing declaration still mark
-the capability unavailable — only this human-facing line suppresses it.
+```js
+const shown = reportableUnavailable(unavailableCapabilities(manifest), table);
+```
+
+**Never print the raw set.** `unavailableCapabilities(manifest)` takes only the
+manifest and cannot read a table field, so `other` — the catch-all, which can never
+be recognised — would appear every single run. `reportableUnavailable` honours
+`exemptFromDiscoveryReport` and drops it. The manifest and the TFA-facing
+declaration still mark the capability unavailable; only this human-facing line
+suppresses it.
 
 **A context adopted from outside this repo says so.** `readRcaContext` returns a
 `trust` label: `own-worktree` and `origin-match` are evidence, `tracked` means

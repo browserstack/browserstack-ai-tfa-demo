@@ -196,11 +196,39 @@ test("any number of log sources coexist, and each names itself", () => {
     ["journalctl", "logcli", "mcp__newrelic__logs", "mcp__splunk__search"]);
 });
 
-test("a sweep that does not name its source is dropped", () => {
-  // `via` is what makes the shape generic; without it the entry is an anonymous
-  // blob nothing can attribute, which is the state the two named slots created.
+test("a sweep that does not name its source is labelled, never dropped", () => {
+  // This used to DROP it, and that was wrong in the dangerous direction: a
+  // via-less sweep already persisted in the base file was deleted the moment any
+  // coordinator contributed anything unrelated, leaving `{sweeps: [], gap: null}`
+  // — which isCovered reads as COVERED. recomputeCoverage then reported the
+  // workload covered with zero evidence and a coordinator skipped the live sweep.
+  // An ugly label beats a silent deletion that reads as success.
   contributeLogsEvidence(file, "w1", "w1", { sweeps: [{ block: "from somewhere" }] }, 1000);
-  assert.deepEqual(readEvidenceFile(file).logs["w1"].sweeps, []);
+  assert.deepEqual(readEvidenceFile(file).logs["w1"].sweeps, [{ via: "unattributed", block: "from somewhere" }]);
+});
+
+test("evidence already in the base file survives an unrelated contribution", () => {
+  // MUTATION: restore the `if (!via) continue` drop and this fails on both counts.
+  setLogsEvidence(file, "checkout", { clusterIds: ["c-A"], sweeps: [{ block: "OOMKilled x3" }], gap: null }, 1000);
+  contributeLogsEvidence(file, "w1", "checkout", { clusterIds: ["c-B"] }, 2000);
+
+  const entry = readEvidenceFile(file).logs.checkout;
+  assert.equal(entry.sweeps.length, 1, "the base file's evidence must not vanish");
+  assert.equal(entry.sweeps[0].block, "OOMKilled x3");
+
+  const cov = recomputeCoverage(file, { repos: [], workloads: ["checkout"] }, 3000);
+  assert.deepEqual(cov.workloadsCovered, ["checkout"], "covered, and now actually backed by evidence");
+});
+
+test("one source spelled two ways folds into one sweep", () => {
+  // `via` is freeform agent text. Keyed case-sensitively, `logcli` and ` LogCLI `
+  // became two entries for one source, so "the later shard wins" stopped holding
+  // and the stale block survived beside the fresh one.
+  contributeLogsEvidence(file, "a", "w1", { sweeps: [{ via: "logcli", block: "one" }] }, 1000);
+  contributeLogsEvidence(file, "b", "w1", { sweeps: [{ via: " LogCLI ", block: "two" }] }, 2000);
+  const sweeps = readEvidenceFile(file).logs.w1.sweeps;
+  assert.equal(sweeps.length, 1, "one source, one entry");
+  assert.equal(sweeps[0].block, "two", "and the later shard wins");
 });
 
 test("a real sweep clears a recorded gap; an empty one does not", () => {

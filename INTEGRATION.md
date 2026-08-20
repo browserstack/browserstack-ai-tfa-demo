@@ -19,14 +19,16 @@ rather than per build.
 | Connector-skill pre-fill during setup | reads `.claude/skills/` (4 paths) | **not yet** — Cursor reads `.cursor/skills/` | **not yet** — Codex reads `.agents/skills/` |
 | `ai-tfa-coordinator` agent | plugin `agents/` | `.cursor/agents/` (also reads `.claude/agents/`) | `.codex/agents/` |
 | Per-test RCA **loop** | `agents/ai-tfa-coordinator.md` | same skill/agent | same skill/agent |
-| Batch orchestration | dynamic workflow `workflows/rca-batch.mjs` (or subagents) | subagents, or **sequential** `lib/loop.mjs` | subagents, or **sequential** `lib/loop.mjs` |
+| Batch orchestration | dynamic workflow `workflows/rca-batch.mjs` (or subagents) | subagents | subagents |
 
 The dynamic workflow (`workflows/rca-batch.mjs`) uses Claude Code's Workflow
 runtime, which Cursor/Codex don't have. The same batch still runs there via
-**subagents** (both hosts support subagents) or the **sequential thin-client
-harness** `lib/loop.mjs` (`runRcaLoop`) — the conformance-tested loop that
-drives `tfaRcaTurn` over the same contract without any host-specific
-orchestration. On every host the run finishes the same way: glimpse table →
+**subagents**, which both hosts support. There is no separate sequential harness:
+one existed as an executable mirror of the coordinator's loop and was deleted —
+283 lines plus 582 of tests, driven by nothing, proving the mirror matched the
+prose rather than that an agent did. The loop contract lives in
+`agents/ai-tfa-coordinator.md`, which every host reads.
+On every host the run finishes the same way: a status count →
 `triggerRcaReport(buildUuid)` → "Full report on the Test Observability UI:
 <viewReport>". No local report file is ever written.
 

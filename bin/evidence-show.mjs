@@ -79,7 +79,7 @@ console.log(`build            : ${folded.buildId}`);
 console.log(`base repos       : ${Object.keys(base.code ?? {}).length}`);
 console.log(`contribution shards: ${shards.length} (${shards.map((s) => s.replace(".json", "")).join(", ") || "none"})`);
 console.log("");
-console.log("github (folded):");
+console.log("code (folded):");
 for (const [repo, e] of Object.entries(folded.code ?? {})) {
   const prs = (e.prsInWindow ?? []).length;
   const trust = hasTrustworthyPrList(folded, repo) ? "trustworthy" : "PR LIST NOT TRUSTWORTHY (never searched)";

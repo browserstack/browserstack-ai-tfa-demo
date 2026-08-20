@@ -69,6 +69,13 @@ const GATE_CRITICAL = [
   // mentions rather than call sites.
   { fn: "reportableUnavailable", module: "capability-table.mjs" },
   { fn: "intakeFromContext", module: "rca-context.mjs" },
+  // Made load-bearing by this milestone: the agent's assignment, the verification
+  // policy and the mandatory-capability gate. Documented from the start; adding
+  // them here is what requires a DRIVER.
+  { fn: "planInterview", module: "discovery.mjs" },
+  { fn: "validateVerification", module: "verify.mjs" },
+  { fn: "githubGate", module: "verify.mjs" },
+  { fn: "persistClusters", module: "signature.mjs" },
 ];
 
 test("gate-critical lib exports are actually invoked outside tests", () => {
@@ -119,10 +126,17 @@ test("gate-critical lib exports are actually invoked outside tests", () => {
   }
 });
 
-/** Text inside ``` fences — the blocks an agent executes, as opposed to the
- *  signature indexes it reads. */
+/**
+ * Text inside ```js / ```javascript fences ONLY — a snippet an agent executes.
+ *
+ * A bare ``` fence is a signature index, and both api references are written that
+ * way. Counting them made this guard vacuous twice: `reportableUnavailable` scored
+ * inSource=0, inFence=2 with both hits coming from signature lines, so it passed
+ * for exactly the reason the comment below claimed was fixed. A planted
+ * documented-but-uncalled export also passed the whole suite.
+ */
 function fencedBlocks(text) {
-  return [...String(text).matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]);
+  return [...String(text).matchAll(/```(?:js|javascript)\n([\s\S]*?)```/g)].map((m) => m[1]);
 }
 
 // The adapter that feeds the setup context into the run skill's gate is PROSE — a
@@ -284,5 +298,126 @@ test("every exported lib helper is documented in every owning skill's mandated r
       `mandated reading of EVERY skill that owns its module — an agent that can't ` +
       `find a signature there greps lib/ at runtime, which cost 92 of 407 tool ` +
       `calls on one measured run.`,
+  );
+});
+
+// The REVERSE direction, and the one this repo kept needing.
+//
+// Test 4 above proves every lib/ export is documented. Nothing proved the
+// converse: that every symbol the prose NAMES still exists. So a rename or a
+// deletion left the instructions pointing at nothing, silently, and the suite
+// stayed green — because the guard only ever looked one way.
+//
+// This diff alone left the setup skill's Step 4 instructing an agent to call
+// `verifyCapability`, `verifyGithub` and `runProbe` (all deleted) and never
+// naming `validateVerification` (the function that replaced them); three files
+// pointing at `loadConfig`; a config comment describing `isProbeRunnable`; and
+// README/INTEGRATION offering `runRcaLoop` as a supported execution path. Every
+// one of those is a symbol in prose with no referent, and every one would have
+// failed this test.
+test("every lib/ symbol named in prose still exists", () => {
+  const exported = new Set();
+  for (const f of readdirSync(join(ROOT, "lib")).filter((n) => n.endsWith(".mjs"))) {
+    const src = readFileSync(join(ROOT, "lib", f), "utf8");
+    for (const m of src.matchAll(/^export (?:function|const) ([A-Za-z0-9_]+)/gm)) exported.add(m[1]);
+    // Internal helpers are legitimately named in rationale prose.
+    for (const m of src.matchAll(/^(?:async )?function ([A-Za-z0-9_]+)/gm)) exported.add(m[1]);
+  }
+
+  // Module filenames, so `lib/loop.mjs` in prose is caught the same way.
+  const modules = new Set(readdirSync(join(ROOT, "lib")).filter((n) => n.endsWith(".mjs")));
+
+  // Words that look like calls but are not lib/ symbols: MCP tools, shell and git
+  // subcommands, JS builtins, and the vocabulary of the domain.
+  const NOT_LIB = new Set([
+    "tfaRcaTurn", "getTfaTurnResult", "triggerRcaReport", "listTestIds", "getFailureLogs",
+    "getBuildId", "getBuildFailureThemes", "listTestsInFailureTheme", "fetchBuildInsights",
+    "viewRca", "AskUserQuestion", "ToolSearch", "Promise", "JSON", "Object", "Array", "Map",
+    "Set", "String", "Number", "Boolean", "Date", "Math", "RegExp", "Error", "if", "for",
+    "while", "switch", "catch", "function", "return", "await", "const", "let", "typeof",
+    "require", "import", "export", "ls", "grep", "cat", "node", "npm", "git", "gh", "jq",
+    // Node builtins and the agent's OWN helpers in illustrative snippets — named
+    // here so the list of real dangling symbols stays readable.
+    "execFileSync", "readFileSync", "writeFileSync", "existsSync", "execFile",
+    "mcpResultFor", "execProbe", "buildMeta", "invocationArgs", "connectorDefaults",
+    // domain vocabulary that happens to be camelCase
+    "testRunId", "buildId", "threadId", "turnId", "clusterId", "writerId", "rcaDone",
+    "baseBranch", "homeRepo", "logIndex", "metricsNamespace", "runtimeKind",
+    "serviceNames", "automationRepo", "prsInWindow", "prsSearched", "deployState",
+    "clusterIds", "localRepos", "suspectWindow", "schemaVersion", "capturedAtMs",
+    "turnMessageMaxChars", "softPendingDrain", "reaperHeartbeatTtlSec", "stateDir",
+    "evidenceRouting", "seedHints", "scopeFields", "mcpServers", "repoFiles",
+    "exemptFromDiscoveryReport", "customCapabilities", "checkedBy", "nextAction",
+    "errorClass", "gapClass", "accessLevel", "resolvedScope", "unresolvedFields",
+    "failureCategory", "errorSummary", "filePath", "isFlaky", "rootCause",
+    "relatedPrs", "failureType", "nextCursor", "buildThemeWorkflow", "buildThemeId",
+    "buildFailureThemeId", "buildUuid", "includeFailureDetail", "viewReport",
+    "lastGreenRef", "fallbackRef", "isFallback", "maxAgeMs", "dryRun", "nowMs",
+    "preSeed", "workloadsCovered", "reposCovered", "reposGapped", "mergedCount",
+    "windowDays", "rotationGuidance", "connectorSkills", "scopeProbes",
+    // placeholders and wire vocabulary, not lib symbols
+    "pluginRoot", "evidenceFile", "turnCap", "evidenceType", "claude_ai_Slack",
+    // Removed FIELD names that prose legitimately still names in order to explain
+    // what changed. This check cannot tell "naming a deleted thing to explain it"
+    // from "instructing a call to a deleted thing", so the difference is an
+    // explicit allowlist rather than a guess.
+    "logIndexes", "kubectlSweep", "victorialogs", "probesByExecutable", "mcpProbe",
+    "runRcaLoop",
+    "scopeProbe", "isProbeRunnable", "isPermittedProbeLeader", "clusterAndPersist",
+    "clusterRows", "computeSignature", "clustersFromThemes", "renderGlimpse",
+    "makeEvidenceCache", "resolveBaseline", "discoveryHints", "exemptFrom",
+  ]);
+
+  const prose = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir)) {
+      const p = join(dir, e);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (e.endsWith(".md")) prose.push([p, readFileSync(p, "utf8")]);
+    }
+  };
+  walk(join(ROOT, "skills"));
+  walk(join(ROOT, "agents"));
+  for (const f of ["README.md", "INTEGRATION.md"]) {
+    prose.push([join(ROOT, f), readFileSync(join(ROOT, f), "utf8")]);
+  }
+
+  const dangling = [];
+  for (const [path, text] of prose) {
+    // Backticked camelCase — this codebase's function-naming convention, so a
+    // backticked `verifyGithub` is prose presenting a lib symbol whether or not a
+    // paren follows it. Requiring the paren is what let Step 4 keep naming six
+    // deleted functions: they were written as `verifyCapability`, bare.
+    for (const m of text.matchAll(/`([a-z][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*)`/g)) {
+      const name = m[1];
+      if (NOT_LIB.has(name) || exported.has(name)) continue;
+      dangling.push(`${path.replace(ROOT, "")}: ${name}`);
+    }
+    // And calls inside fenced blocks, which is where an agent reads its snippets.
+    for (const fence of text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)) {
+      for (const m of fence[1].matchAll(/\b([a-z][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*)\s*\(/g)) {
+        const name = m[1];
+        if (NOT_LIB.has(name) || exported.has(name)) continue;
+        dangling.push(`${path.replace(ROOT, "")}: ${name}() [fenced]`);
+      }
+    }
+    // A named lib module that no longer exists.
+    for (const m of text.matchAll(/lib\/([a-z0-9-]+\.mjs)/g)) {
+      if (modules.has(m[1])) continue;
+      // A sentence that says the module WAS DELETED is documentation, not a
+      // dangling instruction. Narrow on purpose: the words have to be right there.
+      const around = text.slice(Math.max(0, m.index - 200), m.index + 200);
+      if (/\bdeleted\b|\bremoved\b|\bused to\b/i.test(around)) continue;
+      dangling.push(`${path.replace(ROOT, "")}: lib/${m[1]}`);
+    }
+  }
+
+  assert.deepEqual(
+    [...new Set(dangling)].sort(),
+    [],
+    `prose names ${new Set(dangling).size} lib/ symbol(s) that do not exist. An agent ` +
+      `following an instruction to call a deleted function has no way to recover — and ` +
+      `the forward guard above cannot see this, because it only checks that real exports ` +
+      `are documented, never that documented symbols are real.`,
   );
 });

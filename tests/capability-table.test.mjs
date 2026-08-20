@@ -14,12 +14,16 @@ import {
   capabilitiesFromRouting,
   loadCapabilityTable,
   mergeOverlay,
+  reportableUnavailable,
   validateTable,
 } from "../lib/capability-table.mjs";
 import { isRunnable } from "../lib/tool-cache.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const realConfig = () => JSON.parse(readFileSync(join(ROOT, "config/rca.config.json"), "utf8"));
+// Parsed once. Every use here is read-only, and the tests that need to mutate a
+// copy build their own via stub().
+const SHIPPED = JSON.parse(readFileSync(join(ROOT, "config/rca.config.json"), "utf8"));
+const realConfig = () => SHIPPED;
 
 /** A minimal well-formed config: one routed capability, one conforming row. */
 function stub({ routing, capabilities } = {}) {
@@ -321,6 +325,43 @@ test("zero or several mandatory capabilities is reported", () => {
     },
   });
   assert.deepEqual(codes(none), ["mandatory-count"]);
+});
+
+test("an always-asked row declaring fingerprints is a violation", () => {
+  // discover() ignores fingerprints on an always-asked row, so declaring them
+  // documents behaviour that never happens. Rejecting it at load time is what lets
+  // the defensive branch in discover() guard a state the loader already refuses.
+  const violations = validateTable(
+    stub({ routing: { other: { capability: "other" } } }),
+    {
+      other: {
+        mandatory: true,
+        resolvable: "always-asked",
+        fingerprints: { executables: ["gh"] },
+        scopeFields: {},
+      },
+    },
+  );
+  assert.deepEqual(codes(violations), ["always-asked-with-fingerprints"]);
+});
+
+test("`always` is no longer a permitted resolvable", () => {
+  assert.deepEqual([...RESOLVABLE].sort(), ["always-asked", "partial"]);
+  const violations = validateTable(stub(), {
+    github: { mandatory: true, resolvable: "always", fingerprints: { executables: ["gh"] }, probe: "gh api repos/{repo}", scopeFields: {} },
+  });
+  assert.ok(violations.some((v) => v.code === "bad-resolvable"));
+});
+
+test("exemptFromDiscoveryReport suppresses a capability from the human-facing line only", () => {
+  // The flag had no reader at all: it sat in the config with a comment describing
+  // behaviour no code implemented, which is the table's own missing-consumer rule
+  // violated by the table itself.
+  const table = realConfig().capabilities;
+  const unavailable = ["infra", "logs", "other"];
+  assert.deepEqual(reportableUnavailable(unavailable, table), ["infra", "logs"]);
+  assert.ok(unavailable.includes("other"), "the manifest still marks it unavailable");
+  assert.deepEqual(reportableUnavailable(unavailable, {}), unavailable, "no table means no suppression");
 });
 
 // ---- overlay ---------------------------------------------------------------

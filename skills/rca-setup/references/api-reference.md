@@ -27,7 +27,11 @@ loadCapabilityTable(config, overlay=null) → {table, violations}
     An empty `violations` array is the only success signal.
 validateTable(config, table)              → violations[]   every violation, not just the first
 mergeOverlay(shipped, overlay)            → {table, violations}   never mutates `shipped`
-capabilitiesFromRouting(config)           → string[]   skips entries with no `capability` key
+capabilitiesFromRouting(config)           → string[]   applies buildManifest's own skip rule
+reportableUnavailable(unavailable, table) → the subset worth showing a human
+    honours `exemptFromDiscoveryReport`. unavailableCapabilities() takes only the
+    manifest and cannot read a table field, so suppression happens here — and only
+    for the human-facing line; the manifest and the TFA declaration are unchanged.
 RESOLVABLE                                Set: always | partial | always-asked
 OVERLAY_FORBIDDEN                         fields an overlay may never set
 ```
@@ -70,7 +74,13 @@ discover({table, env, connectorSkills}) → {discovered, questions, custom, viol
     custom[]:     present tools no row fingerprints (R8) — routed into the declared-gap list
 
 preFillFromConnectorSkills(table, connectorSkills) → {scopeByCapability, violations}
-interpolate(template, scope, {leaders})            → {ok, command, argv} | {ok:false, reason}
+interpolate(template, scope, {leaders})            → {ok, command} | {ok:false, reason}
+fillPlaceholders(template, scope)                 → {text, missing}
+    substitution WITHOUT the runnability verdict — for an MCP tool name, which is not
+    a shell command and would be refused by the probe gate on principle.
+matchRow(row, env)                                → {via, evidence} | null
+    the single answer to "does this env satisfy this row". verify.mjs imports it, so
+    detection and verification cannot disagree about the same machine.
 ```
 
 **There is no probe executor here.** Discovery is fingerprint MATCHING; nothing is run.
@@ -113,6 +123,7 @@ classifyGap({errorClass, env, row}) → one of GAP_CLASS
 prWindowWarning({mergedCount, windowDays, branch}) → warning | null
 replayProbe(results)              → runProbe seam, keyed by command or `mcp:<tool>`
 PR_WINDOW_DAYS                    30 — fixed, build-independent
+MANDATORY_CAPABILITY              "github" — named once, not hard-coded in three places
 ACCESS_LEVEL                      REPORTED | NOT_REPORTABLE
 GAP_CLASS                         ABSENT_ON_MACHINE | SCOPE_INVALID | CREDENTIAL_UNDER_SCOPED
 ```

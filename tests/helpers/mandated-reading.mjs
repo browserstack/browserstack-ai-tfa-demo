@@ -8,7 +8,7 @@
 // to the API-reference guard, and a test helper has no business in a skill's
 // documented surface.
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 
@@ -18,6 +18,9 @@ export const ROOT = new URL("../..", import.meta.url).pathname;
 export const SKILLS = ["rca-build", "rca-setup"];
 
 export const skillBodyPath = (skill) => join(ROOT, "skills", skill, "SKILL.md");
+
+/** Both callers read the same ~2100 lines repeatedly; prose-budget alone asks 9x. */
+const cache = new Map();
 
 /**
  * The files a skill's flow requires loading: its own body, plus every
@@ -31,6 +34,13 @@ export const skillBodyPath = (skill) => join(ROOT, "skills", skill, "SKILL.md");
  * so a caller can either concatenate for a substring search or sum line counts.
  */
 export function mandatedFiles(skill) {
+  if (cache.has(skill)) return cache.get(skill);
+  const files = readMandatedFiles(skill);
+  cache.set(skill, files);
+  return files;
+}
+
+function readMandatedFiles(skill) {
   const bodyPath = skillBodyPath(skill);
   const body = readFileSync(bodyPath, "utf8");
   const files = [{ path: bodyPath, text: body }];
@@ -46,7 +56,11 @@ export function mandatedFiles(skill) {
   for (const m of declared.matchAll(/`<pluginRoot>\/([^`]+)`/g)) {
     const p = join(ROOT, m[1]);
     if (p === bodyPath) continue; // already included
-    if (existsSync(p)) files.push({ path: p, text: readFileSync(p, "utf8") });
+    // One read rather than existsSync-then-read: a declared path that does not
+    // exist yet is simply not counted.
+    try {
+      files.push({ path: p, text: readFileSync(p, "utf8") });
+    } catch { /* not created yet */ }
   }
   return files;
 }
@@ -68,9 +82,10 @@ export function countLines(text) {
  * body into a file the run is told to load every time reduces the body's count and
  * changes nothing about what actually reaches the model.
  */
-export function mandatedLineCount(skill, { ceiling = null } = {}) {
-  const files = mandatedFiles(skill);
-  const perFile = files.map((f) => ({ path: f.path.replace(ROOT, ""), lines: countLines(f.text) }));
-  const total = perFile.reduce((n, f) => n + f.lines, 0);
-  return { skill, total, perFile, ceiling, over: ceiling !== null && total > ceiling };
+export function mandatedLineCount(skill) {
+  const perFile = mandatedFiles(skill).map((f) => ({
+    path: f.path.replace(ROOT, ""),
+    lines: countLines(f.text),
+  }));
+  return { skill, total: perFile.reduce((n, f) => n + f.lines, 0), perFile };
 }

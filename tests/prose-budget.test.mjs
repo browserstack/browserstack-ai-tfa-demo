@@ -45,17 +45,19 @@ const CEILINGS = {
   "rca-setup": 650, // 593 today.
 };
 
+const measure = (skill) => mandatedLineCount(skill);
+const over = (skill) => measure(skill).total > CEILINGS[skill];
+
 test("every skill's mandated reading stays inside its budget", () => {
-  const report = SKILLS.map((s) => mandatedLineCount(s, { ceiling: CEILINGS[s] }));
-  const over = report.filter((r) => r.over);
+  const report = SKILLS.map(measure);
   assert.deepEqual(
-    over.map((r) => `${r.skill}: ${r.total} > ${r.ceiling}`),
+    SKILLS.filter(over).map((s) => `${s}: ${measure(s).total} > ${CEILINGS[s]}`),
     [],
     `over budget. Measured totals (body + mandated reading):\n` +
       report
         .map(
           (r) =>
-            `  ${r.skill}: ${r.total}/${r.ceiling}\n` +
+            `  ${r.skill}: ${r.total}/${CEILINGS[r.skill]}\n` +
             r.perFile.map((f) => `      ${f.lines.toString().padStart(5)}  ${f.path}`).join("\n"),
         )
         .join("\n") +
@@ -67,39 +69,33 @@ test("every skill's mandated reading stays inside its budget", () => {
 test("the measured total is the body PLUS mandated reading, not the body alone", () => {
   for (const skill of SKILLS) {
     const files = mandatedFiles(skill);
-    const bodyOnly = countLines(files[0].text);
-    const { total } = mandatedLineCount(skill);
     assert.ok(files.length > 1, `${skill} must mandate at least one reference file`);
-    assert.ok(total > bodyOnly, `${skill}: total (${total}) must exceed body-only (${bodyOnly})`);
+    assert.ok(
+      measure(skill).total > countLines(files[0].text),
+      `${skill}: total must exceed body-only`,
+    );
   }
 });
 
 test("relocating prose from a body into mandated reading does not reduce the total", () => {
-  // The loophole, exercised directly rather than asserted about. Moving a block
-  // between two files that are BOTH measured must leave the sum unchanged.
-  const before = mandatedLineCount("rca-setup").total;
-
-  const files = mandatedFiles("rca-setup");
-  const body = files[0].text;
-  const ref = files[1].text;
+  // Sum the same file set three ways. An earlier version carried a term identical
+  // on both sides of the equality, so it cancelled out and proved nothing.
+  const texts = mandatedFiles("rca-setup").map((f) => f.text);
+  const sum = (ts) => ts.reduce((n, t) => n + countLines(t), 0);
   const block = "\n\nSome relocated paragraph.\nA second line of it.\n";
 
-  const movedIntoRef = countLines(body) + countLines(ref + block) + sumRest(files);
-  const inBody = countLines(body + block) + countLines(ref) + sumRest(files);
-  assert.equal(movedIntoRef, inBody, "a relocation must be budget-neutral");
-  assert.equal(inBody, before + 2, "and adding two lines must cost exactly two");
+  const inBody = sum([texts[0] + block, ...texts.slice(1)]);
+  const inReference = sum([texts[0], texts[1] + block, ...texts.slice(2)]);
 
-  function sumRest(fs) {
-    return fs.slice(2).reduce((n, f) => n + countLines(f.text), 0);
-  }
+  assert.equal(inBody, inReference, "a relocation must be budget-neutral");
+  assert.equal(inBody, sum(texts) + 2, "and two added lines must cost exactly two");
 });
 
-test("the over-ceiling path fails, asserted against a fixture rather than real bodies", () => {
+test("the over-ceiling comparison fails when the ceiling is below the measured total", () => {
   // A loose ceiling measured against the real bodies would pass by construction and
   // ship a check whose failure path has never executed.
-  const r = mandatedLineCount("rca-setup", { ceiling: 1 });
-  assert.equal(r.over, true, "a ceiling of 1 must be exceeded");
-  assert.ok(r.total > 1);
+  const r = measure("rca-setup");
+  assert.ok(r.total > 1, "a ceiling of 1 must be exceeded");
   assert.ok(r.perFile.length > 1, "and the report must name every file that contributed");
 });
 

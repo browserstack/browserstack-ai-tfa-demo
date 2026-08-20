@@ -15,9 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { mandatedReading } from "./helpers/mandated-reading.mjs";
-
-const ROOT = new URL("..", import.meta.url).pathname;
+import { ROOT, mandatedReading } from "./helpers/mandated-reading.mjs";
 
 /** Every .md under the dirs an agent actually reads. */
 function promptText() {
@@ -118,13 +116,18 @@ test("the run skill's gate wires the setup context in, above the connector defau
       "position of invocation args and inference to whoever reads it",
   );
 
-  const contextBlock = skill.indexOf("Resolve intake from the context FIRST");
+  // Anchored on `resolveIntake(` rather than on the adapter's marker sentence. The
+  // invariant is "the gate resolves context before consulting connector defaults",
+  // which survives milestone 2 deleting the scaffolding; pinning the marker prose
+  // would mean the rewrite has to edit this test, which is exactly the friction
+  // that keeps scaffolding alive.
+  const resolvesContext = skill.indexOf("resolveIntake(");
   const intakeDefaults = skill.indexOf("Check the selected connector skill's own intake-defaults");
-  assert.ok(contextBlock > 0, "Part B must have a context-resolution block");
+  assert.ok(resolvesContext > 0, "Part B must call resolveIntake");
   assert.ok(intakeDefaults > 0, "and the intake-defaults paragraph must still be there");
   assert.ok(
-    contextBlock < intakeDefaults,
-    "the context block must come BEFORE intake defaults — below them it is invisible",
+    resolvesContext < intakeDefaults,
+    "resolveIntake must be reached BEFORE intake defaults — below them the context is invisible",
   );
 
   // A JS fence naming the function, following the discoverWorkspaceRoot snippet
@@ -204,6 +207,8 @@ const INTERNAL = new Set([
   "cachePut", "cacheStats", "mcpCacheKey",
   // probe validation — imported by lib/capability-table.mjs, never by an agent.
   "isProbeRunnable", "isPermittedProbeLeader",
+  // replay seam, same classification as loop.mjs's replaySubmit/replayRead
+  "replayProbe",
 ]);
 
 // `mandatedReading` is shared with tests/prose-budget.test.mjs — see

@@ -10,7 +10,7 @@
 //   - parse / version / missing-field are three distinct named errors, never a
 //     silent fall-through to "no context".
 
-import { test, beforeEach, afterEach } from "node:test";
+import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -28,26 +28,33 @@ import {
   startOfRunRefusal,
   writeRcaContext,
 } from "../lib/rca-context.mjs";
+import { FAKE } from "./helpers/fake-credentials.mjs";
 
 let ws, productRepo, automationRepo, pluginDir;
 
 const g = (dir, ...a) =>
   execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
+// `git init` only. Nothing here needs a commit: check-ignore, rev-parse
+// --show-toplevel, `git add` and `git show :path` all work on an empty repo, and
+// dropping the seed commit removes four spawns (config ×2, add, commit) per repo.
 function initRepo(dir) {
   mkdirSync(dir, { recursive: true });
   g(dir, "init", "-q");
-  g(dir, "config", "user.email", "t@t.t");
-  g(dir, "config", "user.name", "t");
-  writeFileSync(join(dir, "README.md"), "x\n");
-  g(dir, "add", ".");
-  g(dir, "commit", "-qm", "init");
   return dir;
 }
 
-// A realistic workspace: two sibling clones plus the plugin checked out beside
-// them. That sibling shape is exactly what a parent-only walk cannot see.
-beforeEach(() => {
+/**
+ * Build the workspace ON DEMAND.
+ *
+ * A realistic layout — two sibling clones plus the plugin checked out beside them,
+ * which is the shape a parent-only walk cannot see. But 12 of this file's tests
+ * touch no filesystem at all (refusal policy, intake precedence, secret scanning),
+ * and building three git repos for them cost 8.3s of a 9.0s run. Per-test isolation
+ * is still real; it is just no longer paid for by tests that do not use it.
+ */
+function workspace() {
+  if (ws) return;
   // realpath because git reports realpaths and the module canonicalizes to match:
   // on macOS /var is a symlink to /private/var, so an un-resolved fixture path
   // would compare unequal to a correct result.
@@ -55,8 +62,13 @@ beforeEach(() => {
   productRepo = initRepo(join(ws, "api"));
   automationRepo = initRepo(join(ws, "e2e-tests"));
   pluginDir = initRepo(join(ws, "browserstack-ai-tfa-demo"));
+}
+
+afterEach(() => {
+  if (!ws) return;
+  rmSync(ws, { recursive: true, force: true });
+  ws = productRepo = automationRepo = pluginDir = undefined;
 });
-afterEach(() => rmSync(ws, { recursive: true, force: true }));
 
 const validContext = (over = {}) => ({
   schemaVersion: SCHEMA_VERSION,
@@ -78,6 +90,7 @@ const validContext = (over = {}) => ({
 // ---- round trip -------------------------------------------------------------
 
 test("write then read round-trips every portable field, including the overlay", () => {
+  workspace();
   const context = validContext({
     capabilities: { logs: { scopeFields: { logIndex: { consumer: "log sweep target" } } } },
   });
@@ -92,6 +105,7 @@ test("write then read round-trips every portable field, including the overlay", 
 });
 
 test("a provider-managed credential round-trips and emits no environment-variable name", () => {
+  workspace();
   const context = validContext({
     credentials: { github: { kind: CREDENTIAL_KIND.PROVIDER_MANAGED } },
   });
@@ -102,6 +116,7 @@ test("a provider-managed credential round-trips and emits no environment-variabl
 });
 
 test("a partial context reads back with its verified capabilities intact", () => {
+  workspace();
   const context = validContext({
     complete: false,
     verified: { github: { ok: true } },
@@ -118,6 +133,7 @@ test("a partial context reads back with its verified capabilities intact", () =>
 // ---- the not-hardened guarantee --------------------------------------------
 
 test("the artifact is NOT owner-only, unlike every other persisted file in lib/", () => {
+  workspace();
   writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
   const mode = statSync(join(productRepo, CONTEXT_FILENAME)).mode & 0o777;
   assert.notEqual(mode, 0o600, "0600 on a git-tracked path is wrong and git will not preserve it");
@@ -134,6 +150,7 @@ test("the module contains no hardening call — the guard is the absence, so ass
 });
 
 test("a written context is actually tracked by git after add", () => {
+  workspace();
   writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
   g(productRepo, "add", CONTEXT_FILENAME);
   const shown = g(productRepo, "show", `:${CONTEXT_FILENAME}`);
@@ -143,6 +160,7 @@ test("a written context is actually tracked by git after add", () => {
 // ---- read resolution --------------------------------------------------------
 
 test("read resolution finds a context in a SIBLING repo, which a parent-only walk cannot", () => {
+  workspace();
   // The failure this prevents: a context committed to the product repo, a run
   // started from the automation repo, and a no-context refusal on a machine that
   // is fully set up.
@@ -152,6 +170,7 @@ test("read resolution finds a context in a SIBLING repo, which a parent-only wal
 });
 
 test("the plugin's own directory is never selected, even when it holds a candidate", () => {
+  workspace();
   // The documented install flow is `git clone <plugin> && cd <plugin>`, so cwd IS
   // the plugin on a first run. A context there is inherited by nobody.
   writeFileSync(
@@ -164,6 +183,7 @@ test("the plugin's own directory is never selected, even when it holds a candida
 });
 
 test("a candidate whose declared home repo does not match its directory is skipped", () => {
+  workspace();
   writeFileSync(
     join(automationRepo, CONTEXT_FILENAME),
     JSON.stringify(validContext({ homeRepo: "acme/some-other-repo" })),
@@ -175,6 +195,7 @@ test("a candidate whose declared home repo does not match its directory is skipp
 // ---- write resolution -------------------------------------------------------
 
 test("write resolution targets the declared home repo's worktree root, not cwd", () => {
+  workspace();
   const nested = join(productRepo, "services", "billing");
   mkdirSync(nested, { recursive: true });
   const w = writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: nested });
@@ -182,6 +203,7 @@ test("write resolution targets the declared home repo's worktree root, not cwd",
 });
 
 test("a home repo that is not a git working tree refuses with a named fix", () => {
+  workspace();
   const plain = join(ws, "not-a-repo");
   mkdirSync(plain);
   const w = writeRcaContext({
@@ -195,6 +217,7 @@ test("a home repo that is not a git working tree refuses with a named fix", () =
 });
 
 test("a home repo outside the verified set is refused", () => {
+  workspace();
   const w = writeRcaContext({
     context: validContext({ homeRepo: "acme/unverified" }),
     verifiedRepos: ["acme/api"],
@@ -205,6 +228,7 @@ test("a home repo outside the verified set is refused", () => {
 });
 
 test("a destination matched by a gitignore rule is refused, naming the rule", () => {
+  workspace();
   writeFileSync(join(productRepo, ".gitignore"), `${CONTEXT_FILENAME}\n`);
   const w = writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
   assert.equal(w.ok, false);
@@ -216,6 +240,7 @@ test("a destination matched by a gitignore rule is refused, naming the rule", ()
 // ---- fail loud on drift -----------------------------------------------------
 
 test("an unparseable context is a parse error, never a silent missing context", () => {
+  workspace();
   // A hand-resolved merge conflict is the realistic source. Degrading to "no
   // context" would trigger a full re-interview and look like the feature
   // forgetting the customer.
@@ -228,6 +253,7 @@ test("an unparseable context is a parse error, never a silent missing context", 
 });
 
 test("an older schemaVersion is a version error naming both versions", () => {
+  workspace();
   writeFileSync(join(productRepo, CONTEXT_FILENAME), JSON.stringify(validContext({ schemaVersion: 0 })));
   const r = readRcaContext({ from: productRepo });
   assert.equal(r.ok, false);
@@ -237,6 +263,7 @@ test("an older schemaVersion is a version error naming both versions", () => {
 });
 
 test("a missing required field is reported by name", () => {
+  workspace();
   const bad = validContext();
   delete bad.homeRepo;
   delete bad.complete;
@@ -248,6 +275,7 @@ test("a missing required field is reported by name", () => {
 });
 
 test("no context at all is its own distinct code", () => {
+  workspace();
   const r = readRcaContext({ from: automationRepo });
   assert.equal(r.ok, false);
   assert.equal(r.code, "no-context");
@@ -255,40 +283,31 @@ test("no context at all is its own distinct code", () => {
 
 // ---- the write-time secret guard -------------------------------------------
 
-// Assembled at runtime, never written as literals: a test file full of
-// token-shaped strings trips every secret scanner in CI, and this repo's
-// pre-commit guard rejects it outright.
-const mixedBody = (n) => {
-  let s = "";
-  for (let i = 0; s.length < n; i++) s += "aB3"[i % 3];
-  return s.slice(0, n);
-};
-const FAKE_PAT = "gh" + "p_" + mixedBody(36);
-const FAKE_HIGH_ENTROPY = mixedBody(40);
-
 test("a credential-shaped value is refused ANYWHERE, including the credential field itself", () => {
+  workspace();
   // No field is exempt. The credential-reference field is exactly where a pasted
   // secret most plausibly lands, so exempting it would leave the likeliest leak
   // unguarded.
   const placements = [
-    ["credentials.github.name", validContext({ credentials: { github: { kind: "env-var", name: FAKE_PAT } } })],
-    ["baseBranch", validContext({ baseBranch: FAKE_PAT })],
-    ["repos[0]", validContext({ repos: [FAKE_HIGH_ENTROPY] })],
-    ["nested overlay", validContext({ capabilities: { logs: { note: FAKE_PAT } } })],
+    ["credentials.github.name", validContext({ credentials: { github: { kind: "env-var", name: FAKE.githubPat } } })],
+    ["baseBranch", validContext({ baseBranch: FAKE.githubPat })],
+    ["repos[0]", validContext({ repos: [FAKE.highEntropy] })],
+    ["nested overlay", validContext({ capabilities: { logs: { note: FAKE.githubPat } } })],
   ];
   for (const [where, context] of placements) {
     const w = writeRcaContext({ context, verifiedRepos: ["acme/api"], from: productRepo });
     assert.equal(w.ok, false, `${where} must be refused`);
     assert.equal(w.code, "secret-in-field");
     assert.ok(w.fields.length > 0, "and must name where it was");
-    assert.ok(!JSON.stringify(w).includes(FAKE_PAT), "without echoing the value it refused");
+    assert.ok(!JSON.stringify(w).includes(FAKE.githubPat), "without echoing the value it refused");
     assert.match(w.message, /rotate/i, "and must say to rotate it");
   }
 });
 
 test("the refused write leaves no file behind", () => {
+  workspace();
   const w = writeRcaContext({
-    context: validContext({ baseBranch: FAKE_PAT }),
+    context: validContext({ baseBranch: FAKE.githubPat }),
     verifiedRepos: ["acme/api"],
     from: productRepo,
   });
@@ -297,19 +316,21 @@ test("the refused write leaves no file behind", () => {
 });
 
 test("findSecretFields names the path but never the value", () => {
-  const hits = findSecretFields(validContext({ baseBranch: FAKE_PAT }));
+  const hits = findSecretFields(validContext({ baseBranch: FAKE.githubPat }));
   assert.equal(hits.length, 1);
   assert.equal(hits[0].path, "baseBranch");
   assert.equal(hits[0].kind, "github-pat");
-  assert.ok(!JSON.stringify(hits).includes(FAKE_PAT));
+  assert.ok(!JSON.stringify(hits).includes(FAKE.githubPat));
 });
 
 test("the ordinary values a real context holds are not refused", () => {
+  workspace();
   const w = writeRcaContext({ context: validContext(), verifiedRepos: ["acme/api"], from: productRepo });
   assert.equal(w.ok, true, `a legitimate context must persist: ${w.message ?? ""}`);
 });
 
 test("a complete context whose GitHub is unverified is refused — write a partial instead", () => {
+  workspace();
   // The skill body says "GitHub never persists as unverified". A sentence an agent
   // has to obey is exactly the enforcement this milestone exists to replace, so the
   // rule is a guard: the state it forbids is one every run would refuse, with no
@@ -327,6 +348,7 @@ test("a complete context whose GitHub is unverified is refused — write a parti
 });
 
 test("the same context as a partial is accepted", () => {
+  workspace();
   const w = writeRcaContext({
     context: validContext({ complete: false, verified: { infra: { ok: true } } }),
     verifiedRepos: ["acme/api"],
@@ -346,6 +368,7 @@ test("no context refuses and points at setup", () => {
 });
 
 test("a present-but-unreadable context is a DIFFERENT refusal from an absent one", () => {
+  workspace();
   // Telling someone to run setup when their context is merely conflict-marked
   // throws away every answer they already gave. This is the case a prose list of
   // refusals forgets, because it looks like "no context" until you look closely.
@@ -433,6 +456,7 @@ test("empty strings and nulls do not win a field", () => {
 });
 
 test("contextHomeDir is reusable on its own for the digest", () => {
+  workspace();
   const h = contextHomeDir({ homeRepo: "acme/api", verifiedRepos: ["acme/api"], from: automationRepo });
   assert.equal(h.ok, true);
   assert.equal(h.dir, productRepo);

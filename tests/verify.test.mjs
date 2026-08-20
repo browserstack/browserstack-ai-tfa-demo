@@ -27,44 +27,12 @@ import {
 } from "../lib/verify.mjs";
 import { redact } from "../lib/tool-cache.mjs";
 import { loadCapabilityTable } from "../lib/capability-table.mjs";
+import { FAKE } from "./helpers/fake-credentials.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const config = JSON.parse(readFileSync(join(ROOT, "config/rca.config.json"), "utf8"));
 const { table } = loadCapabilityTable(config);
 
-const NOW = 1_800_000_000_000; // pinned clock, per house convention
-
-// Fixture credentials are ASSEMBLED at runtime and never written as literals.
-// A test file full of token-shaped strings trips every secret scanner forever —
-// this repo's own pre-commit guard rejected exactly that, correctly. The runtime
-// values are identical to literals; only the source representation changes, so the
-// detector is exercised just as hard.
-const mixedBody = (n) => {
-  let s = "";
-  for (let i = 0; s.length < n; i++) s += "aB3"[i % 3];
-  return s.slice(0, n);
-};
-const upperBody = (n) => {
-  let s = "";
-  for (let i = 0; s.length < n; i++) s += "A1B2"[i % 4];
-  return s.slice(0, n);
-};
-const hexBody = (n) => {
-  let s = "";
-  for (let i = 0; s.length < n; i++) s += "9f2b1c"[i % 6];
-  return s.slice(0, n);
-};
-
-const FAKE = {
-  githubPat: "gh" + "p_" + mixedBody(36),
-  githubFine: "github" + "_pat_" + mixedBody(30),
-  gitlabPat: "gl" + "pat-" + mixedBody(20),
-  awsKeyId: "AK" + "IA" + upperBody(16),
-  slackToken: "xo" + "xb-" + mixedBody(30),
-  apiKey: "s" + "k-" + mixedBody(32),
-  highEntropy: mixedBody(40),
-  gitSha: hexBody(40),
-};
 
 // ---- the P0: bare-token detection ------------------------------------------
 
@@ -168,7 +136,6 @@ test("a capability valid for one target and 404 on another stays valid for the t
     targets: [{ field: "repo", value: "acme/api" }, { field: "repo", value: "acme/ghost" }],
     scope: { branch: "main" },
     runProbe,
-    nowMs: NOW,
   });
   assert.equal(r.verified, true, "one passing target keeps the capability usable");
   assert.deepEqual(r.targets.filter((t) => t.ok).map((t) => t.value), ["acme/api"]);
@@ -192,7 +159,6 @@ test("every failure record names a next action and carries no raw provider outpu
     scope: { branch: "main" },
     runProbe,
     envVar: "GH_TOKEN",
-    nowMs: NOW,
   });
   const serialized = JSON.stringify(r);
   assert.ok(!serialized.includes(FAKE.githubPat), "no record may carry a secret-shaped string");
@@ -211,7 +177,6 @@ test("gh absent and no GitHub MCP present refuses, naming the install (AE3)", ()
     scope: { repo: "acme/api", branch: "main" },
     env: { executables: [], mcpServers: [] },
     runProbe: replayProbe({}),
-    nowMs: NOW,
   });
   assert.equal(r.verified, false);
   assert.equal(r.blocking, true, "GitHub is the one capability that stops setup");
@@ -228,7 +193,6 @@ test("gh absent but a GitHub MCP present verifies through the injected MCP probe
     env: { executables: [], mcpServers: ["github-mcp"] },
     runProbe: replayProbe({ "mcp:github/get_repository": { ok: true, stdout: "{}" } }),
     prList: { mergedCount: 4, windowDays: PR_WINDOW_DAYS },
-    nowMs: NOW,
   });
   assert.equal(r.verified, true);
   assert.equal(r.via, "mcp");
@@ -245,7 +209,6 @@ test("a repo read plus a PR list on the base branch verifies GitHub with both ta
       "gh pr list --base main --limit 1": { ok: true, stdout: "#1\n" },
     }),
     prList: { mergedCount: 7, windowDays: PR_WINDOW_DAYS },
-    nowMs: NOW,
   });
   assert.equal(r.verified, true);
   assert.equal(r.via, "cli");
@@ -257,7 +220,7 @@ test("a repo read plus a PR list on the base branch verifies GitHub with both ta
 
 test("the PR window is a fixed 30-day lookback, independent of any build", () => {
   assert.equal(PR_WINDOW_DAYS, 30);
-  const w = prWindowWarning({ mergedCount: 0, windowDays: PR_WINDOW_DAYS, branch: "main", nowMs: NOW });
+  const w = prWindowWarning({ mergedCount: 0, windowDays: PR_WINDOW_DAYS, branch: "main" });
   assert.ok(w, "an empty window warns");
   assert.match(w.message, /30/);
   assert.equal(w.code, "empty-pr-window");
@@ -273,7 +236,6 @@ test("an empty PR window completes setup and persists a warning rather than bloc
       "gh pr list --base release-42 --limit 1": { ok: true, stdout: "" },
     }),
     prList: { mergedCount: 0, windowDays: PR_WINDOW_DAYS },
-    nowMs: NOW,
   });
   assert.equal(r.verified, true, "the branch is reachable; the window is merely empty");
   assert.equal(r.blocking, false);
@@ -283,7 +245,7 @@ test("an empty PR window completes setup and persists a warning rather than bloc
 });
 
 test("merged PRs inside the window raise no warning", () => {
-  assert.equal(prWindowWarning({ mergedCount: 3, windowDays: 30, branch: "main", nowMs: NOW }), null);
+  assert.equal(prWindowWarning({ mergedCount: 3, windowDays: 30, branch: "main" }), null);
 });
 
 // ---- access level -----------------------------------------------------------
@@ -298,7 +260,6 @@ test("a broader-than-required scope warns alongside a successful verification, n
       "gh pr list --base main --limit 1": { ok: true, stdout: "#1\n" },
     }),
     prList: { mergedCount: 2, windowDays: PR_WINDOW_DAYS },
-    nowMs: NOW,
   });
   assert.equal(r.verified, true, "the warning must not replace the pass");
   assert.equal(r.accessLevel.state, ACCESS_LEVEL.REPORTED);
@@ -319,7 +280,6 @@ test("an auth method that reports no scopes yields the not-reportable state, not
       "gh pr list --base main --limit 1": { ok: true, stdout: "#1\n" },
     }),
     prList: { mergedCount: 2, windowDays: PR_WINDOW_DAYS },
-    nowMs: NOW,
   });
   assert.equal(r.accessLevel.state, ACCESS_LEVEL.NOT_REPORTABLE);
   assert.equal(r.warnings.filter((w) => w.code === "over-broad-scope").length, 0);
@@ -337,7 +297,6 @@ test("a mistyped branch produces a near-match suggestion in its next action", ()
       "gh pr list --base mian --limit 1": { ok: false, raw: "HTTP 404: Not Found" },
     }),
     candidates: { baseBranch: ["main", "master", "develop"] },
-    nowMs: NOW,
   });
   assert.equal(r.verified, false);
   const failed = r.targets.find((t) => !t.ok);
@@ -407,7 +366,6 @@ test("no verification result in this suite serializes a secret-shaped string", (
             raw: `401 Bad credentials Authorization: Bearer ${FAKE.githubPat}`,
           },
         }),
-        nowMs: NOW,
       }),
     () =>
       verifyCapability({
@@ -421,7 +379,6 @@ test("no verification result in this suite serializes a secret-shaped string", (
             raw: `error: You must be logged in. token=${FAKE.awsKeyId}`,
           },
         }),
-        nowMs: NOW,
       }),
   ];
   for (const run of scenarios) {
@@ -439,7 +396,6 @@ test("every failure record produced anywhere in this suite has a non-empty next 
     targets: [{ field: "logIndex", value: "app-logs" }],
     scope: { logIndex: "app-logs", logsMcpTool: "loki/query" },
     runProbe: replayProbe({ "mcp:loki/query": { ok: false, raw: "HTTP 403: forbidden" } }),
-    nowMs: NOW,
   });
   const gaps = r.targets.filter((t) => !t.ok).map((t) => t.gap);
   assert.ok(gaps.length > 0, "fixture must produce a failure, else it proves nothing");

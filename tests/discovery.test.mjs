@@ -9,20 +9,18 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { discover, interpolate, preFillFromConnectorSkills } from "../lib/discovery.mjs";
 import { buildManifest, unavailableCapabilities } from "../lib/routing.mjs";
 import { loadCapabilityTable } from "../lib/capability-table.mjs";
+import { discoveryFixtures } from "./helpers/discovery-fixtures.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const config = JSON.parse(readFileSync(join(ROOT, "config/rca.config.json"), "utf8"));
 const { table } = loadCapabilityTable(config);
 
-const FIXTURE_DIR = join(ROOT, "tests/fixtures/discovery");
-const fixtures = readdirSync(FIXTURE_DIR)
-  .filter((f) => f.endsWith(".json"))
-  .map((f) => ({ file: f, ...JSON.parse(readFileSync(join(FIXTURE_DIR, f), "utf8")) }));
+const fixtures = discoveryFixtures();
 
 test("discovery fixtures exist and cover every seeded capability", () => {
   assert.ok(fixtures.length >= 5, "fixture set must not shrink silently");
@@ -110,18 +108,50 @@ test("only GitHub's questions are marked mandatory", () => {
   assert.deepEqual(mandatoryCaps, ["github"]);
 });
 
-test("the widened manifest entry carries scope and tag without breaking routeAsk's two fields", () => {
+test("the manifest stays {available, via}; setup-facing data lives on discovered[]", () => {
+  // An earlier draft widened the manifest entry with resolvedScope/unresolvedFields/
+  // tag/gapClass. Nothing read them there — routeAsk branches on `available` and
+  // reads `via`, and the setup flow consumes those fields from THIS array without
+  // ever calling buildManifest. Asserting the narrow shape keeps the run-path entry
+  // from re-accreting fields no caller reads.
   const { discovered } = discover({ table, env: { executables: ["gh"], mcpServers: [], repoFiles: [] } });
   const manifest = buildManifest(config, discovered);
+
+  assert.deepEqual(Object.keys(manifest.github).sort(), ["available", "via"]);
+  assert.deepEqual(Object.keys(manifest.infra).sort(), ["available", "via"]);
   assert.equal(manifest.github.available, true);
   assert.equal(manifest.github.via, "gh");
-  assert.equal(manifest.github.tag, "detected");
-  assert.deepEqual(manifest.github.resolvedScope, {});
-  assert.ok(Array.isArray(manifest.github.unresolvedFields));
-  // An undiscovered capability carries no tag: the interview may still answer or
-  // skip it, and verification may still fail it.
-  assert.equal(manifest.infra.tag, null);
-  assert.equal(manifest.infra.gapClass, null);
+  assert.equal(manifest.infra.available, false);
+
+  // The scope data setup actually consumes, on the array that carries it.
+  const gh = discovered.find((d) => d.capability === "github");
+  assert.deepEqual(gh.resolvedScope, {});
+  assert.deepEqual(gh.unresolvedFields.sort(), ["baseBranch", "repos", "subpaths"]);
+  assert.equal(gh.tag, "detected");
+});
+
+test("a fingerprint is a needle, not a haystack — one-way containment only", () => {
+  // Two-way containment made the fingerprint "github-mcp" match a server named
+  // "hub", "git" or even "it": GitHub reported as discovered on a machine with no
+  // GitHub MCP, which then disagreed with verification's one-way rule and produced
+  // a hard refusal on the same machine.
+  for (const server of ["hub", "git", "it", "mcp"]) {
+    const { discovered } = discover({ table, env: { executables: [], mcpServers: [server], repoFiles: [] } });
+    assert.deepEqual(discovered, [], `an MCP server named '${server}' must not satisfy any fingerprint`);
+  }
+  // And the real thing still matches.
+  for (const server of ["github-mcp", "mcp__github__create_issue", "claude_ai_GitHub"]) {
+    const { discovered } = discover({ table, env: { executables: [], mcpServers: [server], repoFiles: [] } });
+    assert.deepEqual(discovered.map((d) => d.capability), ["github"], server);
+  }
+});
+
+test("a file fingerprint matches only on a path boundary", () => {
+  const hit = (repoFiles) =>
+    discover({ table, env: { executables: [], mcpServers: [], repoFiles } }).discovered.map((d) => d.capability);
+  assert.deepEqual(hit(["k8s/deployment.yaml"]), ["infra"], "k8s/ matches its own directory");
+  assert.deepEqual(hit(["k8something/deployment.yaml"]), [], "but not a directory that merely starts the same");
+  assert.deepEqual(hit([".github/workflows/test.yml"]), ["github"]);
 });
 
 // ---- connector-skill pre-fill ----------------------------------------------

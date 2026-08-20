@@ -252,29 +252,13 @@ write an empty CSV, report "no failed tests", stop.
 
 ## Step 3 — clustering (see `<pluginRoot>/skills/rca-build/references/clustering.md`)
 
-Each cluster gets one **representative** (full multi-turn loop) and `N−1`
-**siblings** (pre-seeded one-turn confirm against their own logs). This collapses
-the expensive evidence hunt to O(distinct causes) while every test still lands a
-per-test RCA. Singleton clusters are just plain per-test loops.
+Cluster from the server's failure themes so each *cause* runs one
+**representative** (full loop) + `N−1` **siblings** (one-turn confirm) while every
+test still lands a per-test RCA; no themes → every test its own singleton.
 
-Clustering comes from the server's failure themes only — poll cadence and
-rationale in `references/clustering.md`.
-
-1. Call `getBuildFailureThemes(buildUuid=<build id>)` (triggers + polls in-call,
-   ≤~90s; safe to await inline).
-2. **`ready: true`** → for each `buildThemes` entry, call
-   `listTestsInFailureTheme(buildUuid=<build id>, themeId=<buildFailureThemeId>)`,
-   following `nextCursor` to exhaustion for its member testRunIds, then
-   `lib/theme-clustering.mjs` → `clustersFromThemes(rows, themesResult,
-   testsByThemeId)`. Any test the server didn't assign still gets its own singleton.
-3. **`ready: false`** → `clustersFromThemes(readRows(csvPath), { buildThemes: [] }, {})`
-   → every failed test its own `solo-` cluster (all representatives). No local guess.
-
-`rows` MUST be `readRows(csvPath)` (the CSV Step 2 seeded), never a `listTestIds`
-variable held over from earlier in the turn. `clustersFromThemes` mutates
-`cluster_id` but does NOT persist — `writeRows(csvPath, rows)` before fan-out, then
-verify: **if `cluster_id` is empty on any row, Step 3 did not take effect** — do not
-proceed.
+**Run the call sequence and invariants in `references/clustering.md` (§ Running
+it).** After it, `writeRows(csvPath, rows)` and verify: if any row's `cluster_id`
+is empty, Step 3 did not take effect — do not proceed.
 
 ## Step 4 — build-evidence pre-fetch (see `<pluginRoot>/skills/rca-build/references/evidence-routing.md` and `<pluginRoot>/lib/evidence-file.mjs`)
 

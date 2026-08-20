@@ -29,6 +29,23 @@ guess would conflate them.
 own `solo-` cluster — i.e. **all tests become representatives**, each running a
 full per-test loop. Correctness over the cost collapse: no local guessing.
 
+## Running it (Step 3)
+
+1. `getBuildFailureThemes(buildUuid=<build id>)` — triggers + polls in-call
+   (≤~90s, safe to await inline; cadence above).
+2. **`ready: true`** → for each `buildThemes` entry, call
+   `listTestsInFailureTheme(buildUuid=<build id>, themeId=<buildFailureThemeId>)`,
+   following `nextCursor` to exhaustion for its member testRunIds, then
+   `clustersFromThemes(rows, themesResult, testsByThemeId)`. Any test the server
+   didn't assign still gets its own singleton.
+3. **`ready: false`** → `clustersFromThemes(readRows(csvPath), { buildThemes: [] }, {})`.
+
+**Invariants.** `rows` MUST be `readRows(csvPath)` (the CSV Step 2 seeded), never a
+`listTestIds` variable held over from earlier in the turn. `clustersFromThemes`
+mutates `cluster_id` but does NOT persist — `writeRows(csvPath, rows)` before fan-out,
+then verify: **if any row's `cluster_id` is empty, Step 3 did not take effect — do not
+proceed.**
+
 ## Representative + siblings
 
 Each cluster gets:

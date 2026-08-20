@@ -19,6 +19,7 @@ import {
   readBaseFile,
   hasTrustworthyPrList,
   recomputeCoverage,
+  assertGithubEntry,
 } from "../lib/evidence-file.mjs";
 
 let dir;
@@ -29,6 +30,39 @@ beforeEach(() => {
   file = join(dir, "evidence.json");
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+// --- assertGithubEntry: the write-boundary guard that would have caught the
+// real prod bug (a hand-rolled {deployState, prCount5d, topPRs} blob that
+// readers ignore because they only read prsInWindow). ---
+
+test("assertGithubEntry: rejects the exact prod mis-shape (topPRs/prCount5d)", () => {
+  assert.throws(
+    () => assertGithubEntry({ deployState: { sha: "x" }, prCount5d: 6, topPRs: [] }, "repo-A"),
+    /unknown key\(s\) \[prCount5d, topPRs\]/,
+  );
+});
+
+test("assertGithubEntry: accepts the canonical shape", () => {
+  assert.doesNotThrow(() =>
+    assertGithubEntry({ deployState: { sha: "x" }, prsInWindow: [{ pr: 1, files: ["a.js"] }], prsSearched: true, gap: null }, "repo-A"),
+  );
+  assert.doesNotThrow(() => assertGithubEntry({ gap: "unreachable" }, "repo-A"));
+  assert.doesNotThrow(() => assertGithubEntry({ deployState: null }, "repo-A"));
+});
+
+test("assertGithubEntry: rejects non-object and non-array prsInWindow", () => {
+  assert.throws(() => assertGithubEntry(null, "r"), /must be an object/);
+  assert.throws(() => assertGithubEntry([], "r"), /must be an object/);
+  assert.throws(() => assertGithubEntry({ prsInWindow: "nope" }, "r"), /prsInWindow must be an array/);
+});
+
+test("setCodeEvidence: propagates the guard — a mis-shaped entry throws, no dead file shipped", () => {
+  initEvidenceFile(file, "b1", 1000);
+  assert.throws(
+    () => setCodeEvidence(file, "repo-A", { deployState: { sha: "x" }, topPRs: [{ number: 1 }] }, 2000),
+    /unknown key\(s\) \[topPRs\]/,
+  );
+});
 
 test("evidencePathFor: build id is in the filename, default dir is OS temp", () => {
   const p = evidencePathFor("abc123XYZ");

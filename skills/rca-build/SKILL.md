@@ -287,26 +287,29 @@ progress line should say `Evidence pre-fetch (Step 4) + turn-1 pre-dispatch
 3. For each repo: run the connector skill's PR-window-search + deploy-state
    recipes **once**, using `lib/evidence-cache.mjs`'s `compute(repo, range,
 evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
-   Digest the result into the `evidence-block.md` shape, then persist via
+   Persist the deploy-state via
    `setCodeEvidence(path, repo, {deployState, prsInWindow, gap}, nowMs)`.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 
-   **Every repo's PR-window search is independent — fire all of them as
-   parallel tool calls in ONE message.**
-
-   **`--json` on THIS FIRST `gh pr list` call MUST include `files`.** A
-   PR-list call that omits `files` here forces a per-PR `gh pr view --json
-   files` backfill loop downstream. `--json files` costs nothing extra on the
-   list call.
+   **For the PR window, do NOT hand-build the entry — use the deterministic
+   helper**, once per repo, all repos fired as parallel tool calls in ONE message:
 
    ```bash
-   gh pr list -R <org>/<repo> --state merged --base <branch> \
-     --search 'merged:<from>..<to>' --json number,title,mergedAt,url,files --limit 100
+   node bin/prefetch-prs.mjs <buildId> <org/repo> <branch> <fromISO> <toISO>
    ```
 
-   Store the paths in each PR's `files` field rather than leaving it `null`:
-   path-overlap is the first falsification test in
+   It runs the `--json number,title,mergedAt,url,files --limit 100` search and
+   writes the **canonical `prsInWindow` (with `files`) + `prsSearched: true`** via
+   `setCodeEvidence`, preserving any `deployState` already recorded. **Never author
+   the github entry by hand** (e.g. a `{prCount5d, topPRs}` blob): readers consume
+   only `prsInWindow`, so a mis-shaped entry silently reads as "never searched" and
+   every coordinator re-fetches the list live. `setCodeEvidence` now **rejects**
+   non-canonical keys (`assertGithubEntry`) so this fails loud instead of shipping a
+   dead file. A non-`gh` GitHub capability pre-fetches through its own connector but
+   writes the identical shape.
+
+   Why `files` matters: path-overlap is the first falsification test in
    `<pluginRoot>/skills/rca-build/references/github-evidence.md`, so with `files` populated a coordinator
    rules a suspect in or out from the evidence file alone, and only fetches a
    diff for the handful that survive. Do NOT pre-fetch diffs — those are large
@@ -527,11 +530,9 @@ Dispatch path, in preference order:
 - **Direct Agent-tool dispatch** — **the default.** Dispatch
   `tfa-rca:ai-tfa-coordinator` subagents in batches of `concurrency` (one message, up
   to `concurrency` tool-use blocks), refilling per the rolling queue above. Honors the
-  JSON `concurrency` literally, so it out-parallelizes the workflow path (whose pool is
-  a CPU-derived cap well below the JSON value). Cost: coordinator output flows back
-  into the orchestrator's context — kept affordable by the compact `RCA_OUTPUT`
-  contract. The trade-off is per-batch streaming: a batch is a barrier (the next batch
-  waits for the slowest in the current one).
+  JSON `concurrency` literally. Coordinator output flows back into the orchestrator's
+  context — kept affordable by the compact `RCA_OUTPUT` contract. A batch is a barrier
+  (the next batch waits for the slowest in the current one).
   **This path has no code enforcing the Step 4b handoff — you are the enforcement.**
   Before dispatching ANY representative, call `readTurn1(turn1PathFor(buildId,
   stateDir), testRunId)` and fold the result into the prompt using this exact mapping
@@ -541,14 +542,10 @@ Dispatch path, in preference order:
   `resolved` → skip the dispatch, use the CSV row's result directly. A swapped field
   is silently wrong, not rejected.
 - **`workflows/rca-batch.mjs`** — **opt-in** (Claude Code, when the Workflow runtime is
-  available). `pipeline(clusters, repStage, siblingStage)` has no barrier between
-  stages (a cluster's siblings start the instant ITS OWN representative resolves), it
-  keeps coordinator output out of the orchestrator's context, and it gives
-  `resumeFromRunId` resumability + a progress UI. Its concurrency is capped by a
-  CPU-derived runtime limit below the JSON value — so it runs *fewer* agents at once
-  than direct dispatch on the same machine. Choose it when the
-  orchestrator's context is the binding constraint (very large builds) or you want the
-  progress UI / resumability — not for raw throughput.
+  available). Keeps coordinator output out of the orchestrator's context and gives
+  `resumeFromRunId` resumability + a progress UI. Runs fewer agents at once than direct
+  dispatch, so choose it when orchestrator context is the constraint (very large
+  builds) or you want the UI/resumability — not for throughput.
 - **Sequential harness `lib/loop.mjs`** (`runRcaLoop`) — hosts without the Workflow
   runtime and without Agent-tool fan-out, one test at a time. Same contract, same
   no-prompt rule.

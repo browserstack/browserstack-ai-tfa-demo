@@ -79,7 +79,12 @@ test("gate-critical lib exports are actually invoked outside tests", () => {
 // than the docs described them, so agents grepped lib/ at runtime to learn the
 // API. Documenting it once fixes today; this test keeps it fixed.
 test("every exported lib helper appears in the SKILL's API reference", () => {
-  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+  // The API surface lives in references/api.md (loaded on-demand at Step 2+);
+  // SKILL.md only points at it. Scan both so the drift guard still fires.
+  const skill =
+    readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8") +
+    "\n" +
+    readFileSync(join(ROOT, "skills/rca-build/references/api.md"), "utf8");
 
   // Internal-by-convention: replay/test seams and trivial helpers a coordinator
   // never calls. Anything NOT listed here must be documented.

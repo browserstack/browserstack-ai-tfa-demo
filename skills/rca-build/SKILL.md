@@ -90,10 +90,10 @@ readTurn1(path, testRunId)   → entry | null
 readAllTurn1(path)           → {testRunId: entry}   run-end stats only
 ```
 
-**Routing / output — `lib/routing.mjs`, `lib/glimpse.mjs`, `lib/evidence-cache.mjs`**
+**Routing — `lib/routing.mjs`, `lib/evidence-cache.mjs`**
 ```
 loadConfig(configPath)  buildManifest(config, discovered)  routeAsks(asks, config, manifest)
-renderGlimpseFromCsv(csvPath, {buildId})    resolveBaseline(lastGreenRef, fallbackRef)
+resolveBaseline(lastGreenRef, fallbackRef)
 ```
 
 **Commands — `bin/`**
@@ -859,9 +859,9 @@ This plugin **never renders or writes a local RCA report, and never surfaces RCA
 detail in Claude.** The in-Claude output is a two-line completion notice plus the
 link — that is all. When every row is terminal:
 
-1. Print the **completion summary** from the CSV (`lib/glimpse.mjs` →
-   `renderGlimpse`): `RCA analysis complete — build <id>` + a status count line
-   (`<N> tests · <R> resolved · <P> pending · <F> failed`). **Nothing per-test.**
+1. Print a one-line **completion summary** by counting the CSV's terminal
+   states: `RCA analysis complete — build <id>` + `<N> tests · <R> resolved ·
+   <P> pending · <F> failed`. **Nothing per-test.**
 2. Call **`triggerRcaReport(buildUuid=<build id>, force=true)`** — **always pass
    `force=true`; never `force=false` in any case.** Forcing regenerates the
    release-readiness report from the RCAs completed so far, so the report is

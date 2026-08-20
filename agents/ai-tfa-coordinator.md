@@ -184,20 +184,14 @@ read-only and has no side effects, so a read is always safe to repeat.
       two consecutive failures, end `PENDING` (note `"likely-context-exceeded"`).
 
 4b-i. **Two DIFFERENT TFA failures, don't confuse them.**
-   - `TFA agent run failed` — handle per 4b (resubmit once, then condensed
-     restart). Two consecutive failures = `context_length_exceeded`; a fresh
-     thread with a condensed message is the only fix.
+   - `TFA agent run failed` — the wedge; handle per 4b (resubmit once, then
+     condensed restart on two consecutive).
+   - `turn expired or not found` — a size rejection, NOT a thread/turn problem.
+     Shorten and resend before assuming the thread is broken.
    - **`turnId` exists ONLY on a soft-`PENDING` turn.** `RESOLVED` /
      `NEEDS_INFO` omit it — `turn_id: not available` is correct there. If you
      end `pending-resume`, you MUST carry the `turnId` into `flip()` — the
      resume path drains that exact turn before submitting anything new.
-
-**`viewRca`**: pass through whatever TFA returns verbatim; do NOT hand-build a
-more specific link. The per-build report URL is produced by `triggerRcaReport`,
-not per test.
-
-`turn expired or not found` — this is a size rejection, not a thread/turn
-     problem. Shorten and resend before assuming the thread is broken.
 
 4b-ii. **Size-check any large fetch before trusting a negative result.** A
    truncated payload turns "grep found nothing" into a silent false negative.

@@ -114,8 +114,11 @@ recite the other candidates the `ls` returned, you skipped this — stop and enu
      consolidated gate question** (Part B rules apply): fold it into the same
      question as any other non-assumable field, e.g. _"Multiple `github` connector
      skills found (`<name-a>`, `<name-b>`); build/failure signatures don't uniquely
-     pick one — which owns this build's failures?"_ Headless: pick the first
-     alphabetically and record the ambiguity as a gap.
+     pick one — which owns this build's failures?"_ Headless (can't ask): do **not**
+     commit to an arbitrary candidate — the wrong product connector means
+     confidently-wrong repo/branch routing, worse than none. Degrade this capability
+     to the raw/generic connector (as in the zero-skills case) and record the
+     unresolved ambiguity as a gap.
   If candidates happen to declare a shared `product:`/`scope:`, use it to keep the
   picked connector set coherent across capabilities — but never *require* it; a name
   prefix is not a signal.

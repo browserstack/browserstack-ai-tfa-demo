@@ -74,44 +74,51 @@ declares `capability: github | infra | logs | metrics | other` **IS** the
 connector for that capability and MUST be added to the manifest — it
 **SUPERSEDES** the raw MCP tool for that capability because it carries
 product-specific routing (repo map, cluster/namespace, branch conventions,
-falsification protocol) the raw tool does not. Record the skill name in the
-manifest entry (e.g. `github: valid, via: gh (skill=<product>-github)`). Skipping
+falsification protocol) the raw tool does not. Record the skill's actual name in
+the manifest entry (e.g. `github: valid, via: gh (skill=<skill-name>)` — whatever
+the skill is really called; there is no required naming convention). Skipping
 this step is the failure mode where the orchestrator dispatches coordinators
 that grep the wrong repos on the wrong branch.
 
-**Disambiguating by product (nudge / one-question rule).** Connector skills are
-product-scoped — a workspace may hold none, one, or several product families
-(e.g. `<product-a>-*`, `<product-b>-*`, whatever the user has). After the `ls`,
-pick the _product family_ whose connector skills apply to THIS build:
+**Disambiguating when >1 skill declares the same capability (nudge / one-question
+rule).** Group the discovered skills **by their declared `capability`** — not by
+name. A capability may have none, one, or several skills claiming it (whatever the
+user has; names are arbitrary). For each capability, pick the skill that applies to
+THIS build:
 
-**Enumerate every family the `ls` returned before opening any one of them**, then
-pick by failure-signature match (step 2 below) — never open just the first family
-and stop. Reading only one when several are present silently degrades to
-"exactly one family, use it" and lands a wrong-family read in Part B. If you can't
-recite the other families the `ls` returned, you skipped this — stop and enumerate.
+**Enumerate every skill claiming a capability before opening any one of them**, then
+pick by failure-signature match (step 2 below) — never open just the first and stop.
+Reading only one when several claim the same capability silently degrades to
+"exactly one, use it" and lands a wrong-connector read in Part B. If you can't
+recite the other candidates the `ls` returned, you skipped this — stop and enumerate.
 
-- **Zero families found** → **nudge the user in the gate summary**:
+- **Zero skills for a capability** → **nudge the user in the gate summary**:
   "No connector-shaped skills found under `.claude/skills/` — proceeding with
   raw MCP tools only; culprit-PR attribution will be best-effort against
-  workspace `git remote` guesses. Add a `<product>-github` / `<product>-infra`
-  skill for higher-fidelity routing." Then proceed with raw connectors. **Do
-  NOT block.**
-- **Exactly one family** → use it. No question.
-- **Multiple families** (e.g. `<product-a>-*` AND `<product-b>-*` …) → try to
-  disambiguate WITHOUT asking:
+  workspace `git remote` guesses. Add a skill that declares `capability: github` /
+  `capability: infra` (name it anything) for higher-fidelity routing." Then proceed
+  with raw connectors. **Do NOT block.**
+- **Exactly one skill for a capability** → use it. No question. *(The common case:
+  a flat set of arbitrarily-named skills, one per capability — this is normal, not a
+  degraded config.)*
+- **Two or more skills claiming the same capability** → try to disambiguate WITHOUT
+  asking:
   1. Match the build's project / build name (from `getBuildId` metadata or
-     the invocation args) against each family's SKILL.md description / product
-     hints — if one family matches unambiguously, use it.
+     the invocation args) against each candidate's SKILL.md description — if one
+     matches unambiguously, use it.
   2. Match the discovered failure signatures (from Step 2's `listTestIds` if it
      has already run, else defer this to a re-visit after discovery) against
-     each family's declared file paths / error patterns — if one family owns
-     the failure surface, use it.
+     each candidate's declared file paths / error patterns — if one owns the
+     failure surface, use it.
      If both signals leave the choice ambiguous, this earns the **one
      consolidated gate question** (Part B rules apply): fold it into the same
-     question as any other non-assumable field, e.g. _"Multiple product families
-     found (`<product-a>`, `<product-b>`); build/failure signatures don't
-     uniquely pick one — which family owns this build's failures?"_ Headless:
-     pick the first alphabetically and record the ambiguity as a gap.
+     question as any other non-assumable field, e.g. _"Multiple `github` connector
+     skills found (`<name-a>`, `<name-b>`); build/failure signatures don't uniquely
+     pick one — which owns this build's failures?"_ Headless: pick the first
+     alphabetically and record the ambiguity as a gap.
+  If candidates happen to declare a shared `product:`/`scope:`, use it to keep the
+  picked connector set coherent across capabilities — but never *require* it; a name
+  prefix is not a signal.
 
 Then enumerate every connector relevant to test RCA:
 

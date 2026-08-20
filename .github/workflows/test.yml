@@ -1,0 +1,46 @@
+# Runs the test suite. Until this existed, nothing did: `.github/workflows/` held
+# only Semgrep.yml, so 194 tests were green on developers' machines and unenforced
+# on every pull request. The anti-drift guards in tests/wiring.test.mjs and
+# tests/prose-budget.test.mjs are only guards if something runs them.
+#
+# No `${{ github.event.* }}` interpolation anywhere, deliberately: nothing from a
+# PR title, branch name or commit message reaches a `run:` step, so there is no
+# workflow-injection surface to guard.
+name: test
+
+on:
+  pull_request:
+    branches: ["master", "main"]
+  push:
+    branches: ["master", "main"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node --test
+    runs-on: ubuntu-latest
+
+    # Real throwaway git repos are created by tests/rca-context.test.mjs and
+    # tests/repo-source.test.mjs. `git commit` needs an identity and the runner has
+    # none configured, so commits inside those fixtures would fail without this.
+    env:
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@example.com
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@example.com
+
+    steps:
+      # SHA-pinned, matching the convention in Semgrep.yml.
+      - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
+        with:
+          # No `engines` field in package.json, so this pin IS the declaration.
+          node-version: "22"
+
+      # Deliberately NOT `npm ci`: this package has zero dependencies and no
+      # lockfile, and `npm ci` fails outright without one. There is nothing to
+      # install.
+      - run: npm test

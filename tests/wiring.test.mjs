@@ -15,6 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { mandatedReading } from "./helpers/mandated-reading.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 
@@ -205,34 +206,9 @@ const INTERNAL = new Set([
   "isProbeRunnable", "isPermittedProbeLeader",
 ]);
 
-/**
- * The set of files a skill's flow mandates loading: its own body, plus every
- * pluginRoot-qualified path listed under its `## Mandated reading` heading.
- *
- * The body counts as its own mandated reading because an agent always reads it.
- * That is what lets rca-build's inline API reference keep satisfying the guard
- * where it already sits, instead of forcing a mechanical relocation.
- */
-function mandatedReading(skill) {
-  const bodyPath = join(ROOT, "skills", skill, "SKILL.md");
-  const body = readFileSync(bodyPath, "utf8");
-  const texts = [body];
-
-  const section = body.split(/^## Mandated reading\s*$/m)[1];
-  assert.ok(
-    section !== undefined,
-    `skills/${skill}/SKILL.md has no "## Mandated reading" section — the guard ` +
-      `cannot tell which files this skill's flow requires loading.`,
-  );
-
-  const declared = section.split(/^## /m)[0];
-  for (const m of declared.matchAll(/`<pluginRoot>\/([^`]+)`/g)) {
-    const p = join(ROOT, m[1]);
-    if (p === bodyPath) continue; // already included
-    if (existsSync(p)) texts.push(readFileSync(p, "utf8"));
-  }
-  return texts.join("\n");
-}
+// `mandatedReading` is shared with tests/prose-budget.test.mjs — see
+// tests/helpers/mandated-reading.mjs. Two copies of that parse would drift,
+// which is the bug class this file exists to catch.
 
 test("every exported lib helper is documented in every owning skill's mandated reading", () => {
   const reading = new Map();

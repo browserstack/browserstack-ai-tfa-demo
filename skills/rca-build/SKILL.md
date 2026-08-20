@@ -49,6 +49,9 @@ measures this set plus this body. This body counts as part of its own mandated r
 the API reference below satisfies the guard where it sits.
 
 - `<pluginRoot>/skills/rca-build/SKILL.md` (this body — holds the API reference below)
+- `<pluginRoot>/skills/rca-build/references/clustering.md` (Step 3)
+- `<pluginRoot>/skills/rca-build/references/evidence-routing.md` (Step 4, and every coordinator)
+- `<pluginRoot>/skills/rca-build/references/github-evidence.md` (the culprit-PR hunt)
 
 ## API reference — read THIS, do not grep the source
 

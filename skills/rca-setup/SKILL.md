@@ -26,9 +26,16 @@ body. Paths are `pluginRoot`-qualified because a subagent starts in an unknown c
 - `<pluginRoot>/skills/rca-setup/references/verification-failures.md`
 - `<pluginRoot>/skills/rca-setup/references/context-resolution.md`
 
-Output shapes: `<pluginRoot>/skills/rca-setup/templates/gate-digest.md` and
-`<pluginRoot>/skills/rca-setup/templates/context-file.md`. Worked example:
-`<pluginRoot>/skills/rca-setup/examples/sample-setup.md`.
+- `<pluginRoot>/skills/rca-setup/templates/gate-digest.md`
+- `<pluginRoot>/skills/rca-setup/templates/context-file.md`
+
+## Reference material (not loaded per run)
+
+Read when you want the shape of a whole run, not on the way through one — which is
+why it sits outside the mandated set the budget measures.
+
+- `<pluginRoot>/skills/rca-setup/examples/sample-setup.md` — one worked interview,
+  pinned to `tests/fixtures/discovery/full-stack.json`.
 
 ## Step 0 — mode
 

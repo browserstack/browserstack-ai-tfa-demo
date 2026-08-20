@@ -41,6 +41,15 @@ one call's output is a literal input to another; that pair, and only that
 pair, runs in order.
 </use_parallel_tool_calls>
 
+## Mandated reading
+
+Files this skill's flow requires loading. The per-skill API guard in `tests/wiring.test.mjs` asserts
+that every `lib/` export this skill drives is documented across this set, and the prose-budget check
+measures this set plus this body. This body counts as part of its own mandated reading, which is why
+the API reference below satisfies the guard where it sits.
+
+- `<pluginRoot>/skills/rca-build/SKILL.md` (this body — holds the API reference below)
+
 ## API reference — read THIS, do not grep the source
 
 Every signature this run needs, in one place. This exists because agents were

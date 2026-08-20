@@ -19,6 +19,7 @@ import {
   readBaseFile,
   hasTrustworthyPrList,
   recomputeCoverage,
+  deployShas,
 } from "../lib/evidence-file.mjs";
 
 let dir;
@@ -477,4 +478,55 @@ test("markers survive repeated writes without accumulating", async () => {
   assert.equal(raw.split("_READ_ME_FIRST").length - 1, 1, "exactly one marker, not one per write");
 
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("an evidence file written before the section rename still reads", () => {
+  // These artifacts are per-build and survive a resume, so a run that started
+  // before `doc.github` -> `doc.code` and the sweeps change lands here after it.
+  // Read without migration the old shape failed SILENTLY and in the worst
+  // direction: doc.code undefined, so hasTrustworthyPrList went false, deployShas
+  // returned nothing, and recomputeCoverage reported the repo GAPPED while its
+  // evidence sat in the file — which tells a coordinator to report "no culprit PR
+  // identified" for a repo whose PR window had already been fetched.
+  //
+  // MUTATION: remove the `migrate()` call in readBaseFile and every assertion here
+  // fails.
+  writeFileSync(file, JSON.stringify({
+    buildId: "b1",
+    generatedAtMs: 1000,
+    github: {
+      "org/a": { gap: null, deployState: { sha: "a1b2c3d4e5f6" }, prsInWindow: [{ pr: 7 }], prsSearched: true },
+    },
+    logs: {
+      w1: { clusterIds: ["c-A"], kubectlSweep: { block: "pods ok" }, victorialogs: { block: "5xx spike" }, gap: null },
+    },
+  }));
+
+  const doc = readEvidenceFile(file);
+  assert.equal(doc.github, undefined, "the old section name is gone, not carried alongside");
+  assert.equal(doc.code["org/a"].deployState.sha, "a1b2c3d4e5f6");
+  assert.equal(hasTrustworthyPrList(doc, "org/a"), true, "a searched PR window must not read as unsearched");
+  assert.deepEqual(deployShas(doc).pins, { "org/a": "a1b2c3d4e5f6" });
+
+  // Each old slot becomes one sweep, and `via` comes from the field it was stored
+  // under — the only place the source was recorded in the old shape.
+  assert.deepEqual(
+    doc.logs.w1.sweeps.map((s) => [s.via, s.block]),
+    [["kubectl", "pods ok"], ["victorialogs", "5xx spike"]],
+  );
+  assert.equal(doc.logs.w1.kubectlSweep, undefined);
+
+  const cov = recomputeCoverage(file, { repos: ["org/a"], workloads: ["w1"] }, 2000);
+  assert.deepEqual(cov.reposCovered, ["org/a"], "a repo with evidence must never read as gapped");
+  assert.deepEqual(cov.reposGapped, []);
+});
+
+test("migration is idempotent and leaves a new-shape file alone", () => {
+  setCodeEvidence(file, "org/a", { gap: null, deployState: { sha: "beefcafe1234" } }, 1000);
+  contributeLogsEvidence(file, "w", "w1", { sweeps: [{ via: "logcli", block: "x" }] }, 1000);
+  const once = readEvidenceFile(file);
+  const twice = readEvidenceFile(file);
+  assert.deepEqual(twice.code, once.code);
+  assert.deepEqual(twice.logs, once.logs);
+  assert.deepEqual(once.logs.w1.sweeps.map((s) => s.via), ["logcli"]);
 });

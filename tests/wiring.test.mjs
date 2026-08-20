@@ -93,8 +93,8 @@ test("every exported lib helper appears in the SKILL's API reference", () => {
     "isCacheable", "splitPipeline",
     // tool-cache module internals — agents drive the cache through
     // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
-    "isRunnable", "tokenize", "isCacheableMcp", "redact", "cacheGet",
-    "cachePut", "cacheStats", "mcpCacheKey",
+    "isImmutableRead", "isCacheableMcp", "redact", "cacheGet",
+    "cachePut", "cacheStats", "mcpCacheKey", "banner",
   ]);
 
   const undocumented = [];

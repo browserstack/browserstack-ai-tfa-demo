@@ -90,7 +90,7 @@ test("every exported lib helper appears in the SKILL's API reference", () => {
     "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
     "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
     "unavailableCapabilities", "renderGlimpse", "toolCacheDirFor", "cacheKey",
-    "isCacheable", "splitPipeline",
+    "isCacheable",
     // tool-cache module internals — agents drive the cache through
     // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
     "isImmutableRead", "isCacheableMcp", "redact", "cacheGet",

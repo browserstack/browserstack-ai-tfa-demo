@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildManifest, unavailableCapabilities } from "../lib/routing.mjs";
-import { resolveBaseline } from "../lib/evidence-cache.mjs";
 
 const CONFIG = {
   evidenceRouting: {
@@ -42,13 +41,3 @@ test("unavailableCapabilities lists what the client can't get", () => {
   assert.deepEqual(unavailable, ["infra", "metrics", "other"]);
 });
 
-test("resolveBaseline uses last-green when present, else flags fallback", () => {
-  assert.deepEqual(resolveBaseline("v1.2.3", "main"), {
-    ref: "v1.2.3",
-    isFallback: false,
-  });
-  assert.deepEqual(resolveBaseline(null, "main"), {
-    ref: "main",
-    isFallback: true,
-  });
-});

@@ -80,14 +80,33 @@ COLUMNS  the canonical set; writeRows emits exactly these
 RESUMABLE  "pending-resume" — a SOFT terminal: claim released, row still picked up
 ```
 
-## Clustering — `lib/signature.mjs`, `lib/theme-clustering.mjs`
+## Clusters — `lib/signature.mjs`
+
+**You** decide which failures share a cause. Nothing in `lib/` groups them any
+more: the old path normalised a signature with a regex chain and grouped by exact
+string match, which cannot see that "Timeout waiting for element" and "element not
+visible after 30s" are one cause. Use the server's failure themes when they are
+ready, your own reading of the signatures when they are not, or both.
 
 ```
-clustersFromThemes(rows, themesResult, testsByThemeId) → clusters   PREFERRED
-clusterAndPersist(csvPath, csvStateModule) → clusters; WRITES cluster_id back
-    the fallback, only after getBuildFailureThemes reported not-ready
+persistClusters(csvPath, csvState, assignment) → [{cluster_id, members,
+                                                   representative, siblings}]
+    assignment: {testRunId: clusterId} — one entry per row, ids of your choosing.
+    EVERY row must be assigned. A test genuinely unlike the others gets its own
+    singleton id: that is a decision. An omission is a silent per-test fan-out,
+    which cost 12 tests -> 26 subagents over 30 minutes, twice in one day.
+    Writes cluster_id, then reads back to confirm it landed, and throws rather
+    than continue on a partially clustered CSV.
+
+selectRepresentative(members) → non-flaky first, then smallest testRunId
+    Deterministic on purpose: the CSV persists cluster_id but not WHICH member was
+    the exemplar, so a resume that chose differently would pay for the same
+    investigation twice.
+
 siblingPreSeed(csvPath, csvState, clusterId, repId) → {ok, pre_seed} | {ok:false, reason}
-selectRepresentative(rows) → deterministic: non-flaky first, then smallest testRunId
+    Refuses until the representative is terminal WITH a root cause. A sibling
+    dispatched without a hypothesis re-investigates from scratch — measured at 22.7
+    tool calls against the representative's 8.0, one burning 60 over 17 minutes.
 ```
 
 ## Shared evidence — `lib/evidence-file.mjs`
@@ -115,12 +134,6 @@ hasTrustworthyPrList(entry) → false when the list is empty for an unknown reas
 
 Coordinators use `contribute*`, never `set*`: single-writer shards are what stopped
 concurrent writers losing each other's updates.
-
-## Baseline — `lib/evidence-cache.mjs`
-
-```
-resolveBaseline(lastGreenRef, fallbackRef) → the ref the suspect window starts from
-```
 
 ## Local repo reads — `lib/repo-source.mjs`
 
@@ -154,13 +167,11 @@ cleanupBuildArtifacts(buildId, stateDir="") → {deleted, errors}
     Call ONLY after the report is triggered.
 ```
 
-## Output — `lib/glimpse.mjs`
+## Output
 
-```
-renderGlimpse(rows, {buildId}) → a completion notice with status counts
-```
-
-Counts only. No per-test detail — the dashboard owns the narrative.
+Print a status count and the dashboard link. Nothing else — no root causes, no
+culprit PRs, no cluster breakdown, no per-test table. There is no helper for this
+because there is nothing to compute: count the CSV's terminal states and say so.
 
 ## Tool cache — `lib/tool-cache.mjs`, driven through `bin/`
 

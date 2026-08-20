@@ -189,11 +189,13 @@ full loop; siblings get a pre-seeded one-turn confirm against their own logs. Th
 collapses the evidence hunt to the number of distinct causes while every test still
 lands its own RCA.
 
-**Prefer the server's clustering.** Call `getBuildFailureThemes` first — it reflects
-real root-cause grouping rather than a text-signature guess. Only if it reports not
-ready, or errors, fall back to `clusterAndPersist`. Taking the fallback without
-having tried the preferred path degrades every run by default instead of by
-necessity.
+**You group the failures; nothing in `lib/` does.** Call `getBuildFailureThemes`
+first — it reflects real root-cause analysis rather than string similarity, and it
+makes themes exist rather than only reading them. When it is not ready, group from
+the failure signatures `listTestIds` already returned. Either way, hand
+`{testRunId: clusterId}` to `persistClusters`, which refuses a partially clustered
+CSV — every row assigned, a singleton being a decision and an omission being a
+silent per-test fan-out.
 
 Cluster from `readRows(csvPath)` — the CSV Step 2 seeded — not from a `listTestIds`
 result held over from earlier in the turn. A held-over result has cost a real run

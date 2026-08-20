@@ -19,7 +19,7 @@ is exactly what routing by capability exists to avoid.
 [Digest format](#digest-format) ·
 [Unfulfillable asks](#unfulfillable-asks--report-dont-drop) ·
 [Capability manifest](#capability-manifest-built-once-at-the-gate) ·
-[Build-level evidence cache](#build-level-evidence-cache-compute-once)
+[Build-level evidence](#build-level-evidence-compute-once)
 
 The registry logic lives in `lib/routing.mjs` (`routeAsk` / `routeAsks`); this
 file is the human/agent-facing contract for the digest and the size caps.
@@ -165,11 +165,11 @@ test, Gate Part A enumerates **and probe-validates** the client's connectors
   what's obtainable.
 - Frozen at gate close. A skill appearing mid-run is not picked up until the next run.
 
-## Build-level evidence cache (compute once)
+## Build-level evidence (compute once)
 
 "Diff since last green", "deploy timeline", and "PRs in the suspect window" are
 properties of the **build**, not the test. The orchestrator computes the
-last-green→this-build delta **once** (`lib/evidence-cache.mjs`), caches it by
+last-green→this-build delta **once**, shares it via the evidence file keyed by
 `(repo, commit-range, evidenceType)`, and pre-seeds every coordinator with the
 same grounded suspect window — collapsing N×M redundant git/infra calls to ~M and
 front-loading the highest-signal evidence so many tests RESOLVE before any infra

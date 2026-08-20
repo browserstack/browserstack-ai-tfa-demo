@@ -210,15 +210,12 @@ test("the run skill's gate wires the setup context in, and carves out its refusa
 const OWNERS = {
   "build-cleanup.mjs": ["rca-build"],
   "csv-state.mjs": ["rca-build"],
-  "evidence-cache.mjs": ["rca-build"],
   "evidence-file.mjs": ["rca-build"],
-  "glimpse.mjs": ["rca-build"],
   "loop.mjs": ["rca-build"],
   "repo-source.mjs": ["rca-build"],
   "routing.mjs": ["rca-build"],
   "signature.mjs": ["rca-build"],
   "state-dir.mjs": ["rca-build"],
-  "theme-clustering.mjs": ["rca-build"],
   "tool-cache.mjs": ["rca-build"],
   "turn1-registry.mjs": ["rca-build"],
   // Built by U1-U4 of the setup milestone. Mapped ahead of existing so the
@@ -234,10 +231,10 @@ const OWNERS = {
 const INTERNAL = new Set([
   "emptyEvidenceFile", "writeEvidenceFile", "contribDirFor", "contribPathFor",
   "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache",
-  "replaySubmit", "replayRead", "normalize", "computeSignature",
-  "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit", "clusterRows",
+  "replaySubmit", "replayRead", "normalize",
+  "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
   "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
-  "unavailableCapabilities", "renderGlimpse", "toolCacheDirFor", "cacheKey",
+  "unavailableCapabilities", "toolCacheDirFor", "cacheKey",
   "isCacheable", "splitPipeline",
   // tool-cache module internals — agents drive the cache through
   // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.

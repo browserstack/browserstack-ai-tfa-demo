@@ -98,7 +98,7 @@ test("every exported lib helper appears in the SKILL's API reference", () => {
     "isCacheable",
     // tool-cache module internals — agents drive the cache through
     // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
-    "isImmutableRead", "isCacheableMcp", "redact", "cacheGet",
+    "isImmutableRead", "isRunStableRead", "isCacheableMcp", "redact", "cacheGet",
     "cachePut", "cacheStats", "mcpCacheKey", "banner",
   ]);
 

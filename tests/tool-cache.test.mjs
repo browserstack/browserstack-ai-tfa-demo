@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   toolCacheDirFor, cacheKey, mcpCacheKey, cacheGet, cachePut, cacheStats,
-  isCacheable, isCacheableMcp, isImmutableRead, redact, banner,
+  isCacheable, isCacheableMcp, isImmutableRead, isRunStableRead, redact, banner,
 } from "../lib/tool-cache.mjs";
 
 let dir;
@@ -142,6 +142,38 @@ test("isImmutableRead: git commands without sha are NOT cacheable", () => {
 test("isImmutableRead: kubectl and curl are never cacheable (live state)", () => {
   assert.equal(isImmutableRead("kubectl get pods -n regression"), false);
   assert.equal(isImmutableRead("curl https://example.com"), false);
+});
+
+// ---- isRunStableRead: repo reads that don't change within one build RCA -----
+
+test("isRunStableRead: gh pr view/diff/list by number are cacheable", () => {
+  assert.equal(isRunStableRead("gh pr view 53786 --repo browserstack/frontend --json files,title"), true);
+  assert.equal(isRunStableRead("gh pr diff 53786 --repo browserstack/frontend"), true);
+  assert.equal(isRunStableRead("gh pr list -R browserstack/frontend"), true);
+});
+
+test("isRunStableRead: gh search and gh api repo reads are cacheable", () => {
+  assert.equal(isRunStableRead('gh search code "env.js" --repo browserstack/frontend'), true);
+  assert.equal(isRunStableRead("gh api repos/o/r/contents/apps/o11y/index.html"), true);
+  assert.equal(isRunStableRead("gh api repos/o/r/pulls/123"), true);
+});
+
+test("isRunStableRead: gh api writes are NOT run-stable", () => {
+  assert.equal(isRunStableRead("gh api -X POST repos/o/r/pulls"), false);
+  assert.equal(isRunStableRead("gh api --method PATCH repos/o/r/pulls/1"), false);
+});
+
+test("isRunStableRead: read-only git (no sha) is cacheable", () => {
+  assert.equal(isRunStableRead("git show HEAD:path/to/file"), true);
+  assert.equal(isRunStableRead("git log main --oneline"), true);
+  assert.equal(isRunStableRead("git diff main...HEAD"), true);
+});
+
+test("isRunStableRead: live state and mutations are NOT run-stable", () => {
+  assert.equal(isRunStableRead("kubectl get pods -n regression"), false);
+  assert.equal(isRunStableRead("kubectl logs pod-x"), false);
+  assert.equal(isRunStableRead("curl https://example.com"), false);
+  assert.equal(isRunStableRead("gh pr create --title x"), false);
 });
 
 test("isImmutableRead: gh pr list/view are NOT cacheable (mutable state)", () => {

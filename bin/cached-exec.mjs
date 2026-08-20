@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // Run a command through the build's tool cache, in ONE tool call.
 //
-// Only IMMUTABLE reads (sha-pinned gh api, git show/cat-file/ls-tree/log with
-// a sha) are memoized. Everything else passes through uncached — the wrapper
-// still runs it and returns real output/exit code. Mutations are refused.
+// Cached: IMMUTABLE reads (sha-pinned gh api, git show/cat-file/ls-tree/log with
+// a sha) AND run-stable repo reads (gh pr view/diff/list, gh api repo reads, gh
+// search, read-only git) — the latter don't change within a single minutes-long
+// build RCA and are fetched identically by every sibling confirming the same
+// suspect PRs. Live state (kubectl/curl/logs) passes through uncached. Mutations
+// are refused.
 //
 // Usage:
 //   node bin/cached-exec.mjs <buildId> <writerId> '<command>'
@@ -14,7 +17,7 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
   toolCacheDirFor, cacheKey, cacheGet, cachePut, cacheStats,
-  isCacheable, isImmutableRead, banner,
+  isCacheable, isImmutableRead, isRunStableRead, banner,
 } from "../lib/tool-cache.mjs";
 
 const [, , buildId, writerOrFlag, commandArg] = process.argv;
@@ -70,10 +73,10 @@ function run(cmd) {
   }
 }
 
-const shouldCache = isImmutableRead(command);
+const shouldCache = isImmutableRead(command) || isRunStableRead(command);
 const key = cacheKey(command);
 
-// Try cache only for immutable reads.
+// Try cache only for cacheable reads.
 if (shouldCache) {
   const hit = cacheGet(dir, key);
   if (hit) {
@@ -100,7 +103,7 @@ if (shouldCache) {
     banner(`[tool-cache MISS ${key} — stored ${res.stdout.length}B]`, logPath);
   }
 } else {
-  banner(`[tool-cache PASS-THROUGH — not an immutable read]`, logPath);
+  banner(`[tool-cache PASS-THROUGH — not a cacheable read]`, logPath);
 }
 
 process.stdout.write(res.stdout);

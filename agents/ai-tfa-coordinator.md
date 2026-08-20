@@ -463,9 +463,9 @@ capability is unavailable — emit an
      RESOLVED   → capture glimpse + viewRca; END (RESOLVED).
      BLOCKED    → END (PENDING, note "blocked") — terminal, no asks to route.
      NEEDS_INFO → go to 3.
-3. ROUTE the asks (read `<pluginRoot>/skills/rca-build/references/evidence-routing.md`; route via lib/routing.mjs):
+3. ROUTE the asks (read `<pluginRoot>/skills/rca-build/references/evidence-routing.md`):
      "high → medium → low" orders the ASSEMBLED MESSAGE only (step 3's last
-     line) — `routeAsk`/`routeAsks` (`lib/routing.mjs`) classify each ask
+     line) — `config.evidenceRouting` plus the gate's manifest classify each ask
      independently, with no cross-ask state or ordering dependency between one
      ask's gather and another's. When a turn's NEEDS_INFO carries multiple
      `gather` asks (e.g. a github ask and an infra ask together), issue their

@@ -14,8 +14,14 @@ import assert from "node:assert/strict";
 
 export const ROOT = new URL("../..", import.meta.url).pathname;
 
-/** Skills whose bodies and mandated reading are subject to both guards. */
-export const SKILLS = ["rca-build", "rca-setup"];
+/** Skills whose bodies and mandated reading are subject to both guards.
+ *
+ *  One entry, and it is a list rather than a constant because the guards that read
+ *  it are per-skill by construction and a second skill is a plausible future. It
+ *  held two until setup was folded into the run: two skills meant one flow's rules
+ *  were maintained in two bodies, two API references and two gate templates that
+ *  had already drifted apart. */
+export const SKILLS = ["rca-build"];
 
 export const skillBodyPath = (skill) => join(ROOT, "skills", skill, "SKILL.md");
 

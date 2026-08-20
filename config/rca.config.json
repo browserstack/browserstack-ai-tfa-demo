@@ -1,5 +1,5 @@
 {
-  "$comment": "Central config for the /rca-build RCA harness. Product and infra values live here rather than in code. The `capabilities` block DESCRIBES capabilities and never instructs: no probe commands, because a command string arriving as data with customer scope interpolated in required a whole execution gate and produced an injection escape anyway. Vendor names appear ONLY as `seedHints` \u2014 non-authoritative hints for the common cases, which an agent assignment always overrides. That distinction is the point: a hint list can never know the customer's stack, and one that pretended to told New Relic users to install promtool. No reportFile: the plugin never writes a local RCA report \u2014 the full report lives on the Test Observability UI (triggerRcaReport).",
+  "$comment": "Central config for the /rca-build RCA harness. Product and infra values live here rather than in code. The `capabilities` block DESCRIBES capabilities and never instructs: no probe commands, because a command string arriving as data with customer scope interpolated in required a whole execution gate and produced an injection escape anyway. Vendor names appear ONLY as `seedHints` \u2014 non-authoritative hints for the common cases, which an agent assignment always overrides. That distinction is the point: a hint list can never know the customer's stack, and one that pretends to sends every other customer a next action naming a tool they do not use. No reportFile: the plugin never writes a local RCA report \u2014 the full report lives on the Test Observability UI (triggerRcaReport).",
   "$concurrencyComment": "Max coordinator subagents run in parallel during Step 5 fan-out. HONORED LITERALLY on the default path (direct Agent-tool dispatch of ai-tfa-coordinator subagents \u2014 one message, up to `concurrency` tool-use blocks per batch). Only a SOFT target on the opt-in Workflow-tool path (workflows/rca-batch.mjs), which the Workflow runtime hard-caps at min(16, cpu cores - 2) regardless of this value \u2014 that cap is architectural and cannot be raised from this repo. See SKILL.md Step 5.",
   "concurrency": 20,
   "turnCap": 6,
@@ -48,23 +48,12 @@
     },
     "$comment": "Inbound evidenceType -> capability. The KEYS are the TFA agent's wire vocabulary, not ours: `k8s` and `kibana` arrive as those literals and route to the generic `infra` and `logs` capabilities, which is exactly the indirection this map exists for. Several evidenceTypes share one capability (product_code, deploy and ci all route to github), which is why the capability table is a sibling block rather than rows in here."
   },
-  "$capabilitiesComment": "The capability table. Keyed by CAPABILITY, joined to evidenceRouting by name \u2014 a sibling block, not rows inside evidenceRouting, because buildManifest enumerates Object.values(evidenceRouting) and a capability-keyed row placed there becomes a phantom manifest entry. Rows DESCRIBE, they do not instruct. There are no probe commands here: a command string arriving as data with a customer value interpolated into it required a command-execution gate, an interpolation guard and a per-executable probe table, and produced a shell-injection escape, an attached-flag bypass and a write-tool dispatch on the MCP route regardless. It was also never generic \u2014 a fingerprint list only knows the vendors someone wrote down, so a New Relic customer matched nothing and was told to install promtool. `intent` is what the agent reasons from instead; `seedHints` are hints for the common cases and are NEVER authoritative \u2014 an agent assignment always wins.",
+  "$capabilitiesComment": "The capability table. Keyed by CAPABILITY, joined to evidenceRouting by name. Rows DESCRIBE; they never instruct and they never name a vendor. There are no probe commands: a command string arriving as data with a customer value interpolated into it required a whole execution gate and produced an injection escape anyway. And there is no hint list: `fingerprints` was replaced by `seedHints`, which was the same thing under a softer name \u2014 a list still privileges whoever is on it, still needs maintaining, still goes stale, and still teaches a default, so a customer running something nobody wrote down stayed second-class. `intent` is what the agent reasons from instead: one sentence saying what the capability IS and what 'verified' means for it. Deciding which tool serves which capability is a judgement about what a tool is FOR, which is what an LLM does better than a lookup \u2014 and it generalises to a stack this repo has never heard of, because nothing here has to have heard of it.",
   "capabilities": {
     "github": {
       "mandatory": true,
       "resolvable": "partial",
       "intent": "Read the product's code and its merged-PR history. Verified means: a specific repository is readable AND the base branch's merged-PR list can be listed, because the culprit-PR hunt is the run's entire output. Reached through a git-forge CLI or an MCP server for one \u2014 whichever this machine has.",
-      "seedHints": {
-        "executables": [
-          "gh"
-        ],
-        "mcp": [
-          "github"
-        ],
-        "files": [
-          ".github/"
-        ]
-      },
       "scopeFields": {
         "repos": {
           "consumer": "PR-window search and path-overlap falsification (Step 4; references/code-evidence.md)"
@@ -80,23 +69,6 @@
     "infra": {
       "resolvable": "partial",
       "intent": "Reach the runtime the service under test actually runs on \u2014 a container orchestrator, a scheduler, a serverless platform, a process manager, a plain VM. There is no default: identify what THIS team uses. Verified means the runtime answers for the specific scope named below, not merely that some runtime CLI exists on PATH.",
-      "seedHints": {
-        "executables": [
-          "kubectl",
-          "docker",
-          "aws",
-          "nomad",
-          "pm2"
-        ],
-        "files": [
-          "k8s/",
-          "helm/",
-          "docker-compose.yml",
-          "Dockerfile",
-          "serverless.yml",
-          "buildspec.yml"
-        ]
-      },
       "scopeFields": {
         "runtimeKind": {
           "consumer": "recorded as the manifest's `via`, so a coordinator knows which runtime it is talking to"
@@ -112,19 +84,6 @@
     "logs": {
       "resolvable": "partial",
       "intent": "Query the application's own logs \u2014 NOT test logs, which TFA owns and this run never gathers. Any log store: hosted, self-run, or a CLI against one. Verified means a query against the named index or stream returns, so a Step 4 sweep will find something to read.",
-      "seedHints": {
-        "executables": [
-          "logcli"
-        ],
-        "mcp": [
-          "log",
-          "kibana",
-          "loki",
-          "splunk",
-          "datadog",
-          "elastic"
-        ]
-      },
       "scopeFields": {
         "logIndex": {
           "consumer": "the index or stream Step 4's per-workload log sweep queries"
@@ -137,20 +96,6 @@
     "metrics": {
       "resolvable": "partial",
       "intent": "Read resource and saturation signals \u2014 memory, CPU, error rate, latency \u2014 so a failure that looks functional can be recognised as pressure instead. Any metrics backend. Verified means a query returns for the named scope.",
-      "seedHints": {
-        "executables": [
-          "promtool"
-        ],
-        "mcp": [
-          "metric",
-          "prometheus",
-          "grafana",
-          "instana",
-          "datadog",
-          "newrelic",
-          "dynatrace"
-        ]
-      },
       "scopeFields": {
         "metricsNamespace": {
           "consumer": "scopes the memory/CPU pressure lookup Step 4 runs alongside the log sweep"

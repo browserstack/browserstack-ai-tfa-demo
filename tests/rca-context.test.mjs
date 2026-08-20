@@ -367,11 +367,29 @@ test("the same context as a partial is accepted", () => {
 
 // ---- start-of-run refusals --------------------------------------------------
 
-test("no context refuses and points at setup", () => {
+test("no context runs the setup phase instead of refusing", () => {
+  // This was a refusal — "go run rca-setup" — while setup was a separate skill.
+  // That made the commonest first contact with the plugin a dead end: someone with
+  // a red build runs the thing that investigates red builds and is told to go run
+  // something else first. Setup is a phase of this skill, so the run performs it.
   const r = startOfRunRefusal({ ok: false, code: "no-context" });
-  assert.equal(r.refuse, true);
+  assert.equal(r.refuse, false, "an absent context must not stop the run");
+  assert.equal(r.setup, true, "it must ask for the setup phase explicitly");
   assert.equal(r.code, "no-context");
-  assert.match(r.nextAction, /rca-setup/);
+  assert.match(r.nextAction, /setup/i);
+  assert.match(r.nextAction, /[Hh]eadless/, "and must say what happens with nobody to interview");
+});
+
+test("a nullish read result is a CALLER bug, not an absent context", () => {
+  // The two shared an outcome while both refused, and that was harmless. Now one of
+  // them proceeds into an interview and then into a run, so defaulting a broken
+  // call to "no-context" would send it there silently.
+  for (const bad of [undefined, null, {}, { ok: false }]) {
+    const r = startOfRunRefusal(bad);
+    assert.equal(r.refuse, true, `startOfRunRefusal(${JSON.stringify(bad)}) must refuse`);
+    assert.equal(r.setup, false);
+    assert.equal(r.code, "unreadable-context");
+  }
 });
 
 test("a present-but-unreadable context is a DIFFERENT refusal from an absent one", () => {

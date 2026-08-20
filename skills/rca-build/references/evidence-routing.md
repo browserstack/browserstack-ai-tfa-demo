@@ -21,8 +21,11 @@ is exactly what routing by capability exists to avoid.
 [Capability manifest](#capability-manifest-built-once-at-the-gate) ·
 [Build-level evidence](#build-level-evidence-compute-once)
 
-The registry logic lives in `lib/routing.mjs` (`routeAsk` / `routeAsks`); this
-file is the human/agent-facing contract for the digest and the size caps.
+Routing reads `config.evidenceRouting` directly — there is no routing module. It
+was 107 lines that looked up a key in a config object you have already read and
+joined it to a manifest you built yourself, which is not a computation worth a
+module or a mocked test. This file is the whole contract: the three actions, the
+digest shape, and the size caps.
 
 ---
 
@@ -31,8 +34,8 @@ file is the human/agent-facing contract for the digest and the size caps.
 A `NEEDS_INFO` turn returns `asks: TfaAsk[]`, each `{ what, why, evidenceType,
 priority }`. For each ask, in descending `priority` (`high` → `medium` → `low`):
 
-1. Route the `evidenceType` (via `lib/routing.mjs` → the config registry +
-   capability manifest). The result is one of three actions:
+1. Route the `evidenceType`: look it up in `config.evidenceRouting`, then check
+   that slot's `capability` against the manifest. One of three actions:
    - **skip** — `test_logs` (TFA-owned). Gather nothing; record in `asks_skipped`.
    - **gather** — a capability is available. Run its discovered skill/tool scoped
      by `what` / `why`, then digest the result into one ask block.
@@ -149,11 +152,10 @@ does not pre-empt that decision.
 
 ## Capability manifest (built once, at the gate)
 
-Rather than re-discover "do we have a log store?" on every ask across every
-test, Gate Part A enumerates **and probe-validates** the client's connectors
-**once** up front into a manifest (`lib/routing.mjs` → `buildManifest`).
-`valid` maps to `available: true`; `invalid`/`absent` map to `available: false`
-(a recorded gap):
+Rather than re-establish "do we have a log store?" on every ask across every test,
+Gate Part A enumerates **and verifies** the client's connectors **once** up front
+into `{capability: {available, via}}`. `valid` maps to `available: true`;
+`invalid`/`absent` map to `available: false` (a recorded gap):
 
 ```
 { github: {available: true, via: "gh"}, infra: {available: true, via: "flyctl"}, logs: {available: false}, ... }

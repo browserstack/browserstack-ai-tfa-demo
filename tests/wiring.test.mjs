@@ -64,16 +64,12 @@ const GATE_CRITICAL = [
   // string-presence check; it will not satisfy this one.
   { fn: "resolveIntake", module: "rca-context.mjs" },
   { fn: "readRcaContext", module: "rca-context.mjs" },
-  // Shipped, documented and unit-tested while NOTHING drove it — the exact bug
-  // class this test exists to catch, which it missed because the old check counted
-  // mentions rather than call sites.
-  { fn: "reportableUnavailable", module: "capability-table.mjs" },
   { fn: "intakeFromContext", module: "rca-context.mjs" },
-  // Made load-bearing by this milestone: the agent's assignment, the verification
-  // policy and the mandatory-capability gate. Documented from the start; adding
-  // them here is what requires a DRIVER.
-  { fn: "planInterview", module: "discovery.mjs" },
-  { fn: "validateVerification", module: "verify.mjs" },
+  // Three entries left with their modules: reportableUnavailable, planInterview and
+  // validateVerification. Each was shipped, documented and unit-tested while
+  // nothing drove it — which is the bug class this list exists to catch, and this
+  // list caught none of them, because a helper with no caller passes a
+  // "must be called" check only by being deleted. All three are.
   { fn: "githubGate", module: "verify.mjs" },
   { fn: "persistClusters", module: "signature.mjs" },
 ];
@@ -197,12 +193,20 @@ test("the run skill's gate wires the setup context in, and carves out its refusa
   // merely somewhere in the file. Bold markers are not the property — this repo's
   // gate history records agents following the most emphatic rule they encountered
   // rather than the intended one, so an unamended contradiction is not a tie.
-  // Asserted twice because the rule appears twice: at Gate close and in Hard rules.
-  const carveOuts = [...skill.matchAll(/never a blocker[^.\n]*(?:\n[^.\n]*)?/gi)]
+  // Asserted at every site because the rule is restated, and a carve-out present at
+  // one site and absent at another is the shape agents get wrong. There are three
+  // sites now — Part A, Gate close and Hard rules — because Part A had to state it
+  // where it builds the manifest.
+  // Whitespace-normalised first. The pattern used to run against the raw file with
+  // a hand-rolled one-newline tolerance, so whether a statement counted depended on
+  // where the line happened to wrap — a reflow silently un-stated a rule, and this
+  // guard reported the file non-compliant for a change that altered no prose.
+  const flat = skill.replace(/\s+/gu, " ");
+  const carveOuts = [...flat.matchAll(/never a blocker[^.]*/gi)]
     .filter((m) => /except/i.test(m[0]) && /start-of-run context refusals/i.test(m[0]));
   assert.ok(
     carveOuts.length >= 2,
-    `both "never a blocker" statements must carve out the start-of-run refusals; ` +
+    `every "never a blocker" statement must carve out the start-of-run refusals; ` +
       `found ${carveOuts.length}`,
   );
 });
@@ -226,17 +230,12 @@ const OWNERS = {
   "csv-state.mjs": ["rca-build"],
   "evidence-file.mjs": ["rca-build"],
   "repo-source.mjs": ["rca-build"],
-  "routing.mjs": ["rca-build"],
   "signature.mjs": ["rca-build"],
   "state-dir.mjs": ["rca-build"],
   "tool-cache.mjs": ["rca-build"],
   "turn1-registry.mjs": ["rca-build"],
-  // Built by U1-U4 of the setup milestone. Mapped ahead of existing so the
-  // guard is armed the moment each module lands.
-  "capability-table.mjs": ["rca-setup"],
-  "discovery.mjs": ["rca-setup"],
-  "verify.mjs": ["rca-setup"],
-  "rca-context.mjs": ["rca-build", "rca-setup"],
+  "verify.mjs": ["rca-build"],
+  "rca-context.mjs": ["rca-build"],
 };
 
 // Internal-by-convention: replay/test seams and trivial helpers a coordinator
@@ -245,8 +244,7 @@ const INTERNAL = new Set([
   "emptyEvidenceFile", "writeEvidenceFile", "contribDirFor", "contribPathFor",
   "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache",
   "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
-  "orderAsks", "routeAsk",
-  "unavailableCapabilities", "toolCacheDirFor", "cacheKey",
+  "toolCacheDirFor", "cacheKey",
   "isCacheable", "splitPipeline",
   // tool-cache module internals — agents drive the cache through
   // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
@@ -366,6 +364,16 @@ test("every lib/ symbol named in prose still exists", () => {
     "scopeProbe", "isProbeRunnable", "isPermittedProbeLeader", "clusterAndPersist",
     "clusterRows", "computeSignature", "clustersFromThemes", "renderGlimpse",
     "resolveBaseline", "discoveryHints", "exemptFrom",
+    // The capability modules, named in api.md's was/now table so that someone
+    // reading older code or an older doc can find out where each one went. Same
+    // rule as the field names above: this check cannot tell "naming a deleted thing
+    // to explain it" from "instructing a call to a deleted thing", so the exemption
+    // is an explicit list a reviewer can read, not a heuristic over surrounding
+    // words. Deleting the table is what removes these, not editing this list.
+    "loadCapabilityTable", "validateTable", "mergeOverlay", "matchHint", "planInterview",
+    "preFillFromConnectorSkills", "capabilitiesFromRouting", "buildManifest",
+    "unavailableCapabilities", "reportableUnavailable", "routeAsks", "routeAsk",
+    "orderAsks", "validateVerification", "loadConfig", "renderGlimpseFromCsv",
   ]);
 
   const prose = [];

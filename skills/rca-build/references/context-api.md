@@ -1,27 +1,30 @@
 # `lib/rca-context.mjs` — the committed setup context
 
-Mandated by BOTH skills, and documented here once. `rca-setup` writes this file;
-`rca-build` reads it. Two copies of these signatures is what the every-owner
-documentation rule used to cost — ~90 identical lines, both always loaded.
-
-## Setup context — `lib/rca-context.mjs`
-
-The committed artifact `rca-setup` wrote. Shared with that skill.
+The setup phase writes this file; every later run reads it. It was mandated by two
+skills and documented in two places, which the every-owner documentation rule
+priced at ~90 identical lines, both always loaded. One skill now, one copy.
 
 ```
 readRcaContext({from, pluginRoot, path}) → {ok, context, path, complete, trust}
                                          | {ok:false, code, message}
     codes: no-context · parse-error · schema-version · missing-field · unreadable
     Distinct on purpose: never degrade a broken context to "no context", which
-    triggers a needless re-interview and reads as the feature forgetting the user.
+    now triggers an actual re-interview and reads as the feature forgetting the
+    user.
     `trust` says how strongly this file is tied to this machine —
     own-worktree · origin-match · tracked · name-only. On `name-only` the only
     link is a directory name the FILE itself declared: print the path and the
     label before letting it drive the run.
 
-startOfRunRefusal(readResult) → {refuse, code, message, nextAction, partial, trust}
-    THE start-of-run policy. Refuses on no-context, unreadable-context and
-    github-unverified. A partial with verified GitHub proceeds, `partial: true`.
+startOfRunRefusal(readResult) → {refuse, setup, code, message, nextAction, partial}
+    THE start-of-run policy, and three outcomes rather than two:
+      refuse:true          unreadable-context | github-unverified → print and stop
+      setup:true           no-context → run the setup phase, then continue
+      refuse:false, setup:false                                  → usable
+    An absent context stopped the run while setup was a separate skill. A nullish
+    argument is `unreadable-context`, NOT `no-context`: one of them proceeds into
+    an interview now, so a broken call must not be able to reach it.
+    A partial with verified GitHub proceeds, `partial: true`.
 
 intakeFromContext(context) → the run's intake vocabulary, translated from the
     artifact's. `repo` ← homeRepo (the repo the context is committed to IS the
@@ -39,14 +42,12 @@ CONTEXT_FILENAME  ".rca-context.json"  at the home repo's worktree root
 SCHEMA_VERSION    CREDENTIAL_KIND { ENV_VAR, PROVIDER_MANAGED }
 ```
 
-Setup writes this file; the run only reads it. It is git-tracked, so it is the one
-persisted file here that is deliberately **not** permission-hardened — never point
-`hardenStateDir` at it.
+It is git-tracked, so it is the one persisted file here that is deliberately **not**
+permission-hardened — never point `hardenStateDir` at it.
 
-## The write side — `rca-setup` only
+## The write side — the setup phase only
 
-The run never calls these; they are here because the guard documents a module, not
-a half of one.
+A run that found a usable context never calls these.
 
 ```
 writeRcaContext({context, verifiedRepos, from, pluginRoot}) → {ok, path}

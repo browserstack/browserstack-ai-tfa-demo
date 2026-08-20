@@ -11,53 +11,45 @@ Two things this file deliberately does NOT contain: commands to run, and vendor
 names. Nothing in `lib/` decides how to reach a customer's stack — that is your
 judgement, and Step 1 of the skill body says why.
 
-## Capability routing — `lib/routing.mjs`, `lib/capability-table.mjs`
+## Capabilities — no module
 
-```
-loadCapabilityTable(config, overlay) → {table, violations}
-    Pass `context.capabilities` as the overlay — a customer may seed hints and
-    scope fields for a stack the shipped table does not name. It may not set
-    `mandatory`, `resolvable`, `intent` or `exemptFromDiscoveryReport`.
-    A violation naming a capability the customer supplied is THEIR input to fix;
-    one naming a shipped row is our bug. Say which.
+There is no capability module any more. `lib/routing.mjs`, `lib/discovery.mjs` and
+`lib/capability-table.mjs` are deleted: they scanned PATH, matched vendor
+fingerprints, joined a config object to what the scan found, and re-validated our
+own shipped config on every run. You can see the environment directly and you read
+the config yourself, so all three were a lookup table standing between you and two
+things already in front of you — and the fingerprint list was the reason a customer
+running something nobody had written down was second-class.
 
-buildManifest(config, routes) → {capability: {available, via}}
-unavailableCapabilities(manifest) → [capability]
-reportableUnavailable(unavailable, table) → the subset worth showing a human
-    (a catch-all row that can never match is noise every run)
-routeAsks(asks, config, manifest) → per-ask {action: gather|skip|gap}
-TEST_LOGS   the ask type TFA owns — never gather it, always skip
-```
+What replaced each one:
 
-## Interview planning — `lib/discovery.mjs`
-
-```
-planInterview({table, env, assigned, connectorSkills})
-    → {routes, relevant, questions, unassigned, violations}
-    `assigned` is YOUR judgement, {capability: {via, kind, why}}, and it wins over
-    the table's seedHints unconditionally. `relevant` is a capability the repo
-    shows evidence for but this machine cannot reach — its questions are still
-    asked, because a teammate who can reach it inherits the answer.
-    `unassigned` is a tool nothing claimed; you decide whether it matters.
-
-matchHint(row, env) → {via, kind, name} | null    convenience for common cases only
-preFillFromConnectorSkills(table, skills) → {scopeByCapability, violations}
-```
+| was | now |
+|---|---|
+| `loadCapabilityTable` + `validateTable` | read `config.capabilities`. Its schema is checked in `tests/config.test.mjs`, at build time, where a property of a shipped constant belongs |
+| the `capabilities` overlay | nothing. It was persisted, secret-scanned, and read by no caller — and with no probe commands and no hint list left in a row, it had nothing to carry |
+| `matchHint` / `planInterview` / `preFillFromConnectorSkills` | your judgement, per `references/setup.md` |
+| `buildManifest` | build `{capability: {available, via}}` yourself from the config rows and what you observed |
+| `unavailableCapabilities` / `reportableUnavailable` | filter that object. Skip rows marked `exemptFromDiscoveryReport` on the human-facing screen only — the TFA declaration still reports them |
+| `routeAsks` / `TEST_LOGS` | `config.evidenceRouting`: a slot with `owner: "tfa"` is theirs and is never gathered, `skip: true` is never gathered, everything else names its `capability` |
 
 ## Verification policy — `lib/verify.mjs`
 
-Validates what YOU report. It never probes and never builds a command.
+Policy over what YOU report. It never probes, never builds a command, and no longer
+re-checks your report — see the module header for why that check was theatre.
 
 ```
-validateVerification({capability, row, result}) → {result, violations}
-    result in:  {verified, via, targets:[{field, value, ok, checkedBy, gap?}], scopes?}
-    A target reported ok WITHOUT a `checkedBy` is normalised to `unverified` —
-    a claim with no named check carries no information.
-    A failing target needs gap.class ∈ GAP_CLASS and a non-empty gap.nextAction.
-    Raw provider output and credential-shaped strings are refused outright.
+githubGate(report, row) → {blocking, message?, nextAction?}
+    report in: {capability, targets:[{field, value, ok, checkedBy, gap?}]}
+    THE one blocking invariant. Fails CLOSED, so a thrown or skipped verification
+    step blocks rather than waving the run past. Requires COVERAGE: every field in
+    row.scopeFields needs a target that is ok AND names a non-empty `checkedBy`.
+    A target claiming ok with no check is called out as that, not as missing.
 
-githubGate(validated) → {blocking, message?, nextAction?}    GitHub is binary
 looksLikeSecret(value) → {secret, kind?, rotationGuidance?}
+    Entropy applies to WORDS, not whole values. Both boundaries were live defects:
+    whole-value entropy flagged this library's own prose, and skipping any value
+    with whitespace let `export SOME_TOKEN <40 chars>` through clean.
+
 prWindowWarning({mergedCount, windowDays, branch}) → warning | null
 overBroadWarning(capability, scopes) → warning | null        GitHub scopes only
 GAP_CLASS  absent-on-this-machine · scope-invalid-for-team · credential-under-scoped

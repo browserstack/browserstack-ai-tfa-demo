@@ -1,6 +1,6 @@
 {
   "name": "a stack no hint names is fully available once the agent assigns it",
-  "$why": "Fly.io, Coralogix and Dynatrace appear in no seedHint. Before the agent could assign routes, this customer matched nothing, was never even ASKED for a metrics scope, and was told to install promtool.",
+  "$why": "Fly.io, Coralogix and Dynatrace appear in no list anywhere in this repo. While a fingerprint list decided availability, this customer matched nothing, was never even ASKED for a metrics scope, and was sent a next action naming a tool it does not use. Nothing recognises these names now; the agent assigns them.",
   "env": {
     "executables": [
       "flyctl",

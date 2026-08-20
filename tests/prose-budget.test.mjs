@@ -41,15 +41,19 @@ import {
  *  being a budget. Milestone 2 tightens rca-build as its body shrinks — the failure
  *  message prints every measured total so that number comes from recorded data. */
 const CEILINGS = {
-  // Post-rewrite figures plus modest headroom. rca-build was 1487 against a 1500
-  // ceiling — a ceiling that loose is not a budget, and it still grew 127 lines
-  // during the milestone meant to shrink it. The rewrite took the body from 1157
-  // non-blank lines to 222 by deleting nine restatements of one rule, a hardcoded
-  // vendor probe table, and 125 lines of API signatures that now live in a
-  // reference. A ceiling only means something with real headroom, so these leave
-  // ~15%: enough for a genuine addition, not enough for a paragraph per bug fix.
-  "rca-build": 850, // 732 today.
-  "rca-setup": 780, // 686 today.
+  // rca-build was 1487 against a 1500 ceiling — a ceiling that loose is not a
+  // budget, and it still grew 127 lines during the milestone meant to shrink it.
+  // The rewrite took the body from 1157 non-blank lines to ~250 by deleting nine
+  // restatements of one rule, a hardcoded vendor probe table, and 125 lines of API
+  // signatures that now live in a reference.
+  //
+  // This one figure covers what used to be TWO skills: rca-build at 732 plus
+  // rca-setup at 686 = 1418 across two mandated sets. Folding setup in and
+  // consolidating its three references into one, its API reference into rca-build's,
+  // and its gate digest into rca-build's gate template lands well under the sum —
+  // the drop is deduplication, not deletion of procedure. Headroom is ~12%: enough
+  // for a genuine addition, not enough for a paragraph per bug fix.
+  "rca-build": 1120,
 };
 
 const measure = (skill) => mandatedLineCount(skill);
@@ -90,7 +94,7 @@ test("the measured total is the body PLUS mandated reading, not the body alone",
 test("relocating prose from a body into mandated reading does not reduce the total", () => {
   // Sum the same file set three ways. An earlier version carried a term identical
   // on both sides of the equality, so it cancelled out and proved nothing.
-  const texts = mandatedFiles("rca-setup").map((f) => f.text);
+  const texts = mandatedFiles("rca-build").map((f) => f.text);
   const sum = (ts) => ts.reduce((n, t) => n + countLines(t), 0);
   const block = "\n\nSome relocated paragraph.\nA second line of it.\n";
 
@@ -106,10 +110,10 @@ test("the over-ceiling comparison fails when the ceiling is below the measured t
   // called over() at all — so rewriting over() to `return false` would have left it
   // green, which is precisely the "failure path never executed" problem its own
   // comment warned about. Now it drives the comparison in both directions.
-  const r = measure("rca-setup");
-  assert.equal(over("rca-setup", 1), true, "a ceiling of 1 must be exceeded");
-  assert.equal(over("rca-setup", r.total), false, "the measured total is not OVER itself");
-  assert.equal(over("rca-setup", r.total - 1), true, "one line below the total is over");
+  const r = measure("rca-build");
+  assert.equal(over("rca-build", 1), true, "a ceiling of 1 must be exceeded");
+  assert.equal(over("rca-build", r.total), false, "the measured total is not OVER itself");
+  assert.equal(over("rca-build", r.total - 1), true, "one line below the total is over");
   assert.ok(r.perFile.length > 1, "and the report must name every file that contributed");
 });
 
@@ -124,7 +128,7 @@ test("the worked example names only capabilities and routes the discovery fixtur
   // Without this the example rots: it is the first thing a human reads and the last
   // thing anyone re-checks, so it drifts from the behaviour it illustrates and then
   // teaches the wrong shape.
-  const examplePath = join(ROOT, "skills/rca-setup/examples/sample-setup.md");
+  const examplePath = join(ROOT, "skills/rca-build/examples/sample-setup.md");
   assert.ok(existsSync(examplePath), "the worked example must exist");
   const example = readFileSync(examplePath, "utf8");
 

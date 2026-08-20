@@ -1,12 +1,15 @@
 # Example — one full setup (fictional data, matching `tests/fixtures/discovery/agent-assigned-unlisted-stack.json`)
 
-The stack here is deliberately one the shipped `seedHints` do NOT name: Fly.io,
-Coralogix and Dynatrace. An example built on the familiar tools shows the easy path
-and teaches it as the default — but the case that matters is the customer whose
-stack nobody wrote down, and this flow has to work for them without a code change.
+The stack here is deliberately one no list in this repo names: Fly.io, Coralogix
+and Dynatrace. An example built on familiar tools shows the easy path and teaches
+it as the default — but the case that matters is the customer whose stack nobody
+wrote down, and this flow has to work for them without a code change. **Read it as
+one arbitrary instance, not as the expected shape.** Nothing in `lib/` or
+`config/` names any of these products, and a test asserts that.
 
-Invocation: `/rca-setup`, run from `~/work/api` in a workspace holding `api`,
-`e2e-tests` and the plugin checkout side by side.
+Invocation: `/rca-build <build id>` with no context on disk, so Step 1a runs. From
+`~/work/api`, in a workspace holding `api`, `e2e-tests` and the plugin checkout
+side by side.
 
 The environment this walks through is the `agent-assigned-unlisted-stack` fixture:
 `gh` and `flyctl` on PATH, a Coralogix and a Dynatrace MCP server in the session,
@@ -16,10 +19,9 @@ fails if this example names a capability or route the fixtures do not contain.
 
 ---
 
-## 1. Discovery runs first, so the split is concrete
+## 1. Look around first, so the split is concrete
 
-Recognising what is present costs nothing, so it happens before the
-greeting. A canned "I have test logs, you have everything else" would be true and
+Recognising what is present costs nothing, so it happens before the greeting. A canned "I have test logs, you have everything else" would be true and
 useless; this is the same statement with the machine's actual contents in it.
 
 ```

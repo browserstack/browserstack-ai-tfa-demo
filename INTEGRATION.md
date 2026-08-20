@@ -4,9 +4,9 @@ This plugin is built so the **MCP core is truly cross-client** and the **harness
 layer ports via the cross-vendor Agent Skills standard**. Only one piece is
 genuinely Claude-Code-specific (the batch *dynamic workflow*); on Cursor and
 Codex that role is filled by the sequential harness or subagents. Every path is
-autonomous after the single `/rca-build` gate — no host ever prompts mid-run.
-Setup (`/rca-setup`) is the one interactive surface, and it runs once per repo
-rather than per build.
+autonomous after the single `/rca-build` gate — no host ever prompts mid-run. The
+setup interview is a phase of that same skill: it runs on a repo's first invocation
+and never again, so it is the one interactive surface and it is not per build.
 
 ## What transfers, what doesn't
 
@@ -14,9 +14,8 @@ rather than per build.
 |---|---|---|---|
 | `bstack` MCP server (`listTestIds` + `tfaRcaTurn` + `triggerRcaReport`) | `.mcp.json` (auto-discovered) | `.cursor-mcp.json` / `.cursor/mcp.json` | `~/.codex/config.toml` `[mcp_servers.bstack]` |
 | `rca-build` skill (`SKILL.md`) | plugin `skills/` | Agent Skills (`.cursor/skills/` or cursor-plugin `"skills":"./skills/"`) | Agent Skills (`.agents/skills/`) |
-| `rca-setup` skill (`SKILL.md`) | plugin `skills/` (same directory — no packaging change) | same | same |
 | Committed setup context (`.rca-context.json`) | portable — a plain file in your repo | same | same |
-| Connector-skill pre-fill during setup | reads `.claude/skills/` (4 paths) | **not yet** — Cursor reads `.cursor/skills/` | **not yet** — Codex reads `.agents/skills/` |
+| Connector-skill pre-fill during the setup phase | reads `.claude/skills/` (4 paths) | **not yet** — Cursor reads `.cursor/skills/` | **not yet** — Codex reads `.agents/skills/` |
 | `ai-tfa-coordinator` agent | plugin `agents/` | `.cursor/agents/` (also reads `.claude/agents/`) | `.codex/agents/` |
 | Per-test RCA **loop** | `agents/ai-tfa-coordinator.md` | same skill/agent | same skill/agent |
 | Batch orchestration | dynamic workflow `workflows/rca-batch.mjs` (or subagents) | subagents | subagents |

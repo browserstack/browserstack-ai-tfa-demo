@@ -26,8 +26,8 @@ Two invariants, and they are the whole shape of this skill:
 
 - `<pluginRoot>/skills/rca-build/SKILL.md` (this body)
 - `<pluginRoot>/skills/rca-build/references/api.md` — the `lib/` signatures you call
-- `<pluginRoot>/skills/rca-setup/references/context-api.md` — the committed setup
-  context, shared with `rca-setup` so one copy serves both
+- `<pluginRoot>/skills/rca-build/references/context-api.md` — the committed context
+- `<pluginRoot>/skills/rca-build/references/setup.md` — Step 1a, the interview
 - `<pluginRoot>/skills/rca-build/references/clustering.md` — Step 3
 - `<pluginRoot>/skills/rca-build/references/evidence-routing.md` — Step 4, and every
   coordinator you dispatch
@@ -65,43 +65,72 @@ one genuinely load-bearing field. **Headless → stop immediately.**
 
 ### Part A — what this machine can reach
 
-Read the persisted setup context first, before any probe. A probe confirms what
-`rca-setup` already resolved; it does not rediscover it.
+Read the persisted context first, before checking anything.
 
 ```js
 const read = readRcaContext({ from: process.cwd(), pluginRoot });
-const verdict = startOfRunRefusal(read);   // the entire refusal policy
+const verdict = startOfRunRefusal(read);
 ```
 
-`startOfRunRefusal` refuses in three cases: no context found, a context present but
-unusable, and GitHub unverified. Its `message` and `nextAction` are written to be
-printed as-is. The distinction between the first two matters — telling someone to
-run setup when their file is merely conflict-marked throws away every answer they
+`startOfRunRefusal` returns one of three things, and only two of them stop:
+
+| verdict | what it means | what you do |
+|---|---|---|
+| `refuse: true` | the file is present but unusable, or GitHub is unverified | print `message` and `nextAction` as-is and stop |
+| `setup: true` | there is no context | **run Step 1a and keep going** |
+| neither | usable context | seed the manifest from it, below |
+
+The middle row used to be a refusal too — "no context found, go run `rca-setup`".
+That was the wrong answer to the commonest first contact with this plugin: someone
+has a red build, runs the thing that investigates red builds, and is told to go run
+something else and come back. Setup is a phase of this skill, so run it.
+
+The distinction between the first two rows still matters: telling someone to run
+setup when their file is merely conflict-marked throws away every answer they
 already gave.
 
-Otherwise `verdict.partial` tells you whether some capabilities were left
-unanswered; those are declared as gaps, exactly like a skip.
+`verdict.partial` tells you some capabilities were left unanswered. Those are
+declared as gaps, exactly like a skip — a partial is runnable precisely when GitHub
+is verified in it, and `startOfRunRefusal` has already applied that rule.
 
-**Seed the manifest from the context.** `context.verified` carries each capability's
-route and the targets setup proved. Confirm those cheaply and in one batch. Anything
-the context does not cover, resolve now:
+#### Step 1a — setup, only when there is no context
+
+Follow `<pluginRoot>/skills/rca-build/references/setup.md`. It owns the order, what
+each capability owes, what verification proves, and where the file lands.
+
+It ends by persisting a context and feeding this same gate — so the interview's
+confirmation and the run's confirmation are one screen, not two. **Headless does
+not interview:** there is no synchronous human, so a question would hang. Report
+that no context exists, name what setup would ask for, and stop.
+
+#### With a context — seed, then confirm
+
+`context.verified` carries each capability's route and the targets setup proved.
+Confirm those cheaply and in one batch. Anything the context does not cover,
+resolve now:
 
 - Connector-shaped skills supersede a raw tool for their capability, because they
   carry a repo map and conventions the raw tool does not. Look under
   `.claude/skills/`, and above cwd as well — when this plugin is itself a checkout
   in the workspace, the product's skills sit one or two levels up. A skill
-  declaring `capability: <name>` IS the connector for it.
+  declaring `capability: <name>` IS the connector for it. They are a **less**
+  trusted input, not a more trusted one: they are read from several filesystem
+  paths including a home directory, so they may only fill fields the table
+  declares.
 - Several product families may be present. Pick the one that owns THIS build's
   failures by matching build metadata and failure signatures against what each
   declares. If both signals leave it genuinely ambiguous, that earns a part of the
   single gate question. Headless: take the first and record the ambiguity as a gap.
-- Otherwise probe whatever the session actually has. Record what each capability
-  is reached through, so a coordinator knows whether it is talking to a CLI or an
-  MCP server.
+- Otherwise check whatever the session actually has. Record what each capability is
+  reached through, so a coordinator knows whether it is talking to a CLI or an MCP
+  server.
 
-Output the capability manifest through `buildManifest` — `available` plus what it is
-reached `via`. **An absent capability is a recorded gap, never a blocker — except**
-the three start-of-run context refusals above, which fire before the gate opens.
+The manifest is `{capability: {available, via}}` for every row in
+`config.capabilities` except the TFA-owned `test_logs`. You build it; there is no
+helper, because joining a config object to what you just observed is not a
+computation worth a module. **An absent capability is a recorded gap, never a
+blocker — except** the two start-of-run context refusals above, which stop the run
+before the gate opens.
 
 ### Part B — intake
 
@@ -158,7 +187,7 @@ not be corroborated and no PRs were supplied. If more than one survives, they ar
 parts of ONE question. There is no second gate question.
 
 **Then the gate closes and the run is autonomous.** The only things that stop a run
-are the three start-of-run refusals above, and they fire before the gate opens —
+are the two start-of-run context refusals above, and they fire before the gate opens —
 which is the precondition for autonomy, not an exception to it.
 
 ## Step 2 — discovery
@@ -306,8 +335,9 @@ thread.
 
 - One gate. At most one consolidated question, at gate close. After it closes, never
   ask the user anything.
-- An unavailable capability is a recorded gap, never a blocker — **except** the three
-  start-of-run context refusals, which stop the run before the gate opens.
+- An unavailable capability is a recorded gap, never a blocker — **except** the two
+  start-of-run context refusals, which stop the run before the gate opens. An absent
+  context is not one of them: that runs the setup phase.
 - Headless never asks. Headless with no build id ends immediately.
 - Never call `tfaRcaTurn` from this skill except Step 4b's turn-1 pre-dispatch.
 - A soft `PENDING` must be drained before any further submit on that thread.

@@ -1,8 +1,8 @@
 # Template — `.rca-context.json`
 
 Written by `writeRcaContext` (`lib/rca-context.mjs`). Signatures and error codes
-are in `<pluginRoot>/skills/rca-setup/references/api-reference.md`; the resolution
-rules are in `<pluginRoot>/skills/rca-setup/references/context-resolution.md`.
+are in `<pluginRoot>/skills/rca-build/references/context-api.md`; the resolution
+rules are in `<pluginRoot>/skills/rca-build/references/setup.md`.
 
 **Field names are the capability table's, exactly.** `namespace` and `logIndex`
 are singular because `config/rca.config.json` declares them that way, and both

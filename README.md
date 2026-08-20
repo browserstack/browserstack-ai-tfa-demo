@@ -26,11 +26,10 @@ cp .env.example .env   # fill in BROWSERSTACK_USERNAME / BROWSERSTACK_ACCESS_KEY
 claude --plugin-dir ./
 ```
 
-The plugin auto-configures on load: the `bstack` MCP server (from `.mcp.json`),
-the `rca-setup` and `rca-build` skills, and the `ai-tfa-coordinator` agent are all
-discovered by convention. (There is deliberately **no** command file named after
-either skill — a command and skill sharing a name collide and the skill body fails
-to load. That is also why anything that "prints the setup command" names a skill.)
+The plugin auto-configures on load: the `bstack` MCP server (from `.mcp.json`), the
+`rca-build` skill, and the `ai-tfa-coordinator` agent are all discovered by
+convention. (There is deliberately **no** command file named after the skill — a
+command and skill sharing a name collide and the skill body fails to load.)
 
 ### Cursor & Codex
 
@@ -43,21 +42,29 @@ discovery, deeplink) is in **[INTEGRATION.md](INTEGRATION.md)**.
 
 ## Usage
 
-Two skills. The first runs **once per repo**; the second runs per red build.
+One skill. First run on a repo interviews you once; every run after that is quiet.
 
-### 1. Set up, once
+### Just run it
 
 ```
-/rca-setup
+/rca-build <build-id>
 ```
 
-Discovers what your machine already has — `gh`, `kubectl`, MCP servers, repo
-fingerprints — then asks only for the scope it cannot discover: which repos are
-yours, which subpaths inside a monorepo, which branch regression runs against,
-which namespace, which log index. Every answer is verified with a live read
-before it is kept.
+With no setup context on disk, the run interviews you first — the setup phase is
+part of this skill, not a separate thing to remember. It looks at what your machine
+already has (a forge CLI, a runtime CLI, MCP servers in the session, connector
+skills in the workspace), decides which capability each one serves, and then asks
+only for the scope it cannot see: which repos are yours, which subpaths inside a
+monorepo, which branch regression runs against, which namespace, which log index.
+Every answer is verified with a live read before it is kept.
 
-Then **commit and push the context it writes**:
+**Nothing in this plugin has a list of supported vendors.** No fingerprints, no
+hint list, no probe commands — the model decides that a given CLI is your runtime
+or that a given MCP server is your metrics, which is why a stack nobody here has
+heard of works without a code change. GitHub is the one hard requirement: without
+the code and the merged PRs there is no culprit PR to name, and that is the output.
+
+Then **commit and push the context it writes**:Then **commit and push the context it writes**:
 
 ```bash
 git add .rca-context.json && git commit -m "chore: add RCA setup context"
@@ -110,7 +117,7 @@ The run has exactly **one gate** before execution, with two parts:
    never a blocker.
 2. **Requirements** — intake fields (product repo, automation repo, branches,
    PRs in play, build id) are resolved in a fixed precedence: **build metadata →
-   invocation args → the persisted `rca-setup` context → connector intake defaults
+   invocation args → the persisted setup context → connector intake defaults
    → inference**. A field the context verified is used as given and is never
    re-asked, which is what makes the repeat loop quiet. At most **one**
    consolidated question may be asked at gate close, and only for a field no tier

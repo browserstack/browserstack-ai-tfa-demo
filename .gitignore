@@ -6,3 +6,4 @@ node_modules/
 .rca/
 # Planning docs (brainstorm/ideation/plan) stay local — not pushed.
 docs/
+.mcp.local.json

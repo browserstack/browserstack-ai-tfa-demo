@@ -115,6 +115,10 @@ writeRcaContext({context, verifiedRepos, from, pluginRoot})  → {ok, path} | {o
     refuses `incomplete-github`: a complete context whose GitHub is unverified is a
     state every run would refuse — the interview writes a partial instead.
 findSecretFields(context)   → [{path, kind}]   names WHERE, never the value
+startOfRunRefusal(readResult) → {refuse, code, message, nextAction, partial}
+    THE start-of-run policy — call it in Part A Step 0a. Refuses on no-context,
+    unreadable-context and github-unverified. A partial with verified GitHub
+    proceeds with `partial: true`.
 CONTEXT_FILENAME  ".rca-context.json"   at the home repo's worktree root, NOT under .rca/
 SCHEMA_VERSION    CREDENTIAL_KIND  { ENV_VAR, PROVIDER_MANAGED }
 ```
@@ -188,6 +192,39 @@ Everything the run could possibly need from the user is settled here, in one
 pass. The gate has two parts; both run before any RCA work starts.
 
 ### Part A — connector discovery + validation
+
+> **ADAPTER (milestone 1 scaffolding — delete when Part B reads context natively.)**
+> Everything in this blockquote and the matching one in Part B exists to feed the
+> `rca-setup` context into today's gate. Milestone 2 rewrites the gate around it and
+> this scaffolding goes away; the precedence chain below must survive that rewrite.
+
+**Step 0a — load the persisted setup context BEFORE any probe.** A probe's job here
+is to *confirm* what setup already resolved, not to rediscover it.
+
+```js
+const read = readRcaContext({ from: process.cwd(), pluginRoot });   // lib/rca-context.mjs
+const verdict = startOfRunRefusal(read);
+```
+
+`startOfRunRefusal` is the whole refusal policy, as a tested function rather than a
+list of paragraphs here. It refuses in four cases and only four:
+
+| `verdict.code` | Meaning | What to print |
+|---|---|---|
+| `no-context` | nothing found | "run the `rca-setup` skill once in this repo" |
+| `unreadable-context` | present but unusable — parse error, `schemaVersion` mismatch, missing field, bad overlay | the file path, the class, and the fix. **Never** "no context found" |
+| `github-unverified` | context exists, GitHub is not verified in it — including a partial without it | re-run setup; check the credential it names |
+| — | `refuse: false` | proceed; `verdict.partial` says whether unanswered capabilities must be declared as gaps |
+
+**Refuse before any RCA work, identically in interactive and headless mode.** The
+third and fourth rows are the ones a prose list forgets: `unreadable-context` looks
+like `no-context` until you look closely, and telling someone to run setup when
+their file is merely conflict-marked discards every answer they already gave.
+
+When `refuse: false`, **seed the manifest from the context** before probing —
+`verified` carries each capability's route and resolved targets, so the probes below
+confirm rather than discover. A partial's unanswered capabilities are declared as
+gaps exactly like a skip.
 
 **Step 0 — enumerate connector-shaped skills FIRST (before probing raw MCP tools).**
 Run:
@@ -384,6 +421,42 @@ is the point:
      below.
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
 
+> **ADAPTER (milestone 1 scaffolding.)** This block must stay ABOVE the
+> intake-defaults paragraph that follows it. Ordering is the entire point: a
+> declaring connector skill supersedes the raw tool, and Part B has historically
+> checked intake defaults before anything else — so an adapter placed underneath
+> both is invisible, and a proving run would pass while proving nothing.
+
+**Resolve intake from the context FIRST, through `resolveIntake`.**
+
+```js
+const intake = resolveIntake({
+  buildMeta,                        // fetchBuildInsights — branch the build actually ran on
+  invocationArgs,                   // build id, PR URLs, repo hints the user typed
+  context: read.context,            // what `rca-setup` verified
+  connectorDefaults,                // the connector skill's intake-defaults section
+  fields: ["repo", "automationRepo", "baseBranch", "namespace", "workloads"],
+});
+```
+
+Precedence, in full: **build metadata → invocation args → persisted context →
+connector intake defaults → inference.** Every field comes back `{value, source}`,
+and a field no source supplies comes back `source: "unresolved"` — **inference runs
+only on those**, and never overwrites a resolved field. Report each field's `source`
+in the gate summary so a human can see which tier won.
+
+Two consequences that are easy to get wrong:
+
+- **A context-verified repo enters as `given`, not as a hint.** The product-repo
+  corroboration below applies to doc- and remote-sourced hints only. It must never
+  discard or re-ask a repo `rca-setup` verified — a machine with a complete context
+  would otherwise still hit the consolidated question, which breaks the
+  zero-questions guarantee outright.
+- **A branch adopted from build metadata is re-verified before use.** Setup verified
+  the *persisted* branch; reconciliation may hand the run a different one, and
+  adopting it unchecked skips the very 30-day window warning that predicts a dead
+  culprit hunt.
+
 **Check the selected connector skill's own intake-defaults section FIRST — before
 falling through to inference, and before ever asking.** A connector skill that
 declares "Intake defaults for the gate (Part B)" (or equivalent) is telling you
@@ -454,6 +527,13 @@ validated capability manifest (with gaps named). Then the gate closes.
 **AFTER THE GATE CLOSES, THE RUN NEVER ASKS THE USER ANYTHING AGAIN.** RCA
 execution is fully autonomous: every downstream evidence gap becomes an
 `unavailable` block back to TFA (best-effort finalize), never a prompt.
+
+**Never a blocker — except the start-of-run context refusals.** Once the gate has
+closed, nothing stops the run. But the four `startOfRunRefusal` cases in Part A
+Step 0a fire BEFORE it opens, and those do stop it: no resolvable context, a
+context present but unreadable, and GitHub unverified. That is not an exception to
+autonomy — it is the precondition for it, since a run with no verified GitHub
+cannot produce the culprit PR that is the entire output.
 
 ## Step 2 — discovery
 
@@ -1190,7 +1270,10 @@ thread.
 
 - Exactly one gate. At most one consolidated question, at gate close. **After
   the gate closes, never ask the user anything.**
-- An invalid/absent connector is a recorded gap, never a blocker.
+- An invalid/absent connector is a recorded gap, never a blocker — **except the
+  start-of-run context refusals** (Part A Step 0a): no resolvable context, a context
+  present but unreadable, or GitHub unverified. Those three stop the run before the
+  gate opens. Every other missing connector, at any later point, is a gap.
 - Headless + missing build id → end immediately. Headless never asks.
 - Never call `tfaRcaTurn` from this skill — always via the `ai-tfa-coordinator` —
   **except Step 4b's turn-1 pre-dispatch**, which is a deliberate, narrow carve-out

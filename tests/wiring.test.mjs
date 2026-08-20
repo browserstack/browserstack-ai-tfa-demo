@@ -92,6 +92,64 @@ test("gate-critical lib exports are actually invoked outside tests", () => {
   }
 });
 
+// The adapter that feeds the setup context into the run skill's gate is PROSE — a
+// markdown edit, not a function call the module system can verify. So the prompt
+// layer gets asserted the same way the call graph does above.
+//
+// Ordering is the load-bearing part. A declaring connector skill supersedes the raw
+// tool, and Part B has historically consulted intake defaults before anything else,
+// so an adapter block placed BELOW them is invisible at runtime — the context loses
+// every contested field and a proving run passes while proving nothing.
+//
+// Note what this test deliberately cannot prove: that the gate actually CALLS
+// resolveIntake rather than reimplementing precedence in prose. String presence and
+// block ordering are both satisfied by a hand-rolled reimplementation. Test 2
+// above is what catches that, which is why resolveIntake is on its list.
+test("the run skill's gate wires the setup context in, above the connector defaults", () => {
+  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+
+  assert.match(
+    skill,
+    // whitespace-tolerant: the chain is line-wrapped in the markdown, and where it
+    // wraps is not what this asserts.
+    /build metadata\s*→\s*invocation args\s*→\s*persisted context\s*→\s*connector intake defaults\s*→\s*inference/,
+    "the full precedence chain must be stated, not summarised — a partial chain leaves the " +
+      "position of invocation args and inference to whoever reads it",
+  );
+
+  const contextBlock = skill.indexOf("Resolve intake from the context FIRST");
+  const intakeDefaults = skill.indexOf("Check the selected connector skill's own intake-defaults");
+  assert.ok(contextBlock > 0, "Part B must have a context-resolution block");
+  assert.ok(intakeDefaults > 0, "and the intake-defaults paragraph must still be there");
+  assert.ok(
+    contextBlock < intakeDefaults,
+    "the context block must come BEFORE intake defaults — below them it is invisible",
+  );
+
+  // A JS fence naming the function, following the discoverWorkspaceRoot snippet
+  // precedent in Part A. Prose alone reads as advice; a snippet reads as a call.
+  const fences = [...skill.matchAll(/```js\n([\s\S]*?)```/g)].map((m) => m[1]);
+  assert.ok(
+    fences.some((f) => f.includes("resolveIntake(")),
+    "Part B must name resolveIntake in an inline JS snippet",
+  );
+  assert.ok(
+    fences.some((f) => f.includes("startOfRunRefusal(")),
+    "Part A must name startOfRunRefusal in an inline JS snippet",
+  );
+
+  // The adapter's refusals contradict a Hard rule. An unamended contradiction is
+  // not a tie: this repo's own gate history records agents following the emphatic
+  // rule they encountered rather than the intended one.
+  assert.match(
+    skill,
+    /never a blocker — \*\*except the\s+start-of-run context refusals\*\*/,
+    "the Hard rules list must carve out the start-of-run refusals, not merely sit beside them",
+  );
+  assert.match(skill, /Never a blocker — except the start-of-run context refusals/,
+    "and Gate close must carry the same carve-out");
+});
+
 // The root cause of the 23% discovery tax was DRIFT: helpers were added faster
 // than the docs described them, so agents grepped lib/ at runtime to learn the
 // API. Documenting it once fixes today; this test keeps it fixed.

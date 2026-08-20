@@ -151,6 +151,9 @@ writeRcaContext({context, verifiedRepos, from, pluginRoot}) → {ok, path} | {ok
 findContextFile({from, pluginRoot})        → path | null
 contextHomeDir({homeRepo, verifiedRepos, from, pluginRoot}) → {ok, dir} | {ok:false, code, message}
 findSecretFields(context)                  → [{path, kind}]
+startOfRunRefusal(readResult)               → {refuse, code?, message?, nextAction?, partial?}
+    the run's whole refusal policy: no-context · unreadable-context · github-unverified
+    `refuse:false` carries `partial`, so the caller knows to declare unanswered gaps
 resolveIntake({buildMeta, invocationArgs, context, connectorDefaults, fields})
                                            → {field: {value, source}}
 CONTEXT_FILENAME  ".rca-context.json"      SCHEMA_VERSION      CREDENTIAL_KIND

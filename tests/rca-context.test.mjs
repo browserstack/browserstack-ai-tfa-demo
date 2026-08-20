@@ -25,6 +25,7 @@ import {
   findSecretFields,
   readRcaContext,
   resolveIntake,
+  startOfRunRefusal,
   writeRcaContext,
 } from "../lib/rca-context.mjs";
 
@@ -333,6 +334,57 @@ test("the same context as a partial is accepted", () => {
   });
   assert.equal(w.ok, true, w.message);
   assert.equal(readRcaContext({ from: productRepo }).complete, false);
+});
+
+// ---- start-of-run refusals --------------------------------------------------
+
+test("no context refuses and points at setup", () => {
+  const r = startOfRunRefusal({ ok: false, code: "no-context" });
+  assert.equal(r.refuse, true);
+  assert.equal(r.code, "no-context");
+  assert.match(r.nextAction, /rca-setup/);
+});
+
+test("a present-but-unreadable context is a DIFFERENT refusal from an absent one", () => {
+  // Telling someone to run setup when their context is merely conflict-marked
+  // throws away every answer they already gave. This is the case a prose list of
+  // refusals forgets, because it looks like "no context" until you look closely.
+  for (const code of ["parse-error", "schema-version", "missing-field", "unreadable"]) {
+    const r = startOfRunRefusal({ ok: false, code, path: "/w/api/.rca-context.json", message: "detail" });
+    assert.equal(r.refuse, true, code);
+    assert.equal(r.code, "unreadable-context", code);
+    assert.notEqual(r.code, "no-context");
+    assert.equal(r.path, "/w/api/.rca-context.json", "and it names the file");
+    assert.ok(r.nextAction.trim().length > 0);
+  }
+});
+
+test("a context whose GitHub is unverified refuses, naming the credential path", () => {
+  const r = startOfRunRefusal({
+    ok: true,
+    path: "/w/api/.rca-context.json",
+    context: { complete: false, verified: { infra: { ok: true } } },
+  });
+  assert.equal(r.refuse, true);
+  assert.equal(r.code, "github-unverified");
+  assert.match(r.nextAction, /credential/i);
+});
+
+test("a PARTIAL context with verified GitHub proceeds, and says it is partial", () => {
+  // The one rule: a partial runs iff GitHub is verified in it. Refusing every
+  // partial would brick the resume path the partial exists to enable.
+  const r = startOfRunRefusal({
+    ok: true,
+    path: "/w/api/.rca-context.json",
+    context: { complete: false, verified: { github: { ok: true } } },
+  });
+  assert.equal(r.refuse, false);
+  assert.equal(r.partial, true, "the caller must know to declare the unanswered capabilities as gaps");
+});
+
+test("a complete context with verified GitHub proceeds and is not partial", () => {
+  const r = startOfRunRefusal({ ok: true, context: { complete: true, verified: { github: { ok: true } } } });
+  assert.deepEqual({ refuse: r.refuse, partial: r.partial }, { refuse: false, partial: false });
 });
 
 // ---- intake precedence ------------------------------------------------------

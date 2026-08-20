@@ -16,7 +16,7 @@ LINK: <permalink to the source — PR/commit/log-search/metrics panel/deploy rec
 ```
 
 Unfulfillable ask (report, don't drop — machine-generated for absent connectors
-by `lib/loop.mjs` `unavailableBlock`):
+— the shape a coordinator emits for an ask it cannot fulfil):
 
 ```
 ASK: <verbatim what>

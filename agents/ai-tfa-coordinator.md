@@ -26,7 +26,7 @@ was dispatched, so it **never prompts a user** — an evidence gap degrades to a
 
 This coordinator is the **reusable unit**: it takes one `testRunId` and runs
 standalone, driven by the batch workflow, a subagent dispatch, or the thin
-sequential harness (`lib/loop.mjs`). It is **generic over product and infra** —
+sequential harness. It is **generic over product and infra** —
 it names no runtime, log store or metrics product; it routes by *capability*.
 
 <use_parallel_tool_calls>
@@ -340,6 +340,28 @@ once at the end of the run by `triggerRcaReport`, not per test.
    the run end `PENDING` (note `soft-pending`), resumable via `threadId`+`turnId`.
    If the client has no `getTfaTurnResult` tool, end `PENDING` immediately as
    before — never busy-wait through `tfaRcaTurn` resubmits instead.
+
+   Four drain rules, each recording a way
+   this went wrong:
+
+   - **Read the SAME `turnId` every time, and stop once it lands.** The drain is
+     re-reading one in-flight turn, not polling for new ones. Reading a different
+     turnId, or continuing to resubmit after it landed, is how one thread ends up
+     carrying two turns.
+   - **A failed read is not a verdict.** A single errored `getTfaTurnResult` says
+     nothing about the turn — keep reading on the budget. Treating one bad read as
+     `PENDING` abandons a turn that was about to land.
+   - **But a PERSISTENT error stops the drain early.** Repeated hard errors on the
+     same turn mean the thread is wedged, and burning the whole budget on it delays
+     every other test. An INTERMITTENT error does not count: one good read clears
+     the streak. An error-shaped *result* counts the same as a thrown one.
+   - **`BLOCKED` from a drain is terminal.** Do not resubmit an empty message
+     hoping for a different answer; that walks the turn cap for nothing.
+5b. **A pre-dispatched turn 1 is never resubmitted.** When the orchestrator hands
+   you a turn-1 result, that turn is already spent: start at routing its asks, and
+   count it against the turn cap. Resubmitting it stacks a second turn on the
+   thread and wastes the cheapest turn you had. Only the FIRST pass short-circuits
+   — every later iteration submits normally.
 6. **Digest, don't dump.** Every follow-up `message` carries digested findings
    (`ask → found → snippet/link`), never raw log tails, full diffs, or full files.
    Size caps + block shape live in `<pluginRoot>/skills/rca-build/references/evidence-routing.md`
@@ -436,7 +458,7 @@ capability is unavailable — emit an
      `gather` asks (e.g. a github ask and an infra ask together), issue their
      live gather calls CONCURRENTLY — as parallel tool calls in the same
      turn — never one ask's full gather-and-digest before starting the next.
-     `lib/loop.mjs`'s `runRcaLoop` mirrors this with `Promise.all` over
+     fire them together with one `Promise.all`-shaped batch over
      `buckets.gather`; do the equivalent here. Only the final message assembly
      respects priority order, not the fetching. **This is not only an
      across-asks rule** — a single github ask routinely needs several
@@ -476,11 +498,12 @@ capability is unavailable — emit an
 6. EMIT the RCA_OUTPUT block from the captured terminal state.
 ```
 
-> The loop mechanics above have an **executable mirror** in `lib/loop.mjs`
-> (`runRcaLoop`) — conformance-tested against recorded `tfaRcaTurn` transcripts
-> (`tests/conformance.test.mjs`). It also serves as the **sequential thin-client
-> harness**: MCP clients without workflows/subagents drive the same contract
-> by calling `runRcaLoop` with a real `submit` bound to `tfaRcaTurn`.
+> These mechanics used to have an executable mirror in `lib/loop.mjs`. It was
+> deleted: 283 lines plus 582 of tests, driven by nothing in production, proving
+> that the mirror matched the prose rather than that the agent did. The rules it
+> encoded are stated above instead — including the four drain rules and the
+> turn-1 rule, which existed ONLY in that code and would otherwise have been lost
+> with it.
 
 **Sibling confirm (cluster member).** When `pre_seed` is present the first turn
 states the representative's hypothesis and asks TFA to confirm against this

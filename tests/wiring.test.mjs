@@ -211,7 +211,6 @@ const OWNERS = {
   "build-cleanup.mjs": ["rca-build"],
   "csv-state.mjs": ["rca-build"],
   "evidence-file.mjs": ["rca-build"],
-  "loop.mjs": ["rca-build"],
   "repo-source.mjs": ["rca-build"],
   "routing.mjs": ["rca-build"],
   "signature.mjs": ["rca-build"],
@@ -231,7 +230,7 @@ const OWNERS = {
 const INTERNAL = new Set([
   "emptyEvidenceFile", "writeEvidenceFile", "contribDirFor", "contribPathFor",
   "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache",
-  "replaySubmit", "replayRead", "normalize",
+  "normalize",
   "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
   "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
   "unavailableCapabilities", "toolCacheDirFor", "cacheKey",
@@ -240,7 +239,7 @@ const INTERNAL = new Set([
   // bin/cached-exec.mjs / bin/cached-mcp.mjs, never by importing it.
   "isRunnable", "tokenize", "isCacheableMcp", "redact", "cacheGet",
   "cachePut", "cacheStats", "mcpCacheKey",
-  // replay seam, same classification as loop.mjs's replaySubmit/replayRead
+  // replay seam
   "replayProbe",
 ]);
 

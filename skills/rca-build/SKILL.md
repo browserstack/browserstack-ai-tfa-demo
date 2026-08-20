@@ -749,26 +749,19 @@ This distinction matters differently on each path:
 
 > **Concurrency comes from `config/rca.config.json` — always read it from
 > there, never hardcode.** The default path (direct Agent-tool dispatch) honors
-> the JSON value literally: fan out coordinator subagents in batches of
-> `concurrency` (one message, up to `concurrency` tool-use blocks per batch).
-> The opt-in `workflows/rca-batch.mjs` path is subject to the Workflow tool's
-> architectural cap of `min(16, cpu cores - 2)` — on that path `concurrency`
-> is a soft upper bound and excess work queues rather than running N-wide.
-> If you need literal fan-out, use the default direct-dispatch path.
+> the JSON value literally (batches of `concurrency`, one message per batch).
+> The opt-in `workflows/rca-batch.mjs` path caps it lower (see that bullet
+> below); if you need literal fan-out, use the default path.
 
 - **Default (all hosts, including Claude Code) → direct Agent-tool dispatch.**
   Read `concurrency` from `config/rca.config.json` and dispatch
   `tfa-rca:ai-tfa-coordinator` subagents in batches of that size (one message,
   up to `concurrency` tool-use blocks per batch), refilling each next batch per
   the rolling work-queue discipline above — never two rigid all-reps /
-  all-siblings phases. This path is **outside the Workflow runtime**, so the
-  `min(16, cores-2)` ceiling does not apply and the JSON value is honored
-  literally. Prefer this path whenever the machine's Workflow cap (`min(16,
-  cores-2)`) would be smaller than the configured `concurrency` — e.g. an
-  8-core Mac caps Workflow at 6 while the JSON asks for 20 — but remember it
-  only gets per-BATCH streaming, not per-cluster: prefer
-  `workflows/rca-batch.mjs` instead whenever cluster count exceeds
-  `concurrency` and the Workflow tool is available.
+  all-siblings phases. Outside the Workflow runtime, so the JSON value is
+  honored literally; but it streams per-BATCH, not per-cluster — prefer
+  `workflows/rca-batch.mjs` whenever cluster count exceeds `concurrency` and
+  the Workflow tool is available.
 
   **This path has no code enforcing the Step 4b handoff — you are the
   enforcement.** Unlike `workflows/rca-batch.mjs` (which reads the registry in

@@ -99,6 +99,26 @@ resolveLocalRepos({repos, pins, workspaceRoot})            → {repo:{usable, sh
 readFileAt({repo, sha, path, workspaceRoot})               → sha ONLY; a branch name is refused
 ```
 
+**Committed setup context — `lib/rca-context.mjs`** (owned by BOTH skills)
+```
+readRcaContext({from, pluginRoot, path})   → {ok, context, path, complete} | {ok:false, code, message}
+    codes: no-context · parse-error · schema-version · missing-field · unreadable
+    Distinct on purpose — never degrade a broken context to "no context", which
+    would trigger a full re-interview and read as the feature forgetting the user.
+resolveIntake({buildMeta, invocationArgs, context, connectorDefaults, fields})
+    → {field: {value, source}}   source: buildMeta|invocationArgs|context|connectorDefaults|unresolved
+    THE gate's precedence rule. Verified context outranks connector intake defaults.
+    Inference is NOT a tier here — the gate performs it, only on `unresolved` fields.
+findContextFile({from, pluginRoot})   → path | null   two-stage walk; refuses pluginRoot
+contextHomeDir({homeRepo, verifiedRepos, from, pluginRoot}) → {ok, dir} | {ok:false, code, message}
+writeRcaContext({context, verifiedRepos, from, pluginRoot})  → {ok, path} | {ok:false, code, message}
+findSecretFields(context)   → [{path, kind}]   names WHERE, never the value
+CONTEXT_FILENAME  ".rca-context.json"   at the home repo's worktree root, NOT under .rca/
+SCHEMA_VERSION    CREDENTIAL_KIND  { ENV_VAR, PROVIDER_MANAGED }
+```
+This artifact is git-tracked, so it is the one persisted file here that is
+deliberately NOT hardened — never point `hardenStateDir` at it.
+
 **Housekeeping — `lib/state-dir.mjs`**
 ```
 hardenStateDir(dir)                       run once at gate start; idempotent

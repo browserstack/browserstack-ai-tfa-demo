@@ -139,7 +139,52 @@ base-branch evidence on that route, not an optional extra.
 
 ## Context artifact
 
-`lib/rca-context.mjs` — not yet created. U4 documents its exports here.
+`lib/rca-context.mjs` — the only module here that touches the filesystem and git.
+Uses `execFileSync("git", [...])` with an argument array, never a shell string.
+
+```
+readRcaContext({from, pluginRoot, path})   → {ok, context, path, complete} | {ok:false, code, message}
+    codes: no-context · parse-error · schema-version · missing-field · unreadable
+writeRcaContext({context, verifiedRepos, from, pluginRoot}) → {ok, path} | {ok:false, code, message}
+    codes: missing-field · schema-version · secret-in-field · home-repo-unverified ·
+           no-git-worktree · ignored-destination
+findContextFile({from, pluginRoot})        → path | null
+contextHomeDir({homeRepo, verifiedRepos, from, pluginRoot}) → {ok, dir} | {ok:false, code, message}
+findSecretFields(context)                  → [{path, kind}]
+resolveIntake({buildMeta, invocationArgs, context, connectorDefaults, fields})
+                                           → {field: {value, source}}
+CONTEXT_FILENAME  ".rca-context.json"      SCHEMA_VERSION      CREDENTIAL_KIND
+```
+
+**Not hardened, on purpose.** Every other persisted artifact in `lib/` writes 0600 files into
+0700 directories. This one is git-tracked, where that mode is both wrong and not preserved by
+git — so `hardenStateDir` must never be pointed at it. `tests/rca-context.test.mjs` asserts the
+absence of any hardening call, because here the guard IS the absence.
+
+**Fails loud on drift.** Unparseable, wrong-version and missing-field are three distinct named
+errors, matching `csv-state.readRows`, which throws on a foreign header rather than dropping
+columns. A hand-resolved merge conflict must never degrade to "no context" — that triggers a
+full re-interview and reads to the customer as the feature forgetting them.
+
+**Read resolution is two-stage**: each level from cwd upward, plus that level's immediate
+children. The children half is what makes a sibling clone layout work — a context committed to
+the product repo is invisible from the automation repo under a parent-only walk, and the
+no-context refusal would then fire on a fully set-up machine. A candidate is accepted only when
+its declared `homeRepo` matches the directory it was found in; the plugin's own root is always
+refused, because the documented install flow makes cwd the plugin directory on a first run.
+
+**Write resolution is separate from read resolution** and targets the declared home repo's
+`git rev-parse --show-toplevel`. Read-side resolution cannot prevent a bad write: without this,
+a first run would land the file where no teammate inherits it.
+
+**The write-time secret guard covers every field**, including the credential-reference field —
+that is exactly where a pasted secret most plausibly lands, so exempting it would leave the
+likeliest leak unguarded. It uses `looksLikeSecret` from `lib/verify.mjs`, not `redact`, and
+names the field path without ever echoing the value.
+
+**Paths are canonicalized.** `git rev-parse` reports realpaths while a directory walk reports
+what it was handed, so on macOS (`/var` → `/private/var`) the read and write sides would
+otherwise return two spellings of one location.
 
 This module is owned by **both** skills: the setup flow writes the context, and `rca-build`'s gate
 reads it. The guard therefore requires its exports documented in this file **and** in

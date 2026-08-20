@@ -12,8 +12,8 @@ else.
 ## What counts as verified
 
 A live read against the **resolved scope** — not the presence of a tool, and not
-the presence of a credential. `kubectl` being on PATH says nothing about whether
-`prod` exists or whether this credential can see it.
+the presence of a credential. A runtime CLI being on PATH says nothing about
+whether `prod` exists or whether this credential can see it.
 
 **Per target, not per tool.** A capability valid for `acme/api` and 404 on
 `acme/ghost` stays valid for `acme/api`; the failure is a scoped gap. Collapsing

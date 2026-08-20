@@ -10,7 +10,7 @@ this summary. Headless skips it and prints `product repo: unknown (gap)`.
 
 ```
 GATE CLOSED — capability manifest:
-  github ✅ valid (gh, authed) · infra ✅ valid (via <kubectl ctx …, docker, ecs, …>) · logs ❌ absent · metrics ❌ absent
+  github ✅ valid (via <tool>) · infra ✅ valid (via <tool>, <scope>) · logs ❌ absent · metrics ❌ absent
 
 Intake:
   build id:        <id>                      (given)

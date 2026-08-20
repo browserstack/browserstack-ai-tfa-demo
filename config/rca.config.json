@@ -68,10 +68,10 @@
       },
       "scopeFields": {
         "repos": {
-          "consumer": "PR-window search and path-overlap falsification (references/github-evidence.md)"
+          "consumer": "PR-window search and path-overlap falsification (Step 4; references/code-evidence.md)"
         },
         "subpaths": {
-          "consumer": "path-overlap falsification inside a monorepo (references/github-evidence.md)"
+          "consumer": "path-overlap falsification inside a monorepo (Step 4; references/code-evidence.md)"
         },
         "baseBranch": {
           "consumer": "the merged-PR window the Step 4 culprit hunt searches"

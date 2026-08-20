@@ -1,10 +1,16 @@
-# Example — one full setup (fictional data, matching `tests/fixtures/discovery/full-stack.json`)
+# Example — one full setup (fictional data, matching `tests/fixtures/discovery/agent-assigned-unlisted-stack.json`)
+
+The stack here is deliberately one the shipped `seedHints` do NOT name: Fly.io,
+Coralogix and Dynatrace. An example built on the familiar tools shows the easy path
+and teaches it as the default — but the case that matters is the customer whose
+stack nobody wrote down, and this flow has to work for them without a code change.
 
 Invocation: `/rca-setup`, run from `~/work/api` in a workspace holding `api`,
 `e2e-tests` and the plugin checkout side by side.
 
-The environment this walks through is the `full-stack` discovery fixture:
-`gh`, `kubectl`, `logcli` and `promtool` on PATH, plus `k8s/deployment.yaml` in the
+The environment this walks through is the `agent-assigned-unlisted-stack` fixture:
+`gh` and `flyctl` on PATH, a Coralogix and a Dynatrace MCP server in the session,
+plus `fly.toml` in the
 repo. Keeping the two in step is not cosmetic — `tests/prose-budget.test.mjs`
 fails if this example names a capability or route the fixtures do not contain.
 
@@ -12,7 +18,7 @@ fails if this example names a capability or route the fixtures do not contain.
 
 ## 1. Discovery runs first, so the split is concrete
 
-Discovery is fingerprint matching and costs nothing, so it happens before the
+Recognising what is present costs nothing, so it happens before the
 greeting. A canned "I have test logs, you have everything else" would be true and
 useless; this is the same statement with the machine's actual contents in it.
 
@@ -26,11 +32,11 @@ I have none of your side — your code, your app logs, your pipeline, your clust
 your metrics. That's what this conversation is for.
 
 Looking at this machine, I found:
-  gh              → github    (verified in a moment)
-  kubectl         → infra
-  logcli          → logs
-  promtool        → metrics
-  k8s/            → infra (a second route to the same capability)
+  gh                      → github    (verified in a moment)
+  flyctl                  → infra     (no hint names it — assigned by judgement)
+  mcp__coralogix__query   → logs      (likewise)
+  mcp__dynatrace__metrics → metrics   (likewise)
+  fly.toml                → infra     (relevance only — a file cannot prove access)
 
 So I don't need to ask what you run. I need to ask what's YOURS inside it —
 which repos, which namespace, which index. Four questions, maybe five.
@@ -79,16 +85,16 @@ warning **alongside** the pass, never instead of it.
 ## 4. The optional capabilities
 
 ```
-infra — I found kubectl. Which namespace should I look in?
+infra — flyctl is here, so this is a Fly.io app. Which app should I look at?
 > prod
 
 Which workloads own these tests' failures? I use this to route log sweeps.
 > billing-consumer
 
-logs — I found logcli. Which index?
+logs — the Coralogix MCP server is in the session. Which index?
 > skip
 
-metrics — I found promtool. Namespace to query, or skip?
+metrics — Dynatrace is in the session. Which scope should I query, or skip?
 > skip
 
 Anything else you'd want me to look at that I haven't asked about?
@@ -105,7 +111,7 @@ SETUP GATE — review before I persist anything.
 
 Capabilities:
   github   ✅ verified   (gh, authed)      repos 2/2 · base branch main
-  infra    ✅ verified   (kubectl)         namespace prod
+  infra    ✅ verified   (flyctl)          app billing-prod
   logs     ⚠️  skipped                      → recorded as a gap
   metrics  ⚠️  skipped                      → recorded as a gap
 
@@ -185,7 +191,7 @@ I've saved what you already answered to
 /Users/you/work/api/.rca-context.json as a partial, so when you come back I'll
 only need the GitHub part:
 
-  infra    ✅ verified   (kubectl)   namespace prod
+  infra    ✅ verified   (flyctl)    app billing-prod
   logs     ⚠️  skipped
   metrics  ⚠️  skipped
 ```

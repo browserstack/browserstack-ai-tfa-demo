@@ -6,7 +6,7 @@ Invocation: `/rca-build awswx…fw2` (build id given; nothing else passed).
 
 ```
 GATE CLOSED — capability manifest:
-  github ✅ valid (gh, authed) · infra ✅ valid (via kubectl, ctx staging-euc1) · logs ❌ absent · metrics ❌ absent
+  github ✅ valid (gh, authed) · infra ✅ valid (via flyctl, app billing-staging) · logs ❌ absent · metrics ❌ absent
 
 Intake:
   build id:        awswx…fw2            (given)

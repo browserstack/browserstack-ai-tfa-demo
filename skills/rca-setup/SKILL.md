@@ -1,6 +1,6 @@
 ---
 name: rca-setup
-description: One-time setup conversation for the RCA plugin. Discovers what this machine already has (executables, MCP servers, repo fingerprints), interviews only for the scope discovery cannot resolve, verifies every capability with a live read, confirms at a single gate, and persists a commit-safe context the run skill consumes. GitHub via gh or a GitHub MCP server is mandatory; everything else degrades to a recorded gap. Args: none — run it once per repo.
+description: One-time setup conversation for the RCA plugin. Discovers what this machine already has (executables, MCP servers, repo layout) and which capability each serves, interviews only for the scope discovery cannot resolve, verifies every capability with a live read, confirms at a single gate, and persists a commit-safe context the run skill consumes. GitHub via gh or a GitHub MCP server is mandatory; everything else degrades to a recorded gap. Args: none — run it once per repo.
 ---
 
 # rca-setup — the one-time setup conversation
@@ -9,8 +9,9 @@ Run once per repo. Produces `.rca-context.json`, committed, which `/rca-build`
 consumes so the repeat loop asks nothing.
 
 The division this whole flow rests on: **discovery resolves capability, the
-interview resolves scope, verification proves both.** Discovery can find that `gh`
-is on PATH or that a Prometheus MCP server is in the session. It cannot find which
+interview resolves scope, verification proves both.** Discovery can find that a
+forge CLI is on PATH or that a metrics MCP server is in the session. It cannot
+find which
 namespace, which log index, or which subpath of a monorepo is yours. That residue —
 and only that — is what a human gets asked about.
 
@@ -52,27 +53,33 @@ context's GitHub no longer verifies.
 
 ## Step 1 — discover, before saying anything
 
-Collect the environment and hand it to `discover()`:
+Collect the environment, decide what each tool is, and hand both to
+`planInterview()`:
 
-- executables on PATH — scan broadly, not only the table's fingerprints, or the
-  unfamiliar deploy CLI a custom-capability record exists to surface can never
-  appear,
+- executables on PATH — scan broadly, not only the names the table hints at, or an
+  unfamiliar runtime or deploy CLI can never surface at all,
 - MCP servers present in this session: pass **your own available tool names
   through verbatim** (`mcp__prometheus__execute_query`, `claude_ai_Slack`).
   Fingerprint matching is one-way substring containment, so no parsing, filtering
   or server-name derivation is needed — deriving one is how this gets it wrong,
-- repo fingerprint paths that exist,
+- repo paths the table hints at, where they exist,
 - connector-shaped skills at `.claude/skills/`, `../.claude/skills/`,
   `../../.claude/skills/`, `~/.claude/skills/`.
 
-Discovery is fingerprint matching — nothing is executed, so it is cheap enough to
+**Then assign.** `seedHints` in the table recognise the common cases; they are hints
+and nothing more. You decide which capability each tool serves — that a runtime CLI
+is this team's runtime, that a metrics MCP server is their metrics — and pass it as
+`assigned`, which beats a hint unconditionally. A hint list only knows the vendors
+someone wrote down, and most customers are not on that list.
+
+Nothing here is executed, so it is cheap enough to
 run before the greeting. Load the table with `loadCapabilityTable`; a non-empty
 `violations` array is a bug in the shipped config, not a customer problem — report
 it and stop.
 
 Connector skills are a **less-trusted** input, not a more-trusted one: they are
-read from four filesystem paths including a home directory, so any scope probe they
-declare passes the same gate as a shipped probe, and they may only fill fields the
+read from four filesystem paths including a home directory, so they may only fill
+fields the
 table declares.
 
 ## Step 2 — greet with what you found
@@ -82,7 +89,8 @@ screenshots, sessions) versus what only they can supply. Then list what discover
 actually found on this machine, and say how many questions remain.
 
 A canned split is true and useless. The concrete one — "you have `gh` and
-`kubectl`; I need your namespace and your log index" — is the same statement with
+`<their runtime CLI>`; I need your namespace and your log index" — is the same
+statement with
 the machine in it, and it tells the customer the interview is short.
 
 Say once, here, that GitHub is the only capability that can stop setup.

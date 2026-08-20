@@ -15,7 +15,7 @@ deliberately skipped, or proven broken:
 
 **The "not available" list comes from `reportableUnavailable`, never from the raw
 set.** `unavailableCapabilities(manifest)` takes only the manifest and cannot read a
-table field, so `other` — the catch-all, which can never match a fingerprint — would
+table field, so `other` — the catch-all, which can never be recognised — would
 be reported every single run. Print
 `reportableUnavailable(unavailableCapabilities(manifest), table)`; it honours
 `exemptFromDiscoveryReport`. The manifest and the TFA-facing declaration still mark
@@ -36,10 +36,10 @@ every provider error to a class plus a next action; that class is what prints.
 SETUP GATE — review before I persist anything.
 
 Capabilities:
-  github   ✅ verified   (gh, authed)          repos 2/2 · base branch main
-  infra    ✅ verified   (kubectl)             namespace prod
+  github   ✅ verified   (<tool>)              repos 2/2 · base branch main
+  infra    ✅ verified   (<tool>)              <scope>
   logs     ⚠️  skipped                          → recorded as a gap
-  metrics  ✅ verified   (prometheus MCP)
+  metrics  ✅ verified   (<mcp server>)
   other    –  not applicable
 
 Scope:

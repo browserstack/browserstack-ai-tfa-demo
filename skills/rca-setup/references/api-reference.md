@@ -33,21 +33,30 @@ reportableUnavailable(unavailable, table) → the subset worth showing a human
     manifest and cannot read a table field, so suppression happens here — and only
     for the human-facing line; the manifest and the TFA declaration are unchanged.
 RESOLVABLE                                Set: partial | always-asked
-OVERLAY_FORBIDDEN                         fields an overlay may never set
+OVERLAY_FORBIDDEN                         structure a row may not decide about itself
 ```
 
 Violation shape: `{code, capability?, field?, message}`. Codes:
 `unseeded-capability` · `orphan-row` · `bad-resolvable` · `mandatory-count` ·
-`missing-fingerprint` · `missing-probe` · `bad-probe` · `bad-mcp-probe` ·
-`bad-fingerprint` · `missing-consumer` · `overlay-forbidden-field` · `overlay-malformed-row`
+`missing-intent` · `bad-seed-hint` · `always-asked-with-hints` · `missing-consumer` ·
+`overlay-forbidden-field` · `overlay-unsafe-key` · `overlay-malformed-row`
 
-**Why the overlay cannot carry a probe.** `OVERLAY_FORBIDDEN` is
-`fingerprints`, `probe`, `mcpProbe`, `scopeProbe`. A probe's legal leader is drawn from
-its own row's declared fingerprint executables, so an overlay able to set both would
-authorise its own probe leader — the restriction would certify itself. The shipped table
-stays the sole source of leader allowlists.
+A violation naming a capability the CUSTOMER supplied in their overlay is their
+input to fix; one naming a shipped row is our bug. Say which — telling a customer
+their typo is "a bug in the shipped config" is how a fixable mistake becomes a
+support ticket.
 
-**Probe validation lives in `lib/tool-cache.mjs`, and is not `isRunnable`.**
+**What an overlay may and may not set.** `OVERLAY_FORBIDDEN` is `mandatory`,
+`resolvable`, `intent`, `exemptFromDiscoveryReport` — the structure a row must not
+decide about itself. Notably NOT forbidden: `seedHints` and `scopeFields`. A
+customer may seed hints for a stack the shipped table does not name, and may add a
+scope field that declares a consumer; that is how the product covers an unlisted
+stack without a code change.
+
+That is only safe because a hint no longer authorises anything. There are no probe
+commands in the table at all, so the worst a bad hint does is propose a route which
+then has to be verified by a reported check. When probes WERE data, the same overlay
+freedom would have let a row certify its own probe leader.
 
 ## Interview planning — `lib/discovery.mjs`
 

@@ -26,10 +26,10 @@ GitHub → application logs → pipeline/CI → infra runtime → metrics/APM �
 GitHub is first because it is the only mandatory one and the only one that can stop
 setup — discovering that on question five, after the customer has answered four
 optional ones, wastes their time and ours. CI is not a separate capability: it
-routes to `github` in `evidenceRouting`, so its fingerprints live on the GitHub row
+routes to `github` in `evidenceRouting`, so its hints live on the GitHub row
 and its questions are GitHub's.
 
-`other` is last and never fingerprinted. It is the catch-all for a stack discovery
+`other` is last and never recognised by a hint. It is the catch-all for a stack
 could not classify; matching it by accident would swallow the very thing it exists
 to surface.
 
@@ -37,10 +37,10 @@ to surface.
 
 For each row in the table, in the order above:
 
-1. **Read what discovery already resolved.** `discover()` returns
-   `resolvedScope` and `unresolvedFields` per capability. Ask only about
-   `unresolvedFields`. If a connector skill pre-filled a field, it is already
-   resolved — do not confirm it for politeness.
+1. **Read what is already resolved.** `planInterview()` returns `resolvedScope`
+   and `unresolvedFields` per capability, plus the `questions` list itself. Ask only
+   about those. If a connector skill pre-filled a field it is already resolved —
+   do not confirm it for politeness.
 2. **Ask one field at a time.** Each question names the field and, when it helps,
    why it is needed. Do not batch four fields into one prompt; a customer who gets
    one wrong then has to untangle which.
@@ -49,7 +49,7 @@ For each row in the table, in the order above:
 4. **Record the outcome** as `detected | answered | skipped | failed`.
 
 A capability marked `always-asked` in the table is never resolved by discovery even
-when a fingerprint coincidentally matches. A capability marked `partial` had its
+when a hint coincidentally matches. A capability marked `partial` had its
 tool found and still owes its scope.
 
 ## Skip is free, except once

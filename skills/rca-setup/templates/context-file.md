@@ -67,13 +67,21 @@ is genuinely runnable — its verified fields are used, its unanswered capabilit
 are declared as gaps. A partial without verified GitHub refuses exactly like no
 context at all.
 
-## The overlay carries scope data only
+## The overlay is how an unlisted stack gets covered
 
-`capabilities` may refine scope fields for a capability. It may **not** set
-`fingerprints`, `probe`, `mcpProbe` or `scopeProbe`; the loader reports any
-attempt, naming the field. A probe's legal leader is drawn from its own row's
-declared fingerprints, so a row able to set both would authorise its own probe
-leader and the restriction would certify itself.
+`capabilities` may add `seedHints` and `scopeFields` for a capability — so a team
+whose stack the shipped table does not name can teach it, in a file they own,
+without waiting on a plugin release. A scope field must declare a `consumer`, the
+same rule the shipped rows follow: a question nothing reads must not be asked.
+
+It may **not** set `mandatory`, `resolvable`, `intent` or
+`exemptFromDiscoveryReport` — the structure a row must not decide about itself. The
+last one matters most: it controls what the gate SHOWS a human, so a row setting it
+could hide its own absence.
+
+This freedom is safe only because a hint authorises nothing. There are no probe
+commands in the table, so the worst a wrong hint does is propose a route that then
+has to be verified by a reported check.
 
 ## Never in this file
 

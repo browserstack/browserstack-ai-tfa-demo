@@ -48,8 +48,8 @@ const CEILINGS = {
   // vendor probe table, and 125 lines of API signatures that now live in a
   // reference. A ceiling only means something with real headroom, so these leave
   // ~15%: enough for a genuine addition, not enough for a paragraph per bug fix.
-  "rca-build": 850, // 746 today.
-  "rca-setup": 780, // 675 today.
+  "rca-build": 850, // 732 today.
+  "rca-setup": 780, // 686 today.
 };
 
 const measure = (skill) => mandatedLineCount(skill);

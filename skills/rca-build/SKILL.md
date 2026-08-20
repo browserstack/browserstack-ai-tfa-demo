@@ -31,7 +31,7 @@ Two invariants, and they are the whole shape of this skill:
 - `<pluginRoot>/skills/rca-build/references/clustering.md` — Step 3
 - `<pluginRoot>/skills/rca-build/references/evidence-routing.md` — Step 4, and every
   coordinator you dispatch
-- `<pluginRoot>/skills/rca-build/references/github-evidence.md` — the culprit-PR hunt
+- `<pluginRoot>/skills/rca-build/references/code-evidence.md` — the culprit-PR hunt
 
 ## How to work
 
@@ -202,7 +202,7 @@ correctness.
 ## Step 4 — evidence
 
 Routing in `references/evidence-routing.md`; the culprit-PR protocol in
-`references/github-evidence.md`.
+`<pluginRoot>/skills/rca-build/references/code-evidence.md`.
 
 Build-level evidence is gathered **once** and shared, not re-fetched per test: the
 PR window for each repo, the deploy state, the log sweep per workload. Write it to

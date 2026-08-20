@@ -171,7 +171,7 @@ read-only and has no side effects, so a read is always safe to repeat.
    commands re-run by different coordinators — one spec file fetched 12
    times). Given `buildId` and your own `testRunId` as `writerId`:
 
-   - **Shell (`gh`/`kubectl`/`curl`/`git`)** — prefix the fetch with the
+   - **Any shell fetch** — prefix the command with the
      wrapper; it behaves exactly like the raw command (same stdout, same exit
      code) but only executes on a miss:
      `node <pluginRoot>/bin/cached-exec.mjs <buildId> <testRunId> '<command>'`
@@ -189,18 +189,24 @@ read-only and has no side effects, so a read is always safe to repeat.
      and would hand you code that never shipped while looking perfectly fine.
      Check `localRepos` in the evidence file to see which repos are local; you
      do not need to probe the filesystem, the gate already resolved it.
-   - **MCP data queries** (grafana/VictoriaLogs, `listTestIds`,
-     `getFailureLogs`) — check first, and store your digest on a miss:
+   - **MCP data queries** (a log or metrics server, `getFailureLogs`) — check
+     first, and store your digest on a miss:
      `node <pluginRoot>/bin/cached-mcp.mjs <buildId> get <tool> '<argsJson>'`
      (exit 0 = hit, use it and skip the MCP call; exit 1 = miss, make the call
      then `... put <tool> '<argsJson>' <testRunId>` with the digest on stdin).
      Worth it for expensive build-level queries several coordinators would
      each re-run; skip it for a one-off only this test needs, since a miss
      costs two extra calls.
-   - **NEVER cache `tfaRcaTurn` / `getTfaTurnResult` / `triggerRcaReport`** —
-     they are stateful, and the cache refuses them outright.
-   - Don't re-probe a connector the gate already validated (`gh auth status`,
-     `kubectl version`); the manifest above is the answer.
+   - **Say whether the answer can change.** Content at a commit sha is `stable`
+     and reusable indefinitely; live state — workload status, a log query, an
+     instant metrics read, a change list — is a `snapshot` and expires. A hit
+     reports its age and whether it was truncated; if either matters for what you
+     are concluding, say so in the evidence rather than treating it as current.
+   - **The cache refuses a stateful call outright** — anything that submits, or
+     that reports on work still being computed, or that enumerates a set still
+     being added to. You do not have to remember a list.
+   - Don't re-probe a capability the gate already validated; the manifest above is
+     the answer.
    - Two wrapper gotchas, both hit in real use: **(i)** hit/miss banners go to
      stderr so `| jq` works, but `2>&1 | jq` merges the banner into the pipe
      and jq dies on it — don't redirect stderr into a pipe. **(ii)** a command
@@ -349,8 +355,8 @@ once at the end of the run by `triggerRcaReport`, not per test.
    not verdicts. The root cause is TFA's to state on `RESOLVED`; pass its
    `glimpse` through verbatim.
 9. **Field-filter every gather call, always.** Before running any
-   capability-provided command (`gh`, `kubectl`, or whatever the manifest
-   resolved to for `github`/`infra`), project down to only the field(s) this
+   command, whatever the manifest resolved to for that capability, project down to
+   only the field(s) this
    ask needs — `--jq`, `-o custom-columns`, `-o jsonpath`, or a `grep`/`head`
    immediately piped. Never run the unfiltered form "just to see the shape" —
    an exploratory call costs the same context whether or not its output ends
@@ -359,7 +365,7 @@ once at the end of the run by `triggerRcaReport`, not per test.
    signature blocks, unrequested columns) than any evidence ask ever uses.
    This governs what enters *your own* context via the tool result — distinct
    from principle 6, which governs the digest you send back to TFA. Exact
-   command templates: `<pluginRoot>/skills/rca-build/references/github-evidence.md` § Field-filtering.
+   command templates: `<pluginRoot>/skills/rca-build/references/code-evidence.md` § Field-filtering.
 
 ## Application bugs — the culprit-PR mandate (MANDATORY)
 
@@ -368,7 +374,7 @@ Whenever TFA's classification (in an ask, a suggestion, or the resolving
 connector is the deliverable, not optional evidence:
 
 - **Hunt the culprit PR**: deploy timeline vs the last-pass window, changed
-  paths vs the failure signature (`<pluginRoot>/skills/rca-build/references/github-evidence.md`), run the
+  paths vs the failure signature (`<pluginRoot>/skills/rca-build/references/code-evidence.md`), run the
   falsification protocol on each candidate.
 - **Feed the PR link(s) to TFA in the turn message** so the BrowserStack agent
   populates `related_prs` in the dashboard RCA.
@@ -381,7 +387,7 @@ connector is the deliverable, not optional evidence:
 
 ## Suspect-PR falsification (github asks)
 
-For `product_code` / `deploy` / `ci` asks, follow `<pluginRoot>/skills/rca-build/references/github-evidence.md`:
+For `product_code` / `deploy` / `ci` asks, follow `<pluginRoot>/skills/rca-build/references/code-evidence.md`:
 gather the **exact** evidence (diff-since-baseline, PRs-in-window touching the
 failing path, blame, deploy timing) via **GitHub MCP → `gh` → degrade**, and for
 each candidate suspect **try to disprove it** (path overlap? shipped before the
@@ -436,11 +442,10 @@ capability is unavailable — emit an
      across-asks rule** — a single github ask routinely needs several
      independent probes itself (a commit-history check per candidate file, a
      falsification check per suspect PR); see
-     `references/github-evidence.md`'s "Batch every independent probe into
-     one message" for that one-level-down case. One Bash call per message,
-     waiting for each result before firing the next independent probe, pays
-     a full turn's think-time per call for no reason — this was measured
-     costing 60-90s of pure overhead per call in a real run.
+     `<pluginRoot>/skills/rca-build/SKILL.md` § How to work. One Bash call per
+     message, waiting for each result before firing the next independent probe,
+     pays a full turn's think-time per call for no reason — measured at 60-90s of
+     pure overhead per call on a real run.
      For each ask:
        skip   → record in asks_skipped, emit nothing.
        gather → FIRST check `evidenceFile` (if present) for this ask's scope —
@@ -563,10 +568,8 @@ Notes:
 - **Never** let drain reads consume the turn cap, and never drain past the
   `softPendingDrain` budget — a wedged turn must not hang the batch.
 - **Never** dump raw logs, full diffs, or full file contents into a turn message — digest only.
-- **Never** run an unfiltered gather call (a bare `gh api ...` with no `--jq`,
-  `kubectl get ... -o wide`/`-o yaml` when a narrower `-o custom-columns`
-  answers the ask) — project to the needed field(s) before the call runs, not
-  by reading past the noise after.
+- **Never** run an unfiltered gather call when a projection answers the ask —
+  filter at the call, not by reading past the noise afterwards.
 - **Never** write to any repo / cluster / ticket / the run — every action is read-only.
 - **Never** editorialize a cause — pass TFA's `glimpse` through verbatim.
 - **Never** blindly inherit a representative's cause for a sibling — confirm against its own logs.

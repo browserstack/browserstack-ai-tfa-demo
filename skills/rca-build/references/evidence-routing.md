@@ -9,9 +9,10 @@ The core contract: **TFA owns logs; the client agent owns everything else.** The
 coordinator never seeds logs and never fulfills a `test_logs` ask. Every other
 `evidenceType` routes to a capability that is gathered via **whatever skill/tool
 the client actually has** for it (discovered **and validated** once into the
-capability manifest — see `SKILL.md` § Gate Part A). There are **no `kubectl` /
-product literals here** — no runtime, log store or metrics vendor. That is the
-whole point of routing by capability.
+capability manifest — see `SKILL.md` § Gate Part A). **No product name appears in
+this table's right-hand column** — not a runtime, not a log store, not a metrics
+backend. Naming one there would be a statement about the customer's stack, which
+is exactly what routing by capability exists to avoid.
 
 **Contents:** [How asks are processed](#how-a-turns-asks-are-processed) ·
 [Routing table](#routing-table-capability-not-tool) ·
@@ -49,18 +50,22 @@ An ask that cannot be fulfilled is **never silently dropped** — it becomes a
 ## Routing table (capability, not tool)
 
 `evidenceType` literals are exactly those `tfaRcaTurn` emits: `test_logs`,
-`product_code`, `infra` (TFA may still spell it `k8s` — both route the same),
-`kibana`, `metrics`, `deploy`, `ci`, `other`.
+`product_code`, `infra`, `k8s`, `kibana`, `metrics`, `deploy`, `ci`, `other`.
+
+Two of those keys carry a product name — `k8s` and `kibana`. They are the SENDER's
+vocabulary, arriving over the wire, and they route to the generic `infra` and
+`logs` capabilities. That indirection is the entire reason this table exists: a
+team running neither Kubernetes nor Kibana still answers both asks.
 
 | `evidenceType` | Capability | Gathered via (discovered at runtime) |
 |---|---|---|
 | `test_logs` | — (TFA, skip) | never gathered; TFA self-serves from its own log access |
-| `product_code` | `github` | the client's GitHub capability — **GitHub MCP if present, else `gh`** (see `references/github-evidence.md`) |
-| `deploy` | `github` | deploy timeline via the GitHub capability (releases/tags + deploy record) |
-| `ci` | `github` | CI config + run history via the GitHub capability |
-| `infra` / `k8s` | `infra` | **whatever runtime connector the user has** — k8s/EKS, ECS, docker, Nomad, plain VMs, PM2, … Discovered and probed at the gate, NEVER assumed to be Kubernetes; the manifest records the kind (`via`) |
+| `product_code` | `github` | whatever forge access the team has — an MCP server or a CLI, recorded as `via` (see `<pluginRoot>/skills/rca-build/references/code-evidence.md`) |
+| `deploy` | `github` | the deploy record for the run's environment, via the same capability |
+| `ci` | `github` | pipeline definition + run history, via the same capability |
+| `infra` / `k8s` | `infra` | **whatever runtime the team actually runs on.** Never assumed: identified at the gate and recorded as `via`. `k8s` is TFA's wire literal for this type, not a statement about the runtime |
 | `kibana` | `logs` | whatever log store the client has — the key is TFA's wire literal, not a product requirement |
-| `metrics` | `metrics` | whatever metrics skill the client has |
+| `metrics` | `metrics` | whatever metrics backend the team has, recorded as `via` |
 | `other` | `other` | best-effort by ask text; else a `not-found` block |
 
 The mapping is data in `config/rca.config.json` (`evidenceRouting`), so a
@@ -70,7 +75,7 @@ different deployment can remap `evidenceType → capability` without code change
 live in the run's env at the failure window. If you can cheaply confirm it was
 not deployed / behind an OFF flag, say so in the digest rather than feeding TFA a
 suspect that could not have caused the failure. (Full protocol: U9 /
-`references/github-evidence.md`.)
+`<pluginRoot>/skills/rca-build/references/code-evidence.md`.)
 
 ---
 
@@ -84,9 +89,10 @@ tail or full PR diff blows both budgets and degrades TFA's reasoning. Supply the
 ### Per-ask block shape — `ask → found → snippet/link`
 
 **The canonical fillable format lives in
-[`../templates/evidence-block.md`](../templates/evidence-block.md)** (fulfilled
+`<pluginRoot>/skills/rca-build/templates/evidence-block.md`** (fulfilled
 and unfulfillable variants) — copy it, don't retype it. Shape:
-`ASK / TYPE / FOUND: yes|no|partial / SUMMARY ≤400 / SNIPPET (caps below) / LINK`.
+`ASK / TYPE / FOUND: yes|no|partial / SUMMARY / SNIPPET / LINK` — every cap in
+§ Size caps below, and stated only there.
 
 - `SUMMARY` is the answer. `SNIPPET` is the *minimum* evidence backing it. `LINK`
   lets TFA (or a human) verify without the bytes living in the message.
@@ -143,14 +149,14 @@ does not pre-empt that decision.
 
 ## Capability manifest (built once, at the gate)
 
-Rather than re-discover "is there a kibana skill?" on every ask across every
+Rather than re-discover "do we have a log store?" on every ask across every
 test, Gate Part A enumerates **and probe-validates** the client's connectors
 **once** up front into a manifest (`lib/routing.mjs` → `buildManifest`).
 `valid` maps to `available: true`; `invalid`/`absent` map to `available: false`
 (a recorded gap):
 
 ```
-{ github: {available: true, via: "gh"}, infra: {available: true, via: "kubectl"}, logs: {available: false}, ... }
+{ github: {available: true, via: "gh"}, infra: {available: true, via: "flyctl"}, logs: {available: false}, ... }
 ```
 
 - Every ask routes against this manifest — reproducible, no per-ask discovery.

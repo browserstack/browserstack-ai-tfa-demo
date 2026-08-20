@@ -2,13 +2,13 @@
 
 Fill one block per suspect, supported **and** ruled-out (elimination is evidence
 too). Only `verdict: supported` suspects may feed `related_prs`. Guidance +
-falsification protocol: `../references/github-evidence.md`.
+falsification protocol: `<pluginRoot>/skills/rca-build/references/code-evidence.md`.
 
 ```
 SUSPECT:
   pr: <#number>
   files: <changed files overlapping the failing path>
-  hunks: <the 1-3 load-bearing changed hunks — see digest size caps>
+  hunks: <the load-bearing changed hunks — 1, at most 2; see evidence-routing.md § Size caps>
   author: <login>
   merged_at: <ts>   vs   last_green: <ts>   vs   started_at: <ts>
   verdict: supported | ruled-out (<no-path-overlap | shipped-after | behind-off-flag | unrelated>)

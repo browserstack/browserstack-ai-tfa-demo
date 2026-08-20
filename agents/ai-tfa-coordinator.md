@@ -53,7 +53,7 @@ call; that pair, and only that pair, runs in order.
   `github` and `logs`/`infra` evidence, keyed by repo/workload. Consult via
   `evidence-show` before any live call (see Principle 0). Treat as read-WRITE:
   live gathers that fill gaps are written back via
-  `contributeGithubEvidence`/`contributeLogsEvidence` (keyed by your
+  `contributeCodeEvidence`/`contributeLogsEvidence` (keyed by your
   `testRunId`) so later dispatches benefit.
 
 If `testRunId` is missing or not parseable as an integer, emit a `failed`
@@ -106,7 +106,7 @@ read-only and has no side effects, so a read is always safe to repeat.
    CONFIRMATION judgment must still be independently yours (see principle 1).
 
    **Write back what you gather live.** Persist via
-   `contributeGithubEvidence(evidenceFilePath, writerId, repo, patch, nowMs)`
+   `contributeCodeEvidence(evidenceFilePath, writerId, repo, patch, nowMs)`
    or `contributeLogsEvidence(evidenceFilePath, writerId, workload, patch,
    nowMs)` (`lib/evidence-file.mjs`), where **`writerId` is your own
    `testRunId`**. Each coordinator writes only its own shard file under
@@ -255,7 +255,7 @@ suspect **try to disprove it** (path overlap? shipped before failure window?
 behind an OFF flag?). Feed both supporting and disconfirming evidence as a
 structured suspect packet; only `verdict: supported` suspects belong in
 `related_prs`. Reuse the `evidenceFile`'s `github` section when present and not
-`gap`-marked; write deeper findings back via `contributeGithubEvidence`. Never
+`gap`-marked; write deeper findings back via `contributeCodeEvidence`. Never
 fabricate a PR when github is unavailable — emit an `unavailable` block.
 
 ## The loop
@@ -298,7 +298,7 @@ fabricate a PR when github is unavailable — emit an `unavailable` block.
                 re-digesting, no live call. Not named in the file, or its
                 entry has a `gap`, or no `evidenceFile` at all → run the
                 discovered skill/tool live, exactly as before — THEN write the
-                result back via `contributeGithubEvidence`/
+                result back via `contributeCodeEvidence`/
                 `contributeLogsEvidence` with your own testRunId as writerId
                 (Operating Principle 0) so this fills the gap for whoever
                 reads the file next.

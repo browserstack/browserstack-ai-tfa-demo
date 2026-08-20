@@ -61,9 +61,9 @@ siblingPreSeed(csvPath, csvState, clusterId, repId)    → {ok, pre_seed} | {ok:
 **Shared evidence — `lib/evidence-file.mjs`**
 ```
 evidencePathFor(buildId, stateDir="")   initEvidenceFile(path, buildId, nowMs)
-setGithubEvidence(path, repo, entry, nowMs)      setLogsEvidence(path, workload, entry, nowMs)
+setCodeEvidence(path, repo, entry, nowMs)      setLogsEvidence(path, workload, entry, nowMs)
 setBaseline(path, baseline, suspectWindow, nowMs) setLocalRepos(path, localRepos, nowMs)
-contributeGithubEvidence(path, writerId, repo, patch, nowMs)   ← coordinators write HERE
+contributeCodeEvidence(path, writerId, repo, patch, nowMs)   ← coordinators write HERE
 contributeLogsEvidence(path, writerId, workload, patch, nowMs)
 deployShas(pathOrDoc) → {pins:{repo:sha}, source}   recomputeCoverage(path, {repos,workloads}, nowMs)
 readEvidenceFile(path) folds base+shards · readBaseFile(path) is base ONLY
@@ -454,7 +454,7 @@ progress line should say `Evidence pre-fetch (Step 4) + turn-1 pre-dispatch
    recipes **once**, using `lib/evidence-cache.mjs`'s `compute(repo, range,
 evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    Digest the result into the `evidence-block.md` shape, then persist via
-   `setGithubEvidence(path, repo, {deployState, prsInWindow, gap}, nowMs)`.
+   `setCodeEvidence(path, repo, {deployState, prsInWindow, gap}, nowMs)`.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 
@@ -808,7 +808,7 @@ a full independent sweep — exactly the redundancy Step 4 exists to remove.
 
 **The file is read-write, not just read-only.** When a coordinator has to
 gather live (a genuine gap), tell it to write the result back —
-`contributeGithubEvidence`/`contributeLogsEvidence` (`lib/evidence-file.mjs`),
+`contributeCodeEvidence`/`contributeLogsEvidence` (`lib/evidence-file.mjs`),
 passing its own `testRunId` as `writerId` — before finishing, not just answer
 TFA and move on. A representative's deep dive (a full diff, a downstream
 trace, a PR the pre-fetch never named) then benefits its own siblings and any

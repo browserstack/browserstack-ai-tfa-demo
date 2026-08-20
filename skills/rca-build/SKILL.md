@@ -524,19 +524,14 @@ siblings behind an unrelated slow representative.
 
 Dispatch path, in preference order:
 
-- **`workflows/rca-batch.mjs`** — **the default whenever the Workflow runtime is
-  available** (Claude Code). `pipeline(clusters, repStage, siblingStage)` has no
-  barrier between stages, so a cluster's siblings start the instant ITS OWN
-  representative resolves: the only path with a true per-cluster guarantee, and it
-  keeps coordinator output out of the orchestrator's context. Also gives
-  `resumeFromRunId` resumability + progress UI. It caps concurrency below the JSON
-  value — but so does the platform's own subagent limit on the fallback, so this is
-  rarely the deciding factor.
-- **Direct Agent-tool dispatch** (fallback — no Workflow runtime) — dispatch
+- **Direct Agent-tool dispatch** — **the default.** Dispatch
   `tfa-rca:ai-tfa-coordinator` subagents in batches of `concurrency` (one message, up
   to `concurrency` tool-use blocks), refilling per the rolling queue above. Honors the
-  JSON value literally, but streams per-batch, not per-cluster (a batch is a barrier:
-  the next batch waits for the slowest in the current one).
+  JSON `concurrency` literally, so it out-parallelizes the workflow path (whose pool is
+  a CPU-derived cap well below the JSON value). Cost: coordinator output flows back
+  into the orchestrator's context — kept affordable by the compact `RCA_OUTPUT`
+  contract. The trade-off is per-batch streaming: a batch is a barrier (the next batch
+  waits for the slowest in the current one).
   **This path has no code enforcing the Step 4b handoff — you are the enforcement.**
   Before dispatching ANY representative, call `readTurn1(turn1PathFor(buildId,
   stateDir), testRunId)` and fold the result into the prompt using this exact mapping
@@ -545,6 +540,15 @@ Dispatch path, in preference order:
   `turn1_result: {threadId, asks}`; no registry entry with the CSV row already
   `resolved` → skip the dispatch, use the CSV row's result directly. A swapped field
   is silently wrong, not rejected.
+- **`workflows/rca-batch.mjs`** — **opt-in** (Claude Code, when the Workflow runtime is
+  available). `pipeline(clusters, repStage, siblingStage)` has no barrier between
+  stages (a cluster's siblings start the instant ITS OWN representative resolves), it
+  keeps coordinator output out of the orchestrator's context, and it gives
+  `resumeFromRunId` resumability + a progress UI. Its concurrency is capped by a
+  CPU-derived runtime limit below the JSON value — so it runs *fewer* agents at once
+  than direct dispatch on the same machine. Choose it when the
+  orchestrator's context is the binding constraint (very large builds) or you want the
+  progress UI / resumability — not for raw throughput.
 - **Sequential harness `lib/loop.mjs`** (`runRcaLoop`) — hosts without the Workflow
   runtime and without Agent-tool fan-out, one test at a time. Same contract, same
   no-prompt rule.

@@ -27,28 +27,15 @@ Config (concurrency, turn-cap, paths, evidence registry) lives in
 `config/rca.config.json`. State lives in the CSV/WAL spine (`lib/csv-state.mjs`).
 
 <use_parallel_tool_calls>
-For maximum efficiency, whenever you need to perform multiple independent
-operations — connector probes, per-repo evidence fetches, per-workload log
-sweeps, or any other set of calls with no dependency between them — invoke all
-relevant tools simultaneously in one message rather than sequentially.
-Prioritize calling tools in parallel whenever possible; err on the side of
-maximizing parallel tool calls rather than running too many tools
-sequentially. This applies throughout every step below (Gate probes, Step 4's
-per-repo/per-workload pre-fetch, Step 4b's cluster dispatch, Step 5's
-representative and sibling dispatch) — a real run measured this exact
-violation costing 4+ minutes on gate probes alone. The only exception is when
-one call's output is a literal input to another; that pair, and only that
-pair, runs in order.
+Whenever you need to perform multiple independent operations — connector
+probes, per-repo evidence fetches, per-workload log sweeps, or any other set
+of calls with no dependency between them — invoke all relevant tools
+simultaneously in one message rather than sequentially. The only exception is
+when one call's output is a literal input to another; that pair, and only
+that pair, runs in order.
 </use_parallel_tool_calls>
 
 ## API reference — read THIS, do not grep the source
-
-Every signature this run needs, in one place. This exists because agents were
-routinely re-deriving these signatures live — `grep -n "^export function"
-lib/…`, `cat config/…`, repeated `ls .claude/skills/` — a real, recurring tax
-that grew every time a helper was added faster than the docs described it, so
-the plugin taxed every agent to relearn itself from source instead of reading
-one page.
 
 Everything below is product-neutral: build ids, repos, branches, workloads and
 paths are all **inputs**, supplied by the gate and the connector skills.
@@ -162,12 +149,8 @@ pass. The gate has two parts; both run before any RCA work starts.
 Run:
 
 ```bash
-# cwd, the WORKSPACE ROOT above it, and the user dir. The middle one matters:
-# when this plugin is itself a repo inside the workspace, cwd is the plugin and
-# the product's connector skills sit one or two levels UP, so a bare
-# `ls .claude/skills/` finds nothing and the run silently degrades to raw MCP
-# tools with best-effort repo guesses — on a real run it missed every
-# connector actually present on the workspace this way.
+# cwd, the WORKSPACE ROOT above it, and the user dir — the middle levels matter
+# because this plugin may be nested inside the workspace.
 ls .claude/skills/ ../.claude/skills/ ../../.claude/skills/ ~/.claude/skills/ 2>/dev/null
 ```
 
@@ -228,23 +211,7 @@ Then enumerate every connector relevant to test RCA:
 **Validate** each with a cheap probe — discovery alone is not enough. **Every
 row below is independent of every other row — fire them all as one batch of
 parallel tool calls, never one connector at a time.** A probe failing (or
-being absent) never blocks another connector's probe from running; there is
-nothing here for one row to wait on. For example: `gh auth status`, `kubectl
-version --request-timeout=5s` (or whatever infra tool applies), a logs-MCP
-check, and a metrics-MCP check all belong in the SAME turn — not four separate
-turns run one after the other, and not "check github, then check infra,
-then …". (This is the same class of bug Step 4b hit on a real run: a
-sequential-*looking* list of independent checks got executed sequentially in
-practice, costing minutes it never needed to. Don't repeat that here, at the
-very front of the pipeline where it delays everything downstream.)
-
-**This rule has already been read and violated on a real run — measured
-cost 4+ minutes on gate/scope probes alone.** The coordinator had this exact
-paragraph available and still issued `gh api <repo>`, an env-var check, a
-second env-var check, `kubectl get ns`, `kubectl auth can-i`, `kubectl get
-pods` (×2), and `kubectl get pod` as eight separate messages, one Bash call
-each, 10-34 seconds apart. Restating the rule again clearly did not prevent
-that, so treat it as a hard gate, not a preference:
+being absent) never blocks another connector's probe from running.
 
 - **REQUIRED before your first probe Bash call:** write out the full list of
   every probe you are about to run this pass — every base probe, every scope
@@ -252,12 +219,7 @@ that, so treat it as a hard gate, not a preference:
   its own tool-call block **in this one message**.
 - **If a message you are about to send contains exactly one Bash call for a
   probe, and your list above still has unissued items with no dependency on
-  that call's result — STOP.** That message is the violation in progress.
-  Add the rest of the list to it before sending.
-- "I'll check github's connector first, then move to infra" is the
-  rationalization that produced the 4-minute real-run cost above. It sounds
-  like reasonable sequencing; it is the forbidden pattern. github's probes
-  and infra's probes have no dependency on each other — there is no "first."
+  that call's result — STOP.** Add the rest of the list to it before sending.
 - The only real dependency is per-connector: a connector's scope probes wait
   on that SAME connector's base probe, nothing else. Two different
   connectors' probes never wait on each other, ever.
@@ -300,12 +262,8 @@ Coordinators can then act freely inside the resolved scope and must fail
 closed outside it. This closes the failure mode where a coordinator degrades
 to `unavailable` because the orchestrator didn't confirm the specific target.
 
-**A real run skipped this whole section — not one scope probe ran, for a
-connector that declares seven of them.** The base probes (`gh auth status`,
-`kubectl version`) passed and the run went straight to Step 2's `listTestIds`,
-never reading or running the connector's `Scope probes:` list at all. **Before
-your first `listTestIds`/discovery call: confirm you can name every scope
-probe you ran and its result, for every connector recorded `valid` in the
+**Before your first `listTestIds`/discovery call: confirm you can name every
+scope probe you ran and its result, for every connector recorded `valid` in the
 manifest.** If a connector is `valid` in the manifest and you cannot name a
 single scope-probe result for it, STOP — go back and run its declared list (or,
 if it genuinely declares none, the manifest-time warning below is the only
@@ -345,13 +303,7 @@ is the point:
 **Check the selected connector skill's own intake-defaults section FIRST — before
 falling through to inference, and before ever asking.** A connector skill that
 declares "Intake defaults for the gate (Part B)" (or equivalent) is telling you
-these fields are answerable outright for its product, by build-name/lane or
-failure-pattern lookup — not assumptions, not something to ask about. Skipping
-straight to inference or to the user when the connector already names the
-answer is the exact bug a real run hit: the selected connector's own intake
-section explicitly read _"An orchestrator that... asks the consolidated
-question about them is reading the wrong place"_, and the run asked anyway —
-two separate questions, not even the allowed single one. If the connector's
+these fields are answerable outright for its product. If the connector's
 intake section doesn't resolve a field for THIS build (e.g. its lane table
 doesn't match the failure signature at all), that is itself a sign the wrong
 family was selected — go back to the enumeration step above before treating
@@ -390,17 +342,12 @@ consolidated question at gate close** — e.g. _"Failures look like `<domain>`;
 which repo owns that code? (reply 'none' → I'll RCA without culprit-PR
 attribution)."_ Never a second question.
 
-**This has already been violated on a real run** — a product-family
-disambiguation question and a repo-ownership question went out as two separate
-`AskUserQuestion` calls, 33 seconds apart, instead of one consolidated
-question (or, better, no question at all, since the connector's own intake
-defaults answered both — see above). **Before your first `AskUserQuestion`
-call this pass: write out every field this run still needs from the user,
-across every reason it might be non-assumable, in one list — then ask them as
-ONE question with multiple parts if more than one survives.** If you are about
-to send a second `AskUserQuestion` call in the same gate pass, STOP — fold its
-content into the first question instead, or if the first has already been
-sent, that is the violation; there is no second gate question, ever.
+**Before your first `AskUserQuestion` call this pass: write out every field
+this run still needs from the user, across every reason it might be
+non-assumable, in one list — then ask them as ONE question with multiple parts
+if more than one survives.** If you are about to send a second
+`AskUserQuestion` call in the same gate pass, STOP — fold its content into the
+first question instead. There is no second gate question, ever.
 **Headless: skip asking entirely;
 record the gaps.**
 
@@ -426,12 +373,8 @@ listTestIds(buildId=<id>, status="failed", includeFailureDetail=true)
 so no per-test probe turns are needed.
 
 **First, sweep the state directory** (`lib/state-dir.mjs` → `hardenStateDir(dir)`).
-Per-write hardening only tightens the file being written, so artifacts from a
-build analysed before that landed keep their old permissions forever — a
-completed build is never rewritten. Found in practice: the directory itself was
-`drwxr-xr-x` with six `0644` files inside, holding root causes, culprit PRs and
-log excerpts in a shared OS temp dir. The sweep is cheap and idempotent, so run
-it unconditionally; it never throws, skipping anything it cannot chmod.
+The sweep is cheap and idempotent — run it unconditionally; it never throws,
+skipping anything it cannot chmod.
 
 Nothing deletes these artifacts when a run finishes, and that is deliberate —
 resume is keyed on `buildId` → same path, so cleaning up on completion would
@@ -458,17 +401,12 @@ Each cluster gets one **representative** (full multi-turn loop) and `N−1`
 the expensive evidence hunt to O(distinct causes) while every test still lands a
 per-test RCA. Singleton clusters are just plain per-test loops.
 
-**Prefer the server's own clustering over recomputing it client-side.** A real
-run skipped straight to the client-side fallback below without ever calling
-`getBuildFailureThemes` — the tool's schema had even been loaded via
-`ToolSearch` that pass, it was simply never invoked. **`clusterAndPersist` may
-ONLY be called after a `getBuildFailureThemes` call this pass returned
-`ready: false` (or errored) — never as a first move.** If you are about to call
-`clusterAndPersist` and cannot point to this pass's own `getBuildFailureThemes`
-call and its `ready: false` result, STOP — you are taking the fallback without
-ever having tried the preferred path, which throws away the server's own
-root-cause grouping for no reason and degrades every run to text-signature
-clustering by default instead of by necessity.
+**Prefer the server's own clustering over recomputing it client-side.**
+**`clusterAndPersist` may ONLY be called after a `getBuildFailureThemes` call
+this pass returned `ready: false` (or errored) — never as a first move.** If
+you are about to call `clusterAndPersist` and cannot point to this pass's own
+`getBuildFailureThemes` call and its `ready: false` result, STOP — call
+`getBuildFailureThemes` first.
 
 1. Call `getBuildFailureThemes(buildUuid=<build id>)`. If nothing has ever
    been computed for this build, this triggers computation (one POST, same
@@ -492,19 +430,9 @@ clustering by default instead of by necessity.
 
    **`rows` MUST be `readRows(csvPath)` — the CSV Step 2 already seeded —
    never a `listTestIds` result variable held over from earlier in the turn.**
-   A real run hit exactly this: an earlier `listTestIds(status="failed")` call
-   in the same session errored ("fetch failed"), a later call used a
-   *different* status filter, and `clustersFromThemes` was fed whatever `rows`
-   was still in scope — every theme member came back unmatched (every
-   `rowById.get(...)` lookup missed), which reads exactly like a "test ID
-   mismatch" but isn't one: `getBuildFailureThemes`/`listTestsInFailureTheme`
-   themselves returned correct data the whole time. The result: the CSV ended
-   up with signature-hash `c-xxxxx` cluster IDs (`clusterAndPersist`'s fallback
-   format) instead of `theme-<id>`/`solo-<id>`, i.e. the preferred path was
-   silently abandoned even though it never actually failed. The CSV is the one
-   row set guaranteed fresh and from a successful seed (Step 2 only seeds
-   after `listTestIds` succeeds) — always re-read it here rather than trusting
-   a variable carried over from turns ago.
+   The CSV is the one row set guaranteed fresh and from a successful seed
+   (Step 2 only seeds after `listTestIds` succeeds) — always re-read it here
+   rather than trusting a variable carried over from turns ago.
 3. **`ready: false`** — a **server-outage net, not the routine path.** The
    trigger endpoint is deployed, so a never-computed build gets its themes from
    the POST inside Step 1 and returns `ready: true`; `ready: false` now means
@@ -518,22 +446,14 @@ clustering by default instead of by necessity.
    const clusters = clusterAndPersist(csvPath, await import("./lib/csv-state.mjs"));
    ```
 
-   `clusterRows` assigns `cluster_id` **in place** and returns `{rows, clusters}`,
-   so `const { clusters } = clusterRows(rows)` gives you working cluster objects
-   while every `cluster_id` is silently discarded — the CSV keeps empty cluster
-   columns and the run degrades to **one coordinator per test**, losing the whole
-   representative/sibling collapse. This is a real failure mode, not a
-   theoretical one — a real run hit it, with the clustering silently "done" in
-   the return value but never written to the CSV. `clusterAndPersist` writes
-   back and verifies the count, so it cannot forget.
+   `clusterRows` assigns `cluster_id` **in place** but does NOT persist —
+   `const { clusters } = clusterRows(rows)` silently discards every
+   `cluster_id`, degrading to one coordinator per test. `clusterAndPersist`
+   writes back and verifies the count, so it cannot forget.
 
-   Never block the run waiting on the server; the fallback keeps the same
-   `{ cluster_id, representative, siblings }` contract the fan-out consumes,
-   so nothing downstream needs to know which path produced it. With the trigger
-   endpoint deployed this path is the exception, not the rule: a healthy server
-   reaches `ready: true` on its own (fresh builds included), and this net only
-   engages on a genuine outage — the server erroring, failing computation, or a
-   real backlog outrunning the poll budget.
+   The fallback keeps the same `{ cluster_id, representative, siblings }`
+   contract the fan-out consumes, so nothing downstream needs to know which
+   path produced it.
 
 `clustersFromThemes` mutates each row's `cluster_id` in place but does NOT
 persist — it's pure/dependency-free by design. Write its rows back yourself
@@ -551,13 +471,9 @@ it does not remove the requirement that turn-1 evidence exists, only _who
 gathers it_.
 
 **Narrate this as one combined phase, not two sequential ones.** Step 4b
-(below) starts the moment Step 3 finishes and runs the whole time Step 4 does
-— any progress line shown to the user during this window should say something
-like `Evidence pre-fetch (Step 4) + turn-1 pre-dispatch (Step 4b)`, never "Step
-4 done, now starting Step 4b." That sequential phrasing is exactly what caused
-Step 4b to be *executed* sequentially in practice on a real run — the
-narration and the execution went wrong together, and fixing only one of them
-leaves the other free to reintroduce the bug.
+starts the moment Step 3 finishes and runs the whole time Step 4 does — any
+progress line should say `Evidence pre-fetch (Step 4) + turn-1 pre-dispatch
+(Step 4b)`, never "Step 4 done, now starting Step 4b."
 
 1. Resolve the evidence-file path: `lib/evidence-file.mjs` →
    `evidencePathFor(buildId, config.paths.stateDir)` —
@@ -578,35 +494,19 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    A repo the connector can't reach records `{gap: "<reason>"}` — never blocks
    the rest of the pre-fetch.
 
-   **Every repo's PR-window search is independent of every other repo's —
-   fire all of them as parallel tool calls in ONE message, never one repo,
-   read its result, then the next repo.** The same rule that governs Gate
-   Part A's connector probes applies here at repo granularity: write the
-   full repo list from step 2 first, then issue every repo's `gh pr list`
-   call together. A message containing exactly one repo's fetch, with other
-   repos from the union still unfetched and no dependency on this one's
-   result, is the violation — go back and batch the rest in before sending.
+   **Every repo's PR-window search is independent — fire all of them as
+   parallel tool calls in ONE message.**
 
-   **`--json` on THIS FIRST `gh pr list` call MUST include `files` — there is
-   no separate step where it gets added later.** This is the single
-   highest-leverage thing in Step 4, and it is a MUST, not a nice-to-have: a
-   PR-list call than omits `files` here is never corrected downstream — it
-   just becomes one `gh pr view <n> --json files` per PR, run from inside the
-   `for pr in ...` loop this exact mistake produces. This has happened on a
-   real run: the orchestrator listed PRs without `files`, then looped `gh pr
-   view --json files` once per PR to backfill it — entirely avoidable had the
-   first call carried `files`. There is no legitimate reason to split these
-   into two calls; `--json files` costs nothing extra on the list call itself.
+   **`--json` on THIS FIRST `gh pr list` call MUST include `files`.** A
+   PR-list call that omits `files` here forces a per-PR `gh pr view --json
+   files` backfill loop downstream. `--json files` costs nothing extra on the
+   list call.
 
    ```bash
    gh pr list -R <org>/<repo> --state merged --base <branch> \
      --search 'merged:<from>..<to>' --json number,title,mergedAt,url,files --limit 100
    ```
 
-   `--json files` returns every PR's changed paths in the SAME call, so one
-   request per repo replaces one `gh pr view <n> --json files` per PR across
-   every coordinator. Across real runs, per-PR file-list fetches have been a
-   meaningful slice of all `gh` traffic — entirely avoidable here.
    Store the paths in each PR's `files` field rather than leaving it `null`:
    path-overlap is the first falsification test in
    `<pluginRoot>/skills/rca-build/references/github-evidence.md`, so with `files` populated a coordinator
@@ -619,30 +519,18 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    pre-fetch's window) — never as a backfill for a PR-list call that should
    have carried `files` the first time.
 
-   Two other real wastes this step should pre-empt:
-   - **Never let coordinators re-probe connectors.** `gh auth status` /
-     `kubectl version` calls have shown up repeatedly from coordinators purely
-     because the manifest wasn't trusted. State plainly in the dispatch prompt
-     that the gate validated them.
-   - **File contents are a large, only partly predictable slice of `gh`
-     traffic**, so do NOT bulk-fetch them. The `files` lists above tell a
+   - **Never let coordinators re-probe connectors.** State plainly in the
+     dispatch prompt that the gate validated them.
+   - **Do NOT bulk-fetch file contents.** The `files` lists above tell a
      coordinator exactly which files matter, and the tool cache dedupes the
      ones two coordinators both open.
 4. For each workload: run the connector skill's compulsory kubectl +
    VictoriaLogs sweep **once**, anchored to the build's own clock — never
-   "now". **Every workload's sweep is independent of every other workload's
-   and of every repo's fetch in step 3 — batch all of them into the same
-   message(s), same rule as step 3's repo fetches.** **PAD the window:
-   `started_at − 2m` .. `finished_at + 10m`.**
-   `finished_at` is when the build was _marked_ finished, which is not when
-   the failing behaviour stopped: on a real build, an upstream outage was
-   still ongoing after `finished_at` was recorded — a sweep scoped strictly
-   to `started_at..finished_at` would have caught only the very start of it
-   and missed the cause entirely. Label every
+   "now". **Batch all workload sweeps together with repo fetches from step 3.**
+   **PAD the window: `started_at − 2m` .. `finished_at + 10m`.** Label every
    finding with whether it falls inside or outside the strict window so a
-   coordinator can weigh it; do NOT silently widen to an arbitrary window
-   (that is the separate, opposite failure of matching a coincidence from
-   unrelated traffic). Persist via `setLogsEvidence(path, workload,
+   coordinator can weigh it; do NOT silently widen to an arbitrary window.
+   Persist via `setLogsEvidence(path, workload,
 {clusterIds, kubectlSweep, victorialogs, gap}, nowMs)`.
 
    Two query mechanics that cost real calls when missed:
@@ -677,22 +565,16 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    ```
 
    `discoverWorkspaceRoot` takes the **validated repo list** and accepts a
-   candidate directory only if it actually contains one of *this run's* repos —
-   that check is what keeps the plugin generic, and it is bounded to ~3 tries
-   because guessing harder risks reading an unrelated checkout, which is
-   silently wrong rather than merely slow. Finding nothing is a fine outcome:
-   every read falls back to the cached `gh` path.
+   candidate directory only if it actually contains one of *this run's* repos,
+   bounded to ~3 tries. Finding nothing is fine: every read falls back to the
+   cached `gh` path.
 
    Set `deployState.sha` explicitly when you write each repo's entry.
-   `deployShas()` falls back to parsing the prose `summary`, but that is a
-   safety net, not the contract: when the wording drifts it returns an empty
-   map, and every read silently degrades to the network while still looking
-   like it worked.
+   `deployShas()` falls back to parsing prose `summary`, but that is a
+   safety net, not the contract.
 
    `pins` must be the **build-time commit shas** from `deployState`, never
-   branch names. A developer's clone is routinely stale, and reading a branch
-   locally has returned different bytes than the real head — for RCA that is
-   a confident wrong answer about code that never shipped.
+   branch names — a local branch may be stale.
 
    Doing this at the gate is the point: every coordinator then reads a map
    instead of probing the filesystem itself.
@@ -712,15 +594,10 @@ every dispatch (representative and sibling) must be told to read it first.
 ## Step 4b — turn-1 pre-dispatch (fire-and-forget, fully async alongside Step 4)
 
 Every cluster's representative testRunId is already known the moment Step 3
-finishes, for however many clusters this build produced — never assume a
-fixed count, it is whatever Step 3 found. Turn 1's message has no dependency
-on Step 4's evidence pre-fetch at all: it is built entirely from Step 2's CSV
-seed (`error_summary`/`testName`), exactly the same construction
-`agents/ai-tfa-coordinator.md`'s loop step 0 uses when neither `pre_seed` nor
-`resume` applies (`error_digest` present → `"Error: <title + endpoint>"`; else
-→ `"Initiating collaborative RCA for test run <id>."`). So there is no need to
-wait for Step 4 before starting Step 4b — and, just as importantly, no need to
-wait for Step 4b either before moving on.
+finishes. Turn 1's message has no dependency on Step 4's evidence pre-fetch —
+it is built entirely from Step 2's CSV seed (`error_summary`/`testName`). So
+there is no need to wait for Step 4 before starting Step 4b, or to wait for
+Step 4b before moving on.
 
 **Mechanic: dispatch, don't wait.** For every cluster representative, launch
 one lightweight subagent via the Agent tool whose ONLY job is to call
@@ -752,16 +629,9 @@ task-notification to do the bookkeeping below: `status` selects the branch,
 `threadId`/`turnId`/`glimpse`/`asks` are pasted straight into `flip()` or
 `recordTurn1()` with no re-interpretation needed.
 
-An Agent-tool dispatch returns *immediately* with a launch confirmation, not
-the subagent's result — this is fundamentally different from a batch of raw
-MCP tool calls in one turn, which blocks the orchestrator until every call in
-that turn returns. Fire off every representative's dispatch together, then
-**immediately proceed to Step 4's evidence pre-fetch in the very next turn —
-do not wait for any of them.** There is no "same batch as Step 4" trick to get
-right here (an earlier version of this section relied on that and it is easy
-to execute wrong, e.g. by finishing Step 4 first and only then starting Step
-4b — the fire-and-forget dispatch here has no such ordering hazard, because
-nothing about it requires being co-located with Step 4's own tool calls).
+Agent-tool dispatches return immediately (fire-and-forget). Fire off every
+representative's dispatch together, then **immediately proceed to Step 4's
+evidence pre-fetch — do not wait for any of them.**
 
 As each subagent finishes — on its own schedule, bounded only by
 `tfaRcaTurn`'s own ~90s in-call poll cap, so realistically within the first
@@ -813,42 +683,20 @@ bookkeeping — no new tool calls needed for this part:
      covers this case as-is).
 4. Nothing about this starts a second thread: it is exactly turn 1 of the one
    thread the Step 5 coordinator continues from `threadId`.
-5. **A subagent that never reports back fails open, not closed.** If a turn-1
-   subagent dies, errors, or times out before emitting its `TURN1_OUTPUT`
-   block, no registry entry gets recorded for that representative — there is
-   nothing to distinguish "Step 4b never ran for this test" from "Step 4b ran
-   and failed." Both land in exactly the same place: Step 5's `readTurn1`
-   returns nothing, and Step 5 falls back to a completely normal, fresh
-   dispatch (submit turn 1 from scratch, no `resume`/`turn1_result`) — which
-   is functionally the retry. There is no separate "check Step 4b succeeded,
-   re-trigger turn 1 if not" step to build; the existing no-entry fallback
-   already covers it. The one real cost: if the dead subagent *did* reach
-   `tfaRcaTurn` before failing to report back, that thread is now orphaned —
-   Step 5's fresh dispatch starts a genuinely new thread rather than resuming
-   it. Not a correctness problem (the new thread resolves independently just
-   fine) — just one wasted, never-continued thread on TFA's side per failure.
+5. **A subagent that never reports back fails open, not closed.** Step 5's
+   `readTurn1` returns nothing → Step 5 falls back to a fresh dispatch
+   (submit turn 1 from scratch, no `resume`/`turn1_result`). If the dead
+   subagent did reach `tfaRcaTurn`, that thread is orphaned — not a
+   correctness problem, just one wasted thread per failure.
 
-**This removes orchestrator-side blocking, not underlying capacity — cap the
-fan-out itself.** Every dispatched subagent still makes a real `tfaRcaTurn`
-call, consuming the same API/compute capacity Step 5's fan-out competes for.
-"Async" means the orchestrator never sits idle waiting on these dispatches —
-it does NOT mean the dispatches are free, and firing an unbounded number of
-them at once for a build with many clusters risks the same session/rate-limit
-cascade a large Step 5 fan-out can hit. **Dispatch at most `concurrency` (from
-`config/rca.config.json` — the same value Step 5 already uses, not a separate
-setting) turn-1 subagents at a time.** For a build with more cluster
-representatives than that, issue the first `concurrency` immediately, then
-issue the next batch as soon as they're dispatched (still fire-and-forget,
-still never blocking Step 4's own progress) rather than firing every
-representative in one shot regardless of cluster count.
+**Dispatch at most `concurrency` (from `config/rca.config.json`) turn-1
+subagents at a time.** For a build with more cluster representatives than that,
+issue the first `concurrency` immediately, then issue the next batch as soon
+as they're dispatched (still fire-and-forget, still never blocking Step 4's
+own progress).
 
-None of this — `initTurn1Registry`, the pending-resume skip-list check, or the
-first dispatch batch — has any dependency on Step 4's own tool calls, or vice
-versa. **The very first turn can contain Step 4b's setup-and-first-dispatch-
-batch together with Step 4's own first evidence-gathering calls, in the same
-batch.** Do not treat Step 4b's prep as a turn Step 4 waits behind, even for
-one turn — that is the same one-extra-turn-of-latency mistake this whole
-section exists to remove, just smaller.
+**The very first turn can contain Step 4b's setup-and-first-dispatch-batch
+together with Step 4's own first evidence-gathering calls, in the same batch.**
 
 Pass `turn1PathFor(...)`'s path to Step 5 alongside `evidenceFilePath` — Step 5
 must read it (`readTurn1(path, testRunId)`) before building each
@@ -862,22 +710,12 @@ representative outcome for seeding siblings.
 
 **REQUIRED gate before your first Step 5 dispatch: Step 4b's dispatch batch
 must have already been ISSUED this pass — not completed, not waited on,
-issued.** A real run skipped Step 4b entirely — no lightweight turn-1
-pre-dispatch subagent was ever launched, and all N cluster representatives
-went straight to a full `ai-tfa-coordinator` dispatch here instead, paying
-full multi-turn coordinator cost for every cluster including the ones that
-would have resolved in one pre-dispatched turn. **If you are about to issue
-Step 5's representative dispatches and cannot point to this pass's
-`initTurn1Registry` call and a turn-1 dispatch batch issued for every
-thread-less cluster representative, STOP — go back and fire that dispatch
-batch first.** This gate is about the dispatch having gone out, same
-fire-and-forget contract Step 4b already documents — it is NOT a "wait for
-Step 4b's subagents to finish" gate, and reading it that way reintroduces the
-exact sequential-latency bug Step 4b exists to remove. In practice this batch
-should already be long since fired by the time you reach Step 5, since Step
-4b's own instructions have it go out in the same turn as Step 4's first
-evidence-gathering calls — this check exists only to catch the case where
-that never happened at all, not to insert a new wait.
+issued.** **If you are about to issue Step 5's representative dispatches and
+cannot point to this pass's `initTurn1Registry` call and a turn-1 dispatch
+batch issued for every thread-less cluster representative, STOP — go back and
+fire that dispatch batch first.** This is NOT a "wait for Step 4b's subagents
+to finish" gate — it only catches the case where Step 4b never happened at
+all.
 
 **ORDER MATTERS: representative first, siblings only after it lands.** For each
 cluster, dispatch the representative, wait for its row to go terminal, then
@@ -886,19 +724,10 @@ dispatch its siblings carrying `pre_seed` from
 independent, so they still run concurrently *with each other* — the barrier is
 per cluster, not global.
 
-A sibling is only cheap because it confirms a hypothesis someone else already
-established. Dispatch one without that hypothesis and "one-turn confirm"
-degenerates into a full independent investigation *with the sibling framing on
-top*, so it costs MORE than the representative it was meant to be a fraction
-of — this has happened on a real run, with siblings running well past
-representative-level cost because nothing ordered them after their rep and
-nothing refused to dispatch without a seed. It degrades silently, with no
-error to flag it.
-
 `siblingPreSeed` returns `{ok:false, reason}` when the representative is not
 resolved or recorded no `root_cause` — **do not dispatch that sibling yet**.
-Never hand-roll the seed: the guard is the only thing standing between a
-clustered run and O(tests) cost.
+Never hand-roll the seed: without this guard, siblings degenerate into full
+independent investigations at representative-level cost.
 
 Drive the cluster work-list, **`concurrency` (default 20) at a time**:
 representatives deep, siblings one-turn-confirm. Eagerly persist to the CSV/WAL
@@ -989,35 +818,24 @@ sinks the batch (partial-first). No path ever prompts the user (the gate is
 closed).
 
 **Coordinator prompts MUST carry `pluginRoot` and use it to fully qualify every
-reference-doc / lib path.** A coordinator is dispatched fresh, with no
-guarantee about its own cwd — `references/evidence-routing.md` (bare,
-relative) resolves against whatever directory the coordinator happens to
-start in, which is routinely NOT this plugin's root. This has cost real
-coordinators repeated `Read` attempts at the wrong bare path followed by a
-`find` to recover the real one (`<pluginRoot>/skills/rca-build/references/evidence-routing.md`,
-`.../github-evidence.md`, `.../clustering.md`). Every dispatch prompt must
-state `pluginRoot=<absolute path>` up front and every reference-doc pointer in
-the prompt (and echoed from `agents/ai-tfa-coordinator.md`) must already be
-`pluginRoot`-qualified — never a bare `references/<file>.md`.
+reference-doc / lib path.** A coordinator is dispatched fresh with no guarantee
+about its cwd. Every dispatch prompt must state `pluginRoot=<absolute path>` up
+front and every reference-doc pointer must be `pluginRoot`-qualified — never a
+bare `references/<file>.md`.
 
 **Coordinator prompts MUST also point at the API reference instead of letting
 the coordinator re-derive it.** State plainly in the dispatch prompt: "Function
 signatures for `lib/*.mjs` are documented at `<pluginRoot>/skills/rca-build/SKILL.md`
 § API reference — read that section once if a signature is needed; do not
 `grep`/`Read`/`cat` the `lib/` source to re-derive a signature already
-documented there." This is a real, recurring self-discovery tax — one
-coordinator re-read `lib/evidence-file.mjs` plus a `grep`, all to re-learn
-`contributeLogsEvidence`'s signature — a cost this pointer removes.
+documented there."
 
 **Coordinator prompts MUST name every connector-shaped skill on the manifest.**
 Each dispatch prompt lists, per capability, the resolved connector skill from
 Gate Part A Step 0 — e.g. _"Use `<resolved-github-skill>` for every
-product_code / deploy / ci ask (canonical repos + branch live in the skill; do
-NOT grep other repos). Use `<resolved-infra-skill>` for every infra ask."_ A
-coordinator prompt that omits a manifest-listed connector skill — and that
-therefore lets the
-coordinator infer repos from workspace `git remote` or cwd — is a bug: the
-coordinator will land plausible-but-wrong PR attributions on adjacent repos.
+product_code / deploy / ci ask. Use `<resolved-infra-skill>` for every infra
+ask."_ Omitting a manifest-listed connector lets the coordinator infer repos
+from workspace `git remote` or cwd, landing wrong PR attributions.
 
 **Coordinator prompts MUST also name the Step 4 evidence file.** Every
 dispatch prompt (representative and sibling alike) includes the absolute
@@ -1051,36 +869,24 @@ result under the key it would compute — `mcpCacheKey(tool, args)` then
 `cachePut(toolCacheDirFor(buildId), key, {…, writerId: "orchestrator"}, nowMs)`
 from `lib/tool-cache.mjs` — storing the DIGEST, not the raw rows.
 
-This is not optional polish; without it the MCP cache goes unused. Before this
-was added, the cache went entirely unused across every live run — an agent's
-check-then-call-then-store costs three calls on a miss to save one later, so
-skipping it is the rational choice for a one-off query. Pre-seeding inverts
-that — the agent's `get` is a single call that usually hits. Store the same
-digest you put in the evidence file; the two are complementary (the file is
-read wholesale at turn 1, the cache answers a specific repeat query later).
+Store the same digest you put in the evidence file; the two are complementary
+(the file is read wholesale at turn 1, the cache answers a specific repeat
+query later).
 
-**Also hand every dispatch the tool cache.** The evidence file shares digested
-_findings_; `bin/cached-exec.mjs` / `bin/cached-mcp.mjs` share raw _call
-results_, which is where most duplicate work actually hides — `gh` calls make
-up a large share of all coordinator tool calls on a real build, and a
-meaningful number of them are byte-identical commands re-run by different
-coordinators. Include the plugin root in each
-dispatch prompt so coordinators can invoke the wrappers, and tell them to pass
-their own `testRunId` as `writerId`. The cache lives at
-`<tmpdir>/bstack-rca/rca-toolcache.<buildId>/`, one file per call key, shared
-by shell and MCP alike. Read `node bin/cached-exec.mjs <buildId> --stats` at
-the end of the run to report how much it actually saved rather than assuming.
+**Also hand every dispatch the tool cache.** Include the plugin root in each
+dispatch prompt so coordinators can invoke `bin/cached-exec.mjs` /
+`bin/cached-mcp.mjs`, and tell them to pass their own `testRunId` as
+`writerId`. The cache lives at `<tmpdir>/bstack-rca/rca-toolcache.<buildId>/`,
+one file per call key, shared by shell and MCP alike. Read
+`node bin/cached-exec.mjs <buildId> --stats` at the end of the run to report
+cache savings.
 
 **Concurrency is handled by layout, not by locking.** Base
 (`rca-evidence.<buildId>.json`) has exactly one writer — this orchestrator, in
 Step 4. Every coordinator writes only its own shard under
-`rca-evidence.<buildId>.contrib/<testRunId>.json`. Since no two processes ever
-open the same file for writing, concurrent write-back cannot lose an update;
-`readEvidenceFile` folds base + all shards into one view, applying shards in
-sorted order, with real evidence taking precedence over a recorded `gap`. A
-comparison under a realistic concurrent read→work→write window showed a
-single shared file losing the large majority of concurrent updates, while
-this sharded layout lost none.
+`rca-evidence.<buildId>.contrib/<testRunId>.json`. `readEvidenceFile` folds
+base + all shards into one view, applying shards in sorted order, with real
+evidence taking precedence over a recorded `gap`.
 
 **Application bugs need a culprit PR.** Whenever a test's RCA classifies as
 PRODUCT_BUG / application bug, the coordinator MUST hunt the culprit PR via the

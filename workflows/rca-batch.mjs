@@ -174,11 +174,9 @@ log(`Batch: ${clusters.length} cluster(s) over build ${ctx.buildId ?? "?"}`);
 
 // Pipeline: each cluster flows representative → siblings independently (no barrier
 // between stages), so a small cluster's siblings confirm while a big cluster's
-// representative is still looping. Concurrency is capped by the Workflow runtime
-// at min(16, cores-2) — an architectural limit of the tool itself, not something
-// this script or config.concurrency (20, see rca.config.json) can raise. That
-// config value is an intended soft target/upper bound on THIS path only; the
-// runtime queues anything beyond its own cap regardless of what this file says.
+// representative is still looping. Parallelism on this path is capped by the
+// Workflow runtime itself (a machine-dependent limit), not by config.concurrency
+// — the runtime queues anything beyond its own cap regardless of the JSON value.
 const results = await pipeline(
   clusters,
   (cluster) =>

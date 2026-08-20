@@ -784,8 +784,7 @@ This distinction matters differently on each path:
 - Opt-in `workflows/rca-batch.mjs` (Claude Code only) → use only when the
   Workflow tool's structured `pipeline()`/`parallel()` orchestration,
   `resumeFromRunId` resumability, or progress UI is worth the concurrency
-  trade. On this path `concurrency` is a soft target only — the runtime hard-
-  caps at `min(16, cores-2)` regardless of the JSON value.
+  trade.
 - Hosts without the Workflow runtime and without Agent-tool fan-out → drive
   the sequential harness `lib/loop.mjs` (`runRcaLoop`) one test at a time.
   Same contract, same no-prompt rule.

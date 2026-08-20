@@ -308,6 +308,33 @@ test("the ordinary values a real context holds are not refused", () => {
   assert.equal(w.ok, true, `a legitimate context must persist: ${w.message ?? ""}`);
 });
 
+test("a complete context whose GitHub is unverified is refused — write a partial instead", () => {
+  // The skill body says "GitHub never persists as unverified". A sentence an agent
+  // has to obey is exactly the enforcement this milestone exists to replace, so the
+  // rule is a guard: the state it forbids is one every run would refuse, with no
+  // signal to the customer which rule applied.
+  for (const verified of [{}, { github: { ok: false } }, { infra: { ok: true } }]) {
+    const w = writeRcaContext({
+      context: validContext({ complete: true, verified }),
+      verifiedRepos: ["acme/api"],
+      from: productRepo,
+    });
+    assert.equal(w.ok, false, `verified=${JSON.stringify(verified)} must be refused`);
+    assert.equal(w.code, "incomplete-github");
+    assert.match(w.message, /complete: false/, "and must name the alternative");
+  }
+});
+
+test("the same context as a partial is accepted", () => {
+  const w = writeRcaContext({
+    context: validContext({ complete: false, verified: { infra: { ok: true } } }),
+    verifiedRepos: ["acme/api"],
+    from: productRepo,
+  });
+  assert.equal(w.ok, true, w.message);
+  assert.equal(readRcaContext({ from: productRepo }).complete, false);
+});
+
 // ---- intake precedence ------------------------------------------------------
 
 test("resolveIntake ranks the four sources and names the winner per field", () => {

@@ -112,6 +112,8 @@ resolveIntake({buildMeta, invocationArgs, context, connectorDefaults, fields})
 findContextFile({from, pluginRoot})   → path | null   two-stage walk; refuses pluginRoot
 contextHomeDir({homeRepo, verifiedRepos, from, pluginRoot}) → {ok, dir} | {ok:false, code, message}
 writeRcaContext({context, verifiedRepos, from, pluginRoot})  → {ok, path} | {ok:false, code, message}
+    refuses `incomplete-github`: a complete context whose GitHub is unverified is a
+    state every run would refuse — the interview writes a partial instead.
 findSecretFields(context)   → [{path, kind}]   names WHERE, never the value
 CONTEXT_FILENAME  ".rca-context.json"   at the home repo's worktree root, NOT under .rca/
 SCHEMA_VERSION    CREDENTIAL_KIND  { ENV_VAR, PROVIDER_MANAGED }

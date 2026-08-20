@@ -146,8 +146,8 @@ Uses `execFileSync("git", [...])` with an argument array, never a shell string.
 readRcaContext({from, pluginRoot, path})   → {ok, context, path, complete} | {ok:false, code, message}
     codes: no-context · parse-error · schema-version · missing-field · unreadable
 writeRcaContext({context, verifiedRepos, from, pluginRoot}) → {ok, path} | {ok:false, code, message}
-    codes: missing-field · schema-version · secret-in-field · home-repo-unverified ·
-           no-git-worktree · ignored-destination
+    codes: missing-field · schema-version · secret-in-field · incomplete-github ·
+           home-repo-unverified · no-git-worktree · ignored-destination
 findContextFile({from, pluginRoot})        → path | null
 contextHomeDir({homeRepo, verifiedRepos, from, pluginRoot}) → {ok, dir} | {ok:false, code, message}
 findSecretFields(context)                  → [{path, kind}]

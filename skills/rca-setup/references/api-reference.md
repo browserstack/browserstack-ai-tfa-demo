@@ -93,7 +93,49 @@ gate as a shipped table probe, and it may only fill scope fields the table alrea
 
 ## Verification
 
-`lib/verify.mjs` — not yet created. U3 documents its exports here.
+`lib/verify.mjs` — pure. Probes are dispatched through an injected `runProbe`, because only
+the agent can invoke an MCP tool: verify never calls one, it receives the result through the
+same shape a CLI probe returns.
+
+```
+verifyGithub({row, scope, env, runProbe, prList, candidates, envVar})
+    → {verified, blocking, via, targets[], accessLevel, warnings[], message?, nextAction?}
+    GitHub is BINARY. `gh` or a GitHub MCP server, or blocking:true and setup stops.
+
+verifyCapability({capability, row, targets, scope, runProbe, envVar, env, candidates})
+    → {capability, verified, via, targets[], accessLevel, warnings[]}
+    Per-TARGET: valid for one repo and 404 on another keeps the capability usable.
+
+looksLikeSecret(value)            → {secret, kind?, rotationGuidance?}   never echoes the value
+scrubFailure(raw)                 → error class; the raw text is DROPPED, not redacted-and-kept
+nearMatch(value, candidates)      → closest candidate, or null rather than a wrong guess
+classifyGap({errorClass, env, row}) → one of GAP_CLASS
+prWindowWarning({mergedCount, windowDays, branch}) → warning | null
+replayProbe(results)              → runProbe seam, keyed by command or `mcp:<tool>`
+PR_WINDOW_DAYS                    30 — fixed, build-independent
+ACCESS_LEVEL                      REPORTED | NOT_REPORTABLE
+GAP_CLASS                         ABSENT_ON_MACHINE | SCOPE_INVALID | CREDENTIAL_UNDER_SCOPED
+```
+
+**`redact` is not the secret detector, and this matters.** Its patterns need a key prefix
+(`token=`) or an auth scheme (`Bearer `), and it returns redacted *text* rather than a verdict —
+so a bare pasted PAT comes back byte-identical and any check built on `redact(v) !== v` reports
+"clean" for exactly the input that matters most. `looksLikeSecret` covers bare provider shapes
+plus a high-entropy fallback that deliberately does **not** flag a 40-character lowercase-hex
+git SHA. Use `redact` for reducing provider output; use `looksLikeSecret` for a verdict.
+
+**Three gap classes, because the three need opposite responses.** A missing tool wants a local
+install instruction; invalid team scope wants a targeted re-ask; a present-but-under-scoped
+credential wants neither — re-asking team scope invites one person to rewrite it to fit their
+own credential, and an install instruction names a tool they already have.
+
+**`NOT_REPORTABLE` is a real access-level state**, not a fallback. `gh` via keyring or device
+flow returns no scope header at all, and calling that "narrow" or "broad" would both be
+inventions.
+
+**On the MCP route the caller supplies `prList`.** There is no command string for a
+branch PR list over MCP, so the agent runs it and passes the merged count — it is the
+base-branch evidence on that route, not an optional extra.
 
 ## Context artifact
 

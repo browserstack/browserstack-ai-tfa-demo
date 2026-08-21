@@ -90,7 +90,11 @@ Parse the build id from the invocation args. Accepted forms: a bare build id, a
 any **PR URLs** and **repo hints** (product/automation repo names or paths) the
 user supplies — carry them into Gate Part B as pre-answered intake.
 
-Then load the context, because it decides everything below:
+Then load the context, because it decides everything below. **Run it silently —
+emit nothing about it.** No "checking for a context file", no "none found near the
+plugin root", no path resolution. That is plumbing; the customer's first screen
+should not be spent on it, and the greeting below has to be the first thing they
+read:
 
 ```
 node <pluginRoot>/bin/rca-context.mjs select --build-name "<build name, if known>"
@@ -114,7 +118,18 @@ load-bearing field.
 
 ### Step 0a — greeting (the ownership split), first contact only
 
-Say what each side owns, before asking anything:
+**This is your first output to the customer — the first thing they read, not the
+first thing before a question.** In a real run this arrived seventh, after five tool
+calls, quoted inside a status update that opened with "No context file anywhere near
+either the plugin root or the working directory". The copy was complete and the
+customer still experienced it as missing, because it was buried in a wall of `ls`
+and `cat` output and framed as a footnote to a diagnostic.
+
+So: nothing precedes it on screen. Do not prefix it with what you looked for or
+where. Do not follow it with internal vocabulary — "session inventory", "write
+target", "T2b" mean nothing to them.
+
+Say what each side owns:
 
 > Through BrowserStack I already have the test logs, traces, screenshots and the
 > session for every failed test in this build — and the BrowserStack agent authors
@@ -788,6 +803,9 @@ thread.
 
 ## Hard rules
 
+- On first contact, the ownership split is the FIRST thing the customer reads. The
+  context load that decides it is silent. A greeting that arrives after five tool
+  calls has not happened, however complete its wording.
 - Exactly one gate **per run**. At most one consolidated question, at gate close.
   **After the gate closes, never ask the user anything.** First contact (Step 0b) is
   a separate, one-time phase with its own budget — see § The question budget.

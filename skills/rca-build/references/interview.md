@@ -137,11 +137,16 @@ are load-bearing; neither is a scanner.
 
 ## T0 — greeting
 
-No question. `<pluginRoot>/skills/rca-build/SKILL.md` § Step 0a holds the copy;
-say it, then name what you can actually see in this session (the MCP servers, the
-skills) so the customer can tell
-the interview is short, and say once that **GitHub is the only thing that can stop
-setup.**
+No question, and **no tool output before it.** `<pluginRoot>/skills/rca-build/SKILL.md`
+§ Step 0a holds the copy and the reason this ordering is a rule rather than a
+preference. Say it, then name what you can actually see in this session (the MCP
+servers, the skills) so the customer can tell the interview is short, and say once
+that **GitHub is the only thing that can stop setup.**
+
+One message, three parts, in this order: what BrowserStack already has · what only
+they can supply · GitHub is the one thing that can stop this. The concrete
+what-I-can-see list belongs after those three, not woven through them — it is
+evidence that the interview is short, not part of the split itself.
 
 Read the capability sequence before you plan the turns — it is config, not a list
 in this file:

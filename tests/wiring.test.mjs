@@ -296,3 +296,34 @@ test("every bin/ CLI verb named in a prompt file actually exists", () => {
       `a usage error, and the instruction reads as authoritative.`,
   );
 });
+
+// ---- the greeting is the first thing the customer reads ---------------------
+//
+// The greeting is the only step in this flow with NO observable artifact. Every
+// other step produces something that can refuse or be counted: a CLI call, a
+// written file, an AskUserQuestion, a digest. This one produces prose, so nothing
+// in the budget arithmetic, the ledger, or this suite can notice it was skipped or
+// buried — and in a real run it arrived seventh, after five tool calls, quoted
+// inside a status update about context-file resolution. The copy was complete and
+// the customer still read it as missing.
+//
+// A test cannot check what an agent says. What it CAN check is that the two
+// instructions which make the ordering possible are both present, since the
+// failure came from their absence: the context load must be silent, and the
+// greeting must be framed as the first OUTPUT rather than merely before the first
+// question.
+test("the greeting is instructed as the first output, over a silent context load", () => {
+  // MUTATION: drop either instruction from SKILL.md -> fails.
+  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+
+  assert.match(
+    skill, /silently\s*—\s*\n?\s*emit nothing about it|Run it silently/i,
+    "Step 0 must tell the agent to load the context WITHOUT narrating it; " +
+      "narrating it is what pushed the greeting to seventh place",
+  );
+  assert.match(
+    skill, /first output to the customer/i,
+    "Step 0a must frame the greeting as the first OUTPUT. 'before asking anything' " +
+      "was satisfied literally by greeting after five tool calls",
+  );
+});

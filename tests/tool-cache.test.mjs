@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   toolCacheDirFor, cacheKey, mcpCacheKey, cacheGet, cachePut, cacheStats,
-  isCacheable, isCacheableMcp, isRunnable, redact, tokenize, splitPipeline,
+  isCacheable, isCacheableMcp, isImmutableRead, isRunStableRead, redact, banner,
 } from "../lib/tool-cache.mjs";
 
 let dir;
@@ -59,11 +59,6 @@ test("redact leaves ordinary output untouched", () => {
   assert.equal(redact("just some log output"), "just some log output");
 });
 
-// Regression, found by a live coordinator. Redaction used to consume the REST
-// OF THE LINE after a secret-ish key. GitHub's file API returns SINGLE-LINE
-// JSON whose download_url always carries `?token=…`, so a 214KB response was
-// silently cached as 816 bytes with the content field gone — every
-// private-repo file fetch was corrupted, with no warning.
 test("redact bounds the value and does NOT eat the rest of a single-line JSON", () => {
   const json = '{"name":"F.java","download_url":"https://raw.example/F.java?token=BRFIJBHPIG5IILHZ",'
     + '"type":"file","content":"' + "A".repeat(5000) + '"}';
@@ -78,29 +73,6 @@ test("redact still catches a bare Bearer token and a key=value secret", () => {
   assert.equal(redact("Authorization: Bearer abc123SECRET"), "Authorization: <redacted>");
   assert.equal(redact("api_key=zzz999"), "api_key=<redacted>");
   assert.ok(!redact("Bearer eyJhbGciOiJIUzI1NiJ9").includes("eyJhbGciOiJIUzI1NiJ9"));
-});
-
-// Regression, found by two live coordinators. Neither tokenize nor
-// splitPipeline handled backslash escapes, so `\"` read as a closing quote.
-// That mangled jq's two most common idioms: string equality and, because the
-// parser then believed it was outside quotes, regex alternation got split as
-// a shell pipe.
-test("escaped double quotes survive tokenization for jq", () => {
-  const argv = tokenize(String.raw`gh api x --jq .[]|select(.filename==\"a/b.json\")`);
-  assert.equal(argv[argv.length - 1], '.[]|select(.filename=="a/b.json")');
-});
-
-test("a pipe inside an escaped-quote jq regex is NOT a shell pipe", () => {
-  const cmd = String.raw`gh pr view 51044 --json files | jq -c "select(test(\"vite|env|s3\";\"i\"))"`;
-  assert.deepEqual(splitPipeline(cmd).length, 2, "must split into fetch + one filter only");
-  const g = isRunnable(cmd);
-  assert.equal(g.ok, true, g.reason);
-  assert.deepEqual(g.fetch, ["gh", "pr", "view", "51044", "--json", "files"]);
-  assert.equal(g.filters[0][2], 'select(test("vite|env|s3";"i"))');
-});
-
-test("single quotes suppress escape processing, POSIX-style", () => {
-  assert.deepEqual(tokenize(String.raw`gh api 'a\nb'`), ["gh", "api", String.raw`a\nb`]);
 });
 
 test("oversized payloads are truncated and flagged", () => {
@@ -118,6 +90,8 @@ test("cacheStats counts entries", () => {
   assert.equal(s.bytes, 8);
 });
 
+// ---- isCacheable: mutation denylist ----------------------------------------
+
 test("isCacheable rejects mutating shell commands", () => {
   assert.equal(isCacheable("gh api repos/a"), true);
   assert.equal(isCacheable("kubectl get pods"), true);
@@ -129,95 +103,85 @@ test("isCacheable rejects mutating shell commands", () => {
   assert.equal(isCacheable("rm -rf /tmp/x"), false);
 });
 
-test("isRunnable enforces an allowlisted read-only leader", () => {
-  assert.equal(isRunnable("gh api repos/a").ok, true);
-  assert.equal(isRunnable("kubectl get pods -n regression").ok, true);
-  assert.equal(isRunnable("python3 -c 'print(1)'").ok, false);
-  assert.equal(isRunnable("sh -c 'echo hi'").ok, false);
+// ---- isImmutableRead: the new cacheability predicate -----------------------
+
+test("isImmutableRead: gh api with /git/ path is cacheable", () => {
+  assert.equal(isImmutableRead("gh api repos/o/r/git/blobs/abc123"), true);
+  assert.equal(isImmutableRead("gh api repos/o/r/git/trees/main"), true);
+  assert.equal(isImmutableRead("gh api repos/o/r/git/commits/abc"), true);
 });
 
-test("isRunnable rejects chaining and redirects, but ACCEPTS pipelines", () => {
-  assert.equal(isRunnable("gh api a ; rm -rf /").ok, false);
-  assert.equal(isRunnable("gh api a && kubectl delete pod x").ok, false);
-  assert.equal(isRunnable("gh api a > /etc/passwd").ok, false);
-  // `2>&1` is stderr plumbing the wrapper already owns — stripped, not refused.
-  // Refusing it rejected 134 of 223 real recorded calls and zeroed the hit rate.
-  assert.equal(isRunnable("gh api a 2>&1").ok, true, "stderr plumbing is normalized away");
-  assert.equal(isRunnable("gh api a 2>/dev/null | jq .x").ok, true);
-  // Pipelines are supported now: refusing them meant the cache applied to
-  // almost no real traffic, since most fetches are written inline with a filter.
-  assert.equal(isRunnable("gh api a | jq .x").ok, true);
+test("isImmutableRead: gh api with ?ref=<40-hex-sha> is cacheable", () => {
+  const sha = "a".repeat(40);
+  assert.equal(isImmutableRead(`gh api repos/o/r/contents/f?ref=${sha}`), true);
+  assert.equal(isImmutableRead(`gh api 'repos/o/r/contents/f?ref=${sha}&other=1'`), true);
 });
 
-test("a FILE redirect is reported as a redirect, not as a mutation", () => {
-  const r = isRunnable("gh api repos/x > out.json");
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /redirect/i);
-  assert.doesNotMatch(r.reason, /mutating/i);
+test("isImmutableRead: unpinned gh api is NOT cacheable", () => {
+  assert.equal(isImmutableRead("gh api repos/o/r/pulls/123"), false);
+  assert.equal(isImmutableRead("gh api repos/o/r/contents/f"), false);
+  assert.equal(isImmutableRead("gh api repos/o/r/contents/f?ref=main"), false);
 });
 
-test("stderr plumbing does not change the cache key", () => {
-  const a = isRunnable("gh api repos/x | jq .a");
-  const b = isRunnable("gh api repos/x 2>&1 | jq .b");
-  assert.equal(cacheKey(a.fetchText), cacheKey(b.fetchText));
+test("isImmutableRead: git show/cat-file/ls-tree/log with sha is cacheable", () => {
+  const sha = "b".repeat(40);
+  assert.equal(isImmutableRead(`git show ${sha}:path/to/file`), true);
+  assert.equal(isImmutableRead(`git cat-file -p ${sha}`), true);
+  assert.equal(isImmutableRead(`git ls-tree ${sha}`), true);
+  assert.equal(isImmutableRead(`git log ${sha} --oneline`), true);
 });
 
-test("pipeline plan: only the FETCH is keyed, filters are separate", () => {
-  const a = isRunnable("gh api repos/x | jq -r .name");
-  const b = isRunnable("gh api repos/x | jq -r .branch | tr a-z A-Z");
-  assert.equal(a.ok && b.ok, true);
-  // Same underlying fetch -> same cache key -> one network call serves both.
-  assert.equal(cacheKey(a.fetchText), cacheKey(b.fetchText));
-  assert.deepEqual(a.fetch, ["gh", "api", "repos/x"]);
-  assert.equal(a.filters.length, 1);
-  assert.equal(b.filters.length, 2);
+test("isImmutableRead: git commands without sha are NOT cacheable", () => {
+  assert.equal(isImmutableRead("git show HEAD:path/to/file"), false);
+  assert.equal(isImmutableRead("git log main --oneline"), false);
+  assert.equal(isImmutableRead("git diff"), false);
+  assert.equal(isImmutableRead("git status"), false);
+  assert.equal(isImmutableRead("git branch"), false);
 });
 
-test("only pure text filters may follow the fetch", () => {
-  assert.equal(isRunnable("gh api repos/x | jq .a").ok, true);
-  assert.equal(isRunnable("gh api repos/x | grep foo").ok, true);
-  assert.equal(isRunnable("gh api repos/x | sh").ok, false);
-  assert.equal(isRunnable("gh api repos/x | bash -c 'x'").ok, false);
-  assert.equal(isRunnable("gh api repos/x | kubectl delete pod y").ok, false);
+test("isImmutableRead: kubectl and curl are never cacheable (live state)", () => {
+  assert.equal(isImmutableRead("kubectl get pods -n regression"), false);
+  assert.equal(isImmutableRead("curl https://example.com"), false);
 });
 
-test("splitPipeline ignores a pipe inside quotes", () => {
-  assert.deepEqual(splitPipeline(`gh pr list --jq '.[] | .number' | head -5`),
-    ["gh pr list --jq '.[] | .number'", "head -5"]);
+// ---- isRunStableRead: repo reads that don't change within one build RCA -----
+
+test("isRunStableRead: gh pr view/diff/list by number are cacheable", () => {
+  assert.equal(isRunStableRead("gh pr view 53786 --repo browserstack/frontend --json files,title"), true);
+  assert.equal(isRunStableRead("gh pr diff 53786 --repo browserstack/frontend"), true);
+  assert.equal(isRunStableRead("gh pr list -R browserstack/frontend"), true);
 });
 
-// Regression: the old raw-string guard refused these legitimate read-only
-// calls, which is what pushed a coordinator into slower workarounds.
-test("isRunnable ALLOWS metacharacters inside quoted arguments", () => {
-  const jqSemicolon = `gh api repos/o/r/git/trees/main --jq '[.tree[].path|select(test("rcaThree";"i"))]'`;
-  assert.equal(isRunnable(jqSemicolon).ok, true, "; inside a jq expression is not a shell operator");
-
-  const urlAmp = "gh api 'search/code?q=foo&per_page=20'";
-  assert.equal(isRunnable(urlAmp).ok, true, "& inside a quoted URL is not a shell operator");
-
-  const jqPipe = `gh pr list -R o/r --json number --jq '.[] | .number'`;
-  assert.equal(isRunnable(jqPipe).ok, true, "| inside a quoted jq expression is not a shell pipe");
+test("isRunStableRead: gh search and gh api repo reads are cacheable", () => {
+  assert.equal(isRunStableRead('gh search code "env.js" --repo browserstack/frontend'), true);
+  assert.equal(isRunStableRead("gh api repos/o/r/contents/apps/o11y/index.html"), true);
+  assert.equal(isRunStableRead("gh api repos/o/r/pulls/123"), true);
 });
 
-test("a quoted metacharacter survives tokenization as ONE literal argument", () => {
-  const argv = tokenize(`gh api repos/o/r --jq '[.tree[]|select(test("x";"i"))]'`);
-  assert.equal(argv.length, 5);
-  assert.equal(argv[4], '[.tree[]|select(test("x";"i"))]');
+test("isRunStableRead: gh api writes are NOT run-stable", () => {
+  assert.equal(isRunStableRead("gh api -X POST repos/o/r/pulls"), false);
+  assert.equal(isRunStableRead("gh api --method PATCH repos/o/r/pulls/1"), false);
 });
 
-test("tokenize splits like a shell for quoted args, without a shell", () => {
-  assert.deepEqual(tokenize("gh api repos/a --jq '.items[].path'"),
-    ["gh", "api", "repos/a", "--jq", ".items[].path"]);
-  assert.deepEqual(tokenize('kubectl get pods -o "custom:.metadata.name"'),
-    ["kubectl", "get", "pods", "-o", "custom:.metadata.name"]);
-  assert.throws(() => tokenize("gh api 'unterminated"), /unterminated quote/);
+test("isRunStableRead: read-only git (no sha) is cacheable", () => {
+  assert.equal(isRunStableRead("git show HEAD:path/to/file"), true);
+  assert.equal(isRunStableRead("git log main --oneline"), true);
+  assert.equal(isRunStableRead("git diff main...HEAD"), true);
 });
 
-test("tokenize keeps injection payloads as ONE literal argument", () => {
-  // With execFile + these argv, no shell ever sees the metacharacters.
-  const argv = tokenize(`gh api "repos/a;rm -rf /"`);
-  assert.deepEqual(argv, ["gh", "api", "repos/a;rm -rf /"]);
+test("isRunStableRead: live state and mutations are NOT run-stable", () => {
+  assert.equal(isRunStableRead("kubectl get pods -n regression"), false);
+  assert.equal(isRunStableRead("kubectl logs pod-x"), false);
+  assert.equal(isRunStableRead("curl https://example.com"), false);
+  assert.equal(isRunStableRead("gh pr create --title x"), false);
 });
+
+test("isImmutableRead: gh pr list/view are NOT cacheable (mutable state)", () => {
+  assert.equal(isImmutableRead("gh pr list -R o/r"), false);
+  assert.equal(isImmutableRead("gh pr view 123"), false);
+});
+
+// ---- MCP -------------------------------------------------------------------
 
 test("MCP: stateful tools are never cacheable", () => {
   assert.equal(isCacheableMcp("mcp__grafana__query_loki_logs"), true);
@@ -248,12 +212,12 @@ test("an MCP result round-trips through the shared store", () => {
   assert.equal(cacheGet(dir, k).stdout, "0 rows, clean");
 });
 
+// ---- Permissions -----------------------------------------------------------
+
 test("cache files are owner-only (0600) and the dir owner-only (0700)", () => {
   const sub = join(dir, "nested-cache");
   const k = cacheKey("gh api repos/a");
   cachePut(sub, k, { command: "gh api repos/a", stdout: "private repo source" }, 1000);
-  // The cache sits in a world-readable OS temp dir and holds raw gh/kubectl
-  // output; redaction is best-effort, so the mode is the real control.
   assert.equal(statSync(join(sub, `${k}.json`)).mode & 0o777, 0o600);
   assert.equal(statSync(sub).mode & 0o777, 0o700);
 });
@@ -269,4 +233,11 @@ test("CONCURRENCY: same key written twice stays readable and consistent", () => 
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w1", stdout: "same-bytes" }, 1000);
   cachePut(dir, k, { command: "gh api repos/a", writerId: "w2", stdout: "same-bytes" }, 2000);
   assert.equal(cacheGet(dir, k).stdout, "same-bytes");
+});
+
+// ---- banner ----------------------------------------------------------------
+
+test("banner is exported and callable", () => {
+  // Just verify it doesn't throw when called without a logPath
+  assert.doesNotThrow(() => banner("[test]", ""));
 });

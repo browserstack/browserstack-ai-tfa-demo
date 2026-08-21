@@ -9,9 +9,7 @@ The core contract: **TFA owns logs; the client agent owns everything else.** The
 coordinator never seeds logs and never fulfills a `test_logs` ask. Every other
 `evidenceType` routes to a capability that is gathered via **whatever skill/tool
 the client actually has** for it (discovered **and validated** once into the
-capability manifest — see `SKILL.md` § Gate Part A). There are **no `kubectl` /
-`chitragupta` /
-`bifrost` literals here** — that is the whole point of going generic.
+capability manifest — see `SKILL.md` § Gate Part A).
 
 **Contents:** [How asks are processed](#how-a-turns-asks-are-processed) ·
 [Routing table](#routing-table-capability-not-tool) ·
@@ -76,10 +74,8 @@ suspect that could not have caused the failure. (Full protocol: U9 /
 
 ## Digest format
 
-The single most important discipline: **digested input, not raw dumps.** Every
-turn's `message` loads into the agent's context *and* is sent to TFA; a raw log
-tail or full PR diff blows both budgets and degrades TFA's reasoning. Supply the
-*findings*, not the *haystack*.
+**Digested input, not raw dumps.** Every turn's `message` loads into the agent's
+context *and* is sent to TFA. Supply the *findings*, not the *haystack*.
 
 ### Per-ask block shape — `ask → found → snippet/link`
 
@@ -96,21 +92,16 @@ and unfulfillable variants) — copy it, don't retype it. Shape:
 
 | Field / scope | Soft target | Hard ceiling | On exceed |
 |---|---|---|---|
-| `SUMMARY` | ≤ 60 chars | 80 chars | Tighten to the finding; drop restatement of the ask |
-| `SNIPPET` per ask | ≤ 4 lines | 8 lines | Keep the load-bearing lines; replace the rest with `… (N lines elided — see LINK)` |
-| Code diff in a `product_code` snippet | ≤ 1 hunk | 2 hunks | Show changed lines only, no context lines; link the full PR |
-| Whole next-turn `message` | ≤ 40 lines | 80 lines (and ≤ `turnMessageMaxChars`) | Drop `low`-priority asks first; keep every `high` ask's block |
+| `SUMMARY` | ≤ 300 chars | 400 chars | Tighten to the finding; drop restatement of the ask |
+| `SNIPPET` per ask | ≤ 20 lines | 40 lines | Keep the load-bearing lines; replace the rest with `… (N lines elided — see LINK)` |
+| Code diff in a `product_code` snippet | ≤ 1 hunk | 3 hunks | Show changed lines + 3 lines context; link the full PR |
+| Whole next-turn `message` | ≤ 200 lines | 400 lines (and ≤ `turnMessageMaxChars`) | Drop `low`-priority asks first; keep every `high` ask's block |
 | Asks fulfilled per turn | all `high` + `medium` | — | Defer `low` asks to a later turn rather than truncating a `high` ask |
 
 Truncation rule of thumb: **never truncate a `high`-priority ask's block to fit a
 `low`-priority one.** Drop the low block whole; keep the high block intact. The
-whole-message ceiling honors `turnMessageMaxChars` from
-`config/rca.config.json`, now set to **1000 chars** — a plugin-configured
-self-limit, tighter than the underlying tool's actual hard cap (the
-`tfaRcaTurn` MCP tool itself allows up to 5000 chars per `message`; the plugin
-just chooses not to use all of it). At this budget, expect at most 2-3 ask
-blocks per turn before hitting the ceiling — defer lower-priority asks to a
-follow-up turn rather than cramming everything into one.
+whole-message ceiling also honors `turnMessageMaxChars` from
+`config/rca.config.json` (the tool caps `message` at 5000 chars).
 
 ### What never goes in a digest
 
@@ -143,11 +134,10 @@ does not pre-empt that decision.
 
 ## Capability manifest (built once, at the gate)
 
-Rather than re-discover "is there a kibana skill?" on every ask across every
-test, Gate Part A enumerates **and probe-validates** the client's connectors
-**once** up front into a manifest (`lib/routing.mjs` → `buildManifest`).
-`valid` maps to `available: true`; `invalid`/`absent` map to `available: false`
-(a recorded gap):
+Gate Part A enumerates **and probe-validates** the client's connectors **once**
+up front into a manifest (`lib/routing.mjs` → `buildManifest`). `valid` maps to
+`available: true`; `invalid`/`absent` map to `available: false` (a recorded
+gap):
 
 ```
 { github: {available: true, via: "gh"}, infra: {available: true, via: "kubectl"}, logs: {available: false}, ... }

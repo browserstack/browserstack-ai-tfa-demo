@@ -9,7 +9,6 @@ import {
   recordTurn1,
   readTurn1,
   readAllTurn1,
-  deleteTurn1Registry,
 } from "../lib/turn1-registry.mjs";
 
 const mode = (p) => statSync(p).mode & 0o777;
@@ -115,14 +114,3 @@ test("the registry file and its directory are owner-only (0600 / 0700)", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("deleteTurn1Registry removes the file and reports whether it existed", () => {
-  const dir = fixture();
-  const p = turn1PathFor("b1", dir);
-  assert.equal(deleteTurn1Registry(p), false, "nothing to delete yet");
-
-  recordTurn1(p, "1", { status: "PENDING", threadId: "chat:1", turnId: "t-1" }, 1000);
-  assert.equal(deleteTurn1Registry(p), true);
-  assert.equal(existsSync(p), false);
-
-  rmSync(dir, { recursive: true, force: true });
-});

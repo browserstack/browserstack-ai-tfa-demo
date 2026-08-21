@@ -2,11 +2,16 @@
 
 Invocation: `/rca-build awswx…fw2` (build id given; nothing else passed).
 
-## 1. Gate closes (the only user-visible checkpoint)
+This run has a `.rca-context.json` already, so first contact does not run — the gate
+is the only user-visible checkpoint **on a repeat run**. The first run in a repo
+looks different: it interviews, then falls through into this same gate. See
+`<pluginRoot>/skills/rca-build/references/interview.md`.
+
+## 1. Gate closes (the only user-visible checkpoint on a repeat run)
 
 ```
 GATE CLOSED — capability manifest:
-  github ✅ valid (gh, authed) · infra ✅ valid (via kubectl, ctx staging-euc1) · logs ❌ absent · metrics ❌ absent
+  github ✅ valid (<forge cli>) · infra ✅ valid (<runtime cli>, <scope>) · logs ❌ gap · metrics ❌ gap
 
 Intake:
   build id:        awswx…fw2            (given)

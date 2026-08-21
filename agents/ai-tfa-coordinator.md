@@ -119,7 +119,7 @@ read-only and has no side effects, so a read is always safe to repeat.
    shares digested findings; the cache shares raw call results. Given
    `buildId` and your own `testRunId` as `writerId`:
 
-   - **Shell (`gh`/`kubectl`/`curl`/`git`)** — prefix the fetch with the
+   - **Shell (any read-only command — the forge CLI, a runtime CLI, `curl`, `git`)** — prefix the fetch with the
      wrapper; it behaves exactly like the raw command (same stdout, same exit
      code) but only executes on a miss:
      `node <pluginRoot>/bin/cached-exec.mjs <buildId> <testRunId> '<command>'`
@@ -142,8 +142,8 @@ read-only and has no side effects, so a read is always safe to repeat.
      Skip caching for one-off queries only this test needs.
    - **NEVER cache `tfaRcaTurn` / `getTfaTurnResult` / `triggerRcaReport`** —
      they are stateful, and the cache refuses them outright.
-   - Don't re-probe a connector the gate already validated (`gh auth status`,
-     `kubectl version`); the manifest above is the answer.
+   - Don't re-probe a connector the gate already validated; the manifest above is
+     the answer, and it records what proved each one.
    - Two wrapper gotchas: **(i)** hit/miss banners go to stderr — don't
      `2>&1 | jq` (merges banner into pipe). **(ii)** commands containing single
      quotes can't nest inside a single-quoted argument; pipe on stdin instead:
@@ -406,10 +406,9 @@ Notes:
 - **Never** let drain reads consume the turn cap, and never drain past the
   `softPendingDrain` budget — a wedged turn must not hang the batch.
 - **Never** dump raw logs, full diffs, or full file contents into a turn message — digest only.
-- **Never** run an unfiltered gather call (a bare `gh api ...` with no `--jq`,
-  `kubectl get ... -o wide`/`-o yaml` when a narrower `-o custom-columns`
-  answers the ask) — project to the needed field(s) before the call runs, not
-  by reading past the noise after.
+- **Never** run an unfiltered gather call — a bare `gh api ...` with no `--jq`, or
+  any tool's full-object output when a narrower projection answers the ask. Project
+  to the needed field(s) before the call runs, not by reading past the noise after.
 - **Never** write to any repo / cluster / ticket / the run — every action is read-only.
 - **Never** editorialize a cause — pass TFA's `glimpse` through verbatim.
 - **Never** blindly inherit a representative's cause for a sibling — confirm against its own logs.

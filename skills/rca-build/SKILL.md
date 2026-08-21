@@ -56,6 +56,12 @@ The GitHub retry loop in Step 0b is never cut short by this ceiling: GitHub is t
 one capability a run cannot proceed without, so its re-asks are inside the budget
 by construction, not competing with it.
 
+`AskUserQuestion` renders at most **4 parts per call and 4 options per part**, which
+is why the interview turns MERGE parts that share an identifier rather than splitting
+into more calls (`references/interview.md`). Splitting T6 into one question per
+capability would be the obvious-looking edit and would blow this budget on the first
+customer who selects five.
+
 Every other mention of asking — in this file, in its references, and in
 `agents/ai-tfa-coordinator.md` — points here rather than re-deriving the rule.
 Restating it is what failed before: commit `164962f` added 52 lines enforcing a
@@ -78,15 +84,19 @@ user supplies — carry them into Gate Part B as pre-answered intake.
 Then load the context, because it decides everything below:
 
 ```
-node <pluginRoot>/bin/rca-context.mjs read --build-name "<build name, if known>"
+node <pluginRoot>/bin/rca-context.mjs select --build-name "<build name, if known>"
 ```
 
-It returns the selected profile, or a refusal naming why. Three outcomes:
+`select`, not `read`: `read` returns the document and does no selection, so it
+cannot tell you whether this run may proceed. `select` returns the chosen profile
+plus `runnable`, `provisioned`, `resumeAt` and `stale`, or exits non-zero with a
+refusal naming what it would otherwise have had to guess. Four outcomes:
 
 | Outcome | What it means | What you do |
 |---|---|---|
-| a runnable profile | GitHub is verified in it | skip to Step 1 |
-| no context, or no verified GitHub | never set up here, or setup did not finish | **Step 0b** |
+| runnable **and** provisioned | GitHub verified, every capability answered | skip to Step 1 |
+| runnable, **not** provisioned | GitHub verified but setup was abandoned partway | Step 1, and the gate's single question offers to finish — see `templates/gate-summary.md` |
+| no context, or not runnable | never set up here, or GitHub never verified | **Step 0b** |
 | `parse-error` | the file exists and is unreadable (a hand-resolved merge conflict is the common cause) | print the path and stop. **Write nothing.** Never treat this as "no context" — that would overwrite the team's file and throw away every answer already given |
 
 **No build id?** It becomes the interview's first question at Step 0b (T1), or the
@@ -119,11 +129,13 @@ capability and what "verified" means for each.
 
 Four rules that live here because they are not negotiable:
 
-- **Resolve the write target before spending a question** (T2b). The documented
-  install flow is `git clone <plugin> && cd <plugin> && claude --plugin-dir ./`, so
-  **cwd is the plugin root on first contact** — and the plugin root is never a valid
-  home for the context. If no worktree for the product repo is reachable, the local
-  clone path is part of T3's question. Discovering this at write time means the
+- **Check that a write target can exist before spending a question** (T2b). The
+  documented install flow is `git clone <plugin> && cd <plugin> && claude
+  --plugin-dir ./`, so **cwd is the plugin root on first contact** — and the plugin
+  root is never a valid home for the context. T2b cannot fully resolve the
+  destination (that needs `homeRepo`, which T3 supplies); what it can establish is
+  whether ANY non-plugin git worktree is reachable at all. If none is, the local
+  clone path becomes part of T3's question. Discovering this at write time means the
   customer answered everything for nothing.
 - **The repo pre-read runs against the CUSTOMER's worktree, never this plugin's**
   (T3b, after T3 resolves the repos). Our own repo names tools we do not want to
@@ -131,9 +143,12 @@ Four rules that live here because they are not negotiable:
 - **GitHub is mandatory**, bounded at 2 re-asks / 3 attempts, each re-ask narrowed
   by failure class. After the bound: refuse, start no RCA work, and write nothing
   extra — whatever verified is already on disk, because writes are per-connector.
-- **Persist each connector the moment it verifies**, via
-  `bin/rca-context.mjs upsert`. Never batch the writes to the end: abandonment then
-  costs the customer nothing, and there is no partial state to model.
+- **Persist as you go, never in one batch at the end.** The first `write` fires as
+  soon as T4 passes — the first moment the home repo, the repos, the branches and one
+  verified connector are all known. After that every capability lands through
+  `upsert-connector` or `record-gap` as it resolves. Abandonment then costs the
+  customer nothing and there is no partial state to model. (T8 is a confirmation and
+  a final additive write for corrections, not the first write.)
 
 It ends by writing the context and **falling through into Step 1** — first contact
 never ends the session and never starts RCA work of its own.
@@ -286,7 +301,7 @@ first question instead. There is no second gate question, ever.
 (§ The question budget) and has already finished by the time you reach here. Do not
 read this paragraph as a prohibition on interviewing.
 Record the answer back into the active profile
-(`bin/rca-context.mjs upsert`) so a field asked once is never asked again.
+(`bin/rca-context.mjs upsert-connector`) so a field asked once is never asked again.
 
 ### Gate close
 

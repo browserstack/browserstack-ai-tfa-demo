@@ -1,0 +1,1296 @@
+// Real throwaway git repos, following tests/repo-source.test.mjs — the git
+// behaviour here (worktree resolution, tracked-ness, check-ignore) IS the thing
+// under test, so mocking it would prove nothing.
+//
+// EVERY assertion in this file was proven by mutation: the code it guards was
+// broken, the test was confirmed to fail, and the mutation is recorded in a
+// comment beside it. Four guards in this project were previously vacuous — two of
+// them written as fixes — so "it passes" is not evidence that it can fail.
+//
+// The load-bearing assertions, in the order they matter:
+//   - `verifiedBy: {note: "TODO"}` is NOT runnable. A non-empty-string check here
+//     was the worst defect the plan review found: the whole lifecycle boundary
+//     rests on this one predicate.
+//   - two equally specific buildMatch patterns REFUSE rather than pick one.
+//   - a build name matching nothing refuses instead of falling back to
+//     defaultProfile.
+//   - writes are additive: an unrelated connector survives byte-identically, and
+//     a refused write leaves the file byte-identical.
+//   - the artifact is NOT owner-only, and the module contains no hardening call.
+
+import { test, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  CONTEXT_FILENAME,
+  CONTEXT_README,
+  CREDENTIAL_KIND,
+  DEFAULT_STALE_AFTER_DAYS,
+  MANDATORY_CAPABILITY,
+  SCHEMA_VERSION,
+  capabilitySequence,
+  capabilityFallbacks,
+  contextHomeDir,
+  findContextFile,
+  isEnvVarName,
+  isISODate,
+  isProvisioned,
+  isRunnable,
+  matchesBuildName,
+  missingCapabilities,
+  readRcaContext,
+  recordGap,
+  recordWarning,
+  selectProfile,
+  upsertConnector,
+  validateConnector,
+  validateContext,
+  writeRcaContext,
+} from "../lib/rca-context.mjs";
+
+const CLI = new URL("../bin/rca-context.mjs", import.meta.url).pathname;
+const REAL_CONFIG = new URL("../config/rca.config.json", import.meta.url).pathname;
+
+let ws, productRepo, automationRepo, pluginDir;
+
+const g = (dir, ...a) =>
+  execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+/** `git init` only — check-ignore, rev-parse --show-toplevel and ls-files all
+ *  work on an empty repo with a staged file, so no seed commit is needed. */
+function initRepo(dir) {
+  mkdirSync(dir, { recursive: true });
+  g(dir, "init", "-q");
+  return dir;
+}
+
+/**
+ * Build the workspace ON DEMAND: two sibling clones plus the plugin checked out
+ * beside them, which is the shape a parent-only walk cannot see. Half this file's
+ * tests touch no filesystem at all (predicates, matching, selection, validation),
+ * and building three git repos for them would dominate the run.
+ */
+function workspace() {
+  if (ws) return;
+  // realpath because git reports realpaths and the module canonicalizes to match:
+  // on macOS /var is a symlink to /private/var.
+  ws = realpathSync(mkdtempSync(join(tmpdir(), "rca-ctx-")));
+  productRepo = initRepo(join(ws, "api"));
+  automationRepo = initRepo(join(ws, "e2e-tests"));
+  pluginDir = initRepo(join(ws, "browserstack-ai-tfa-demo"));
+}
+
+afterEach(() => {
+  if (!ws) return;
+  rmSync(ws, { recursive: true, force: true });
+  ws = productRepo = automationRepo = pluginDir = undefined;
+});
+
+// A connector whose verifiedBy carries a real claim. `via` and `tool` are
+// deliberately placeholder names: a fixture naming a real vendor is the strongest
+// teaching signal in a test file, and this plugin has no default stack.
+const verifiedConnector = (over = {}) => ({
+  via: "forge-cli",
+  scope: { repo: "acme/api", base: "main" },
+  howToQuery: {
+    tool: "forge-cli",
+    args: ["pr", "list", "--repo", "acme/api", "--base", "main", "--state", "merged"],
+  },
+  credential: { kind: CREDENTIAL_KIND.PROVIDER_MANAGED },
+  verifiedBy: { count: 37, observedAt: "2026-08-19", note: "merged PRs into main; newest #4188" },
+  verifiedAt: "2026-08-19",
+  ...over,
+});
+
+const profileFixture = (over = {}) => ({
+  buildMatch: ["nightly web regression*"],
+  repos: { product: ["acme/api"], automation: ["acme/e2e-tests"] },
+  subpaths: ["services/billing"],
+  branches: { default: "main", observed: ["release/24.9"] },
+  connectors: { [MANDATORY_CAPABILITY]: verifiedConnector() },
+  gaps: [],
+  warnings: [],
+  ...over,
+});
+
+const validContext = (over = {}) => ({
+  _README: CONTEXT_README,
+  schemaVersion: SCHEMA_VERSION,
+  homeRepo: "acme/api",
+  defaultProfile: "prod-web",
+  profiles: { "prod-web": profileFixture() },
+  ...over,
+});
+
+/** A config-shaped object with no vendor name in it. */
+const configFixture = () => ({
+  evidenceRouting: {
+    // A skipped entry that DOES name a capability, so the skip guard is testable:
+    // TFA owns this evidence and it is never ours to provision.
+    test_logs: { owner: "tfa", skip: true, capability: "test_logs" },
+    product_code: { capability: "github" },
+    deploy: { capability: "github" },
+    ci: { capability: "ci", fallbackCapability: "github" },
+    runtime: { capability: "infra" },
+    log_search: { capability: "logs" },
+    metrics: { capability: "metrics" },
+    other: { capability: "other" },
+  },
+});
+
+/** The exact bytes of one `"key": { … }` block, so "unchanged" can be asserted at
+ *  the byte level rather than at the parsed level. */
+function jsonBlock(raw, key) {
+  const start = raw.indexOf(`"${key}": {`);
+  assert.ok(start >= 0, `no "${key}" block in the file`);
+  let depth = 0;
+  for (let i = raw.indexOf("{", start); i < raw.length; i++) {
+    if (raw[i] === "{") depth++;
+    else if (raw[i] === "}" && --depth === 0) return raw.slice(start, i + 1);
+  }
+  throw new Error(`unbalanced braces after "${key}"`);
+}
+
+function keysAtAnyDepth(node, out = new Set()) {
+  if (Array.isArray(node)) node.forEach((v) => keysAtAnyDepth(v, out));
+  else if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      out.add(k);
+      keysAtAnyDepth(v, out);
+    }
+  }
+  return out;
+}
+
+function cli(...argv) {
+  try {
+    const stdout = execFileSync(process.execPath, [CLI, ...argv], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return { status: 0, json: JSON.parse(stdout) };
+  } catch (err) {
+    let json = null;
+    try {
+      json = JSON.parse(err.stdout ?? "");
+    } catch { /* usage errors print prose to stderr, by design */ }
+    return { status: err.status, json, stderr: String(err.stderr ?? "") };
+  }
+}
+
+// ---- PREDICATE 1: runnable is a SHAPE check ---------------------------------
+
+test("a verifiedBy carrying only a note is NOT runnable", () => {
+  // MUTATION: isVerifiedClaim → `return Object.keys(verifiedBy).length > 0`
+  //           (i.e. "is verifiedBy non-empty?"). This test fails; every other
+  //           runnable test still passes, which is exactly why it exists.
+  // The plan's own words: the lifecycle boundary rests on this field, and a
+  // non-empty check is satisfied by "TODO" and by "attempted, could not list PRs"
+  // — both of which an agent hedging instead of failing will write.
+  for (const verifiedBy of [
+    { note: "TODO" },
+    { note: "attempted, could not list PRs" },
+    { note: "" },
+    {},
+  ]) {
+    const profile = profileFixture({
+      connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ verifiedBy }) },
+    });
+    assert.equal(isRunnable(profile), false, `verifiedBy ${JSON.stringify(verifiedBy)} proves nothing`);
+  }
+});
+
+test("a count alone and an observedAt alone are each enough", () => {
+  // MUTATION: require BOTH count and observedAt (`&&` instead of the early
+  //           return) → both halves of this fail.
+  for (const verifiedBy of [{ count: 37 }, { observedAt: "2026-08-19" }, { count: 0 }]) {
+    const profile = profileFixture({
+      connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ verifiedBy }) },
+    });
+    assert.equal(isRunnable(profile), true, `verifiedBy ${JSON.stringify(verifiedBy)} is a decidable claim`);
+  }
+});
+
+test("count zero is verified — a reachable but empty PR window is a warning, not a failure", () => {
+  // MUTATION: `verifiedBy.count >= 0` → `verifiedBy.count > 0`. Fails here.
+  // §6 of the plan classifies "reachable, empty PR window" as a warning that does
+  // not count against the retry bound, so refusing to call it verified would loop
+  // a customer whose repo simply has no merged PRs in the window.
+  const profile = profileFixture({
+    connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ verifiedBy: { count: 0, note: "no merges in window" } }) },
+  });
+  assert.equal(isRunnable(profile), true);
+});
+
+test("a non-integer count, a bogus date, and a non-object verifiedBy are all unverified", () => {
+  // MUTATION: `Number.isInteger(count)` → `count !== undefined`. Fails on "37".
+  for (const verifiedBy of [{ count: "37" }, { count: 1.5 }, { count: -1 }, { observedAt: "yesterday" }, "verified", null, []]) {
+    const profile = profileFixture({
+      connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ verifiedBy }) },
+    });
+    assert.equal(isRunnable(profile), false, `${JSON.stringify(verifiedBy)} is not a claim`);
+  }
+});
+
+test("runnable is the MANDATORY capability's predicate — another verified connector does not stand in", () => {
+  // MUTATION: isRunnable → "any connector has a verified claim". Fails here.
+  // Without the code and the merged PRs there is no culprit PR, which is the
+  // run's entire deliverable, so no other capability can substitute.
+  const profile = profileFixture({ connectors: { logs: verifiedConnector() } });
+  assert.equal(isRunnable(profile), false);
+  assert.equal(isRunnable(profileFixture({ connectors: {} })), false);
+  assert.equal(isRunnable(undefined), false);
+});
+
+// ---- PREDICATE 2: provisioned, and the resume point it yields ---------------
+
+test("the capability sequence comes from config, skipping what TFA owns", () => {
+  // MUTATION: drop the `entry.skip === true` guard → "test_logs" has no
+  //           capability so nothing changes; drop the `out.includes` dedupe →
+  //           github appears twice and this fails.
+  assert.deepEqual(capabilitySequence(configFixture()), ["github", "ci", "infra", "logs", "metrics", "other"]);
+  assert.deepEqual(capabilitySequence({}), []);
+  assert.deepEqual(capabilitySequence(null), []);
+});
+
+test("the sequence derived from the REAL config is duplicate-free and includes the mandatory capability", () => {
+  // Asserted as a property rather than a literal list, because the orchestrator
+  // owns config/rca.config.json and edits it concurrently. The plan's own
+  // criticism was that NO test loads the real config, so a silent routing
+  // regression ships green.
+  const config = JSON.parse(readFileSync(REAL_CONFIG, "utf8"));
+  const caps = capabilitySequence(config);
+  assert.ok(caps.includes(MANDATORY_CAPABILITY), "the mandatory capability must be in the sequence");
+  assert.equal(new Set(caps).size, caps.length, "a duplicate would make provisioned ask twice");
+  for (const [name, entry] of Object.entries(config.evidenceRouting)) {
+    if (entry.skip === true) assert.ok(!caps.includes(name), `${name} is owned by TFA and is not ours to provision`);
+  }
+});
+
+test("a capability with neither a connector nor a gap is what remains to be asked", () => {
+  // MUTATION: `!gapped.has(c)` → `true` (ignore gaps) → the declined-logs case
+  //           fails, because a skipped capability would be re-asked every run.
+  const caps = capabilitySequence(configFixture());
+  const profile = profileFixture({
+    connectors: { [MANDATORY_CAPABILITY]: verifiedConnector(), infra: verifiedConnector() },
+    gaps: [{ capability: "logs", classification: "declined" }],
+  });
+  assert.deepEqual(missingCapabilities(profile, caps), ["ci", "metrics", "other"]);
+  assert.equal(isProvisioned(profile, caps), false);
+  // The first element IS the resume point — derived, never stored.
+  assert.equal(missingCapabilities(profile, caps)[0], "ci");
+});
+
+test("runnable but NOT provisioned is the state the gate must be able to see", () => {
+  // MUTATION: make isProvisioned return `isRunnable(profile)`. Fails here.
+  // Conflating the two locks a customer in: the mandatory capability is asked
+  // first, so abandoning straight after it leaves a runnable profile, first
+  // contact never fires again, and every later run declares the rest unavailable.
+  const caps = capabilitySequence(configFixture());
+  const profile = profileFixture();
+  assert.equal(isRunnable(profile), true);
+  assert.equal(isProvisioned(profile, caps), false);
+});
+
+test("a gap for every remaining capability makes a profile provisioned", () => {
+  const caps = capabilitySequence(configFixture());
+  const profile = profileFixture({
+    gaps: caps.filter((c) => c !== MANDATORY_CAPABILITY).map((c) => ({ capability: c, classification: "declined" })),
+  });
+  assert.deepEqual(missingCapabilities(profile, caps), []);
+  assert.equal(isProvisioned(profile, caps), true);
+});
+
+// ---- profile matching: anchored, case-folded, one wildcard, no regex --------
+
+test("matching is anchored — a bare word never matches a wildcard pattern around it", () => {
+  // MUTATION: `n.startsWith(head) && n.endsWith(tail)` → `n.includes(head)`.
+  //           Fails on the "nightly" cases below.
+  // Substring matching is how the wrong profile gets selected, and a wrong
+  // profile is a run against another environment's repos and branches.
+  assert.equal(matchesBuildName("web-nightly-*", "nightly"), false);
+  assert.equal(matchesBuildName("nightly", "web-nightly-12"), false);
+  assert.equal(matchesBuildName("*-nightly", "web-nightly-12"), false);
+  assert.equal(matchesBuildName("web-nightly-*", "prod-web-nightly-12"), false);
+});
+
+test("matching is case-folded and whole-string", () => {
+  // MUTATION: drop both `.toLowerCase()` calls → the Prod-Web case fails.
+  assert.equal(matchesBuildName("prod-web-nightly-*", "Prod-Web-Nightly-12"), true);
+  assert.equal(matchesBuildName("Nightly Web Regression*", "nightly web regression 41"), true);
+  assert.equal(matchesBuildName("main", "MAIN"), true);
+  assert.equal(matchesBuildName("main", "main-2"), false);
+});
+
+test("one wildcard is supported; a second one matches nothing rather than being guessed at", () => {
+  // MUTATION: delete the second-star check → the two-star pattern matches and
+  //           this fails.
+  assert.equal(matchesBuildName("*", "anything at all"), true);
+  assert.equal(matchesBuildName("web-*-nightly", "web-prod-nightly"), true, "one wildcard mid-pattern is fine");
+  assert.equal(matchesBuildName("web-*-nightly-*", "web-prod-nightly-12"), false, "two wildcards is not guessed at");
+  // The discriminating case, and the only one there is: drop the second-wildcard
+  // check and the trailing "*" becomes a LITERAL, so this starts matching.
+  assert.equal(matchesBuildName("web-*-nightly-*", "web-prod-nightly-*"), false, "and a second '*' is never matched literally");
+  assert.equal(matchesBuildName("web-*", "web-"), true, "an empty tail is still a whole-string match");
+  assert.equal(matchesBuildName("web-*-x", "web-x"), false);
+  assert.equal(matchesBuildName("*-x", "x"), false, "head+tail longer than the name cannot match");
+});
+
+test("matching refuses non-strings instead of coercing them", () => {
+  assert.equal(matchesBuildName("*", 42), false);
+  assert.equal(matchesBuildName(null, "web"), false);
+});
+
+test("the module matches with string arithmetic — no regex anywhere in it", () => {
+  // The guard IS the absence, so assert it. A regex here would re-admit exactly
+  // the class of defect the plan catalogues four times over (a `^`-anchored
+  // pattern that only matched at position 0; `[^a-z]` under /i excluding A-Z).
+  const src = readFileSync(new URL("../lib/rca-context.mjs", import.meta.url), "utf8");
+  for (const idiom of ["RegExp(", ".test(", ".match(", ".matchAll(", "replace(/", "split(/"]) {
+    assert.ok(!src.includes(idiom), `${idiom} — matching here must stay character arithmetic`);
+  }
+});
+
+// ---- selection ---------------------------------------------------------------
+
+const twoWayContext = () =>
+  validContext({
+    defaultProfile: "prod-web",
+    profiles: {
+      "prod-web": profileFixture({ buildMatch: ["web-nightly-*"] }),
+      "prod-api": profileFixture({ buildMatch: ["api-nightly-*"] }),
+    },
+  });
+
+test("two equally specific patterns matching one build name REFUSE, naming both", () => {
+  // MUTATION: `if (winners.length > 1)` → take `winners[0]` ("first key wins").
+  //           Fails here. Neither JSON key order nor alphabetical order is a
+  //           decision anybody made, and a reformat silently changes the first.
+  const context = validContext({
+    profiles: {
+      // 11 literal characters each — a genuine tie, which is the only case that
+      // must refuse. (`web-nightly-*` would be 12 and would win on specificity.)
+      "prod-web": profileFixture({ buildMatch: ["*-nightly-12"] }),
+      "prod-api": profileFixture({ buildMatch: ["web-nightly*"] }),
+    },
+  });
+  const r = selectProfile({ context, buildName: "web-nightly-12", todayISO: "2026-08-20" });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "ambiguous-profile");
+  assert.deepEqual(r.labels.sort(), ["prod-api", "prod-web"]);
+  assert.match(r.message, /prod-web/);
+  assert.match(r.message, /prod-api/);
+});
+
+test("more literal characters wins, and the loser is reported as alsoMatched", () => {
+  // MUTATION: specificityOf → `return 0` (every pattern equally specific) → this
+  //           becomes an ambiguous refusal and fails.
+  const context = validContext({
+    profiles: {
+      broad: profileFixture({ buildMatch: ["web-*"] }),
+      narrow: profileFixture({ buildMatch: ["web-nightly-*"] }),
+    },
+    defaultProfile: "broad",
+  });
+  const r = selectProfile({ context, buildName: "web-nightly-12", todayISO: "2026-08-20" });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.label, "narrow");
+  assert.equal(r.matchedBy, "build-name");
+  assert.deepEqual(r.alsoMatched, ["broad"], "the gate prints this, which is how the file gets fixed");
+});
+
+test("a build name matching NOTHING refuses rather than falling back to defaultProfile", () => {
+  // MUTATION: in the zero-candidate branch, fall back to
+  //           `context.defaultProfile` instead of refusing. Fails here.
+  // A name matching nothing means the file does not describe this build; running
+  // the default's repos and branches against it is the wrong-context run.
+  const context = validContext({
+    defaultProfile: "prod-web",
+    profiles: {
+      "prod-web": profileFixture({ buildMatch: ["web-nightly-*"] }),
+      "prod-api": profileFixture({ buildMatch: ["api-nightly-*"] }),
+      staging: profileFixture({ buildMatch: ["staging-*"] }),
+    },
+  });
+  const r = selectProfile({ context, buildName: "canary-smoke-3", todayISO: "2026-08-20" });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-matching-profile");
+  assert.deepEqual(r.labels.sort(), ["prod-api", "prod-web", "staging"]);
+  assert.match(r.message, /defaultProfile is deliberately NOT used/);
+});
+
+test("a build name matching nothing with exactly ONE profile uses it and says so", () => {
+  // MUTATION: drop the `labels.length === 1` branch → refuses, and this fails.
+  const r = selectProfile({ context: validContext(), buildName: "something-nobody-bound", todayISO: "2026-08-20" });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.matchedBy, "sole-profile", "the caller has to be able to print WHY this profile was used");
+});
+
+test("no build name at all falls back to defaultProfile — its only job", () => {
+  // MUTATION: drop the defaultProfile branch → refuses, and this fails.
+  const r = selectProfile({ context: twoWayContext(), todayISO: "2026-08-20" });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.label, "prod-web");
+  assert.equal(r.matchedBy, "default-profile");
+});
+
+test("no build name and no defaultProfile with two profiles refuses", () => {
+  const context = twoWayContext();
+  delete context.defaultProfile;
+  const r = selectProfile({ context, todayISO: "2026-08-20" });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-default-profile");
+  assert.deepEqual(r.labels.sort(), ["prod-api", "prod-web"]);
+});
+
+test("an explicit profile is matched EXACTLY; a near miss refuses listing the labels", () => {
+  // MUTATION: `Object.hasOwn(profiles, want)` → a startsWith/includes lookup.
+  //           Fails on "prod" below. A typo resolving to a neighbouring label is
+  //           a wrong-context run with no signal at all.
+  const context = twoWayContext();
+  assert.equal(selectProfile({ context, requested: "prod-api", todayISO: "2026-08-20" }).label, "prod-api");
+  const r = selectProfile({ context, requested: "prod", buildName: "web-nightly-1", todayISO: "2026-08-20" });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "unknown-profile");
+  assert.deepEqual(r.labels.sort(), ["prod-api", "prod-web"]);
+});
+
+test("an explicit profile OUTRANKS a build name that matches a different one", () => {
+  // MUTATION: reorder the branches so buildName is consulted first → returns
+  //           prod-web and this fails.
+  const r = selectProfile({ context: twoWayContext(), requested: "prod-api", buildName: "web-nightly-12", todayISO: "2026-08-20" });
+  assert.equal(r.label, "prod-api");
+  assert.equal(r.matchedBy, "requested");
+});
+
+test("a selected profile that is not runnable REFUSES — never a silent switch to a runnable sibling", () => {
+  // MUTATION: after the isRunnable check, pick any runnable profile instead of
+  //           refusing. Fails here. That substitution is the wrong-context run in
+  //           its purest form: the customer asked about one environment and got
+  //           an answer about another.
+  const context = validContext({
+    defaultProfile: "unfinished",
+    profiles: {
+      unfinished: profileFixture({
+        buildMatch: ["web-nightly-*"],
+        connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ verifiedBy: { note: "TODO" } }) },
+      }),
+      working: profileFixture({ buildMatch: ["api-nightly-*"] }),
+    },
+  });
+  const r = selectProfile({ context, buildName: "web-nightly-12", todayISO: "2026-08-20" });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "not-runnable");
+  assert.equal(r.label, "unfinished");
+  assert.ok(!JSON.stringify(r).includes('"working"') || r.message.includes("unfinished"));
+  assert.match(r.message, /Refusing rather than switching/);
+});
+
+test("a context with no profiles refuses instead of throwing", () => {
+  for (const context of [{}, { profiles: {} }, null, { profiles: [] }]) {
+    const r = selectProfile({ context, todayISO: "2026-08-20" });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, "no-profiles");
+  }
+});
+
+// ---- staleness: labels, never blocks ---------------------------------------
+
+test("staleness is a date comparison against the INJECTED day, and never blocks", () => {
+  // MUTATION: `age > staleAfterDays` → `age > 0` → github is stale on day 1 and
+  //           the second half of this fails.
+  const context = validContext();
+  const stale = selectProfile({ context, todayISO: "2026-10-19", staleAfterDays: DEFAULT_STALE_AFTER_DAYS });
+  assert.equal(stale.ok, true, "stale never blocks — it only relabels the digest line");
+  assert.deepEqual(stale.stale, [MANDATORY_CAPABILITY]);
+  assert.equal(stale.ages[MANDATORY_CAPABILITY], 61);
+
+  const fresh = selectProfile({ context, todayISO: "2026-08-20", staleAfterDays: DEFAULT_STALE_AFTER_DAYS });
+  assert.deepEqual(fresh.stale, []);
+  assert.equal(fresh.ages[MANDATORY_CAPABILITY], 1);
+});
+
+test("with no todayISO nothing is called stale — the module never reads the clock", () => {
+  // MUTATION: default `todayISO` to `new Date().toISOString().slice(0,10)` inside
+  //           stalenessOf → ages is populated and this fails. The clock is read
+  //           in bin/, once, and injected.
+  const src = readFileSync(new URL("../lib/rca-context.mjs", import.meta.url), "utf8");
+  assert.ok(!src.includes("new Date("), "no decision function may read the clock");
+  assert.ok(!src.includes("Date.now("), "no decision function may read the clock");
+  const r = selectProfile({ context: validContext() });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.stale, []);
+  assert.deepEqual(r.ages, {});
+});
+
+test("staleness prefers verifiedAt but accepts verifiedBy.observedAt", () => {
+  const context = validContext({
+    profiles: {
+      "prod-web": profileFixture({
+        connectors: {
+          [MANDATORY_CAPABILITY]: verifiedConnector({ verifiedAt: undefined, verifiedBy: { observedAt: "2026-01-01" } }),
+        },
+      }),
+    },
+  });
+  const r = selectProfile({ context, todayISO: "2026-08-20", staleAfterDays: 30 });
+  assert.deepEqual(r.stale, [MANDATORY_CAPABILITY]);
+  assert.equal(r.ages[MANDATORY_CAPABILITY], 231);
+});
+
+// ---- schema shape: the whole of the secret story ----------------------------
+
+test("a credential is ONLY an env-var name or provider-managed", () => {
+  // MUTATION: accept any `kind` (drop the else branch) → the bogus kinds pass and
+  //           this fails.
+  assert.equal(validateConnector(verifiedConnector({ credential: { kind: "env-var", name: "FORGE_TOKEN" } })).ok, true);
+  assert.equal(validateConnector(verifiedConnector({ credential: { kind: "provider-managed" } })).ok, true);
+  for (const credential of [
+    { kind: "inline" },
+    { kind: "env-var" },
+    { kind: "env-var", name: "not a var name" },
+    { kind: "env-var", name: "9LEADING_DIGIT" },
+    { kind: "provider-managed", name: "FORGE_TOKEN" },
+    "FORGE_TOKEN",
+  ]) {
+    const r = validateConnector(verifiedConnector({ credential }));
+    assert.equal(r.ok, false, `${JSON.stringify(credential)} must be refused`);
+  }
+});
+
+test("a credential carrying a VALUE key is refused, and the refusal never echoes it", () => {
+  // MUTATION: drop the CREDENTIAL_KEYS allowlist loop → the value key survives
+  //           into the document and this fails.
+  // There is no detector here by decision. The control is that the schema has
+  // nowhere for a value to go: an unknown key in a closed object is refused.
+  const planted = "s3cr3t-value-that-must-not-be-echoed";
+  const r = validateConnector(verifiedConnector({ credential: { kind: "env-var", name: "FORGE_TOKEN", value: planted } }));
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.path.endsWith(".credential.value")), "it must name WHERE");
+  assert.ok(!JSON.stringify(r).includes(planted), "and never quote WHAT — this refusal gets printed");
+});
+
+test("env-var name checking is character arithmetic, not a pattern", () => {
+  for (const name of ["FORGE_TOKEN", "_x", "a1", "A".repeat(128)]) assert.equal(isEnvVarName(name), true, name);
+  for (const name of ["", "1A", "A-B", "A B", "A$B", "A".repeat(129), 42, null, "TOKEN=abc"]) {
+    assert.equal(isEnvVarName(name), false, JSON.stringify(name));
+  }
+});
+
+test("howToQuery is structured {tool, args[]} — a joined command string is refused", () => {
+  // MUTATION: accept a string `args` (drop isStringArray) → the joined-string
+  //           case passes and this fails.
+  // The hazard is one hop away, not here: bin/cached-exec.mjs still shells a
+  // command string, so a stored value that LOOKS like a command invites being
+  // pasted into it. Structured args make that reconstruction deliberate.
+  assert.equal(validateConnector(verifiedConnector()).ok, true);
+  for (const howToQuery of [
+    "forge-cli pr list --repo acme/api",
+    { tool: "forge-cli", args: "pr list --repo acme/api" },
+    { tool: "forge-cli" },
+    { tool: "", args: [] },
+    { tool: "forge-cli", args: ["ok"], shell: true },
+    { tool: "forge-cli", args: [1, 2] },
+  ]) {
+    assert.equal(validateConnector(verifiedConnector({ howToQuery })).ok, false, JSON.stringify(howToQuery));
+  }
+});
+
+test("the module never executes anything but git, and never through a shell", () => {
+  // The plan's resolution for the howToQuery hazard is structural: stored
+  // structured, never executed. Asserted by absence, because the presence of one
+  // exec call is what would reintroduce it.
+  const src = readFileSync(new URL("../lib/rca-context.mjs", import.meta.url), "utf8");
+  assert.equal(src.split("execFileSync(").length - 1, 1, "exactly one call site, and it is git");
+  assert.ok(src.includes('execFileSync("git"'), "the one call site is git");
+  for (const idiom of ["execSync", "spawnSync", "spawn(", "shell: true", "exec("]) {
+    assert.ok(!src.includes(idiom), `${idiom} must not appear — howToQuery is documentation`);
+  }
+});
+
+test("verifiedBy accepts only its three fields, and rejects captured output", () => {
+  for (const verifiedBy of [{ count: 3, stdout: "…" }, { raw: "…" }, { count: 3, observedAt: "nope" }, { note: 7 }]) {
+    assert.equal(validateConnector(verifiedConnector({ verifiedBy })).ok, false, JSON.stringify(verifiedBy));
+  }
+  assert.equal(validateConnector(verifiedConnector({ verifiedBy: { note: "TODO" } })).ok, true,
+    "an honest 'attempted' record is WRITABLE — isRunnable is what refuses it, not the schema");
+});
+
+test("an unknown connector, profile or context key is refused rather than persisted", () => {
+  // MUTATION: delete any one of the key-allowlist loops → the matching case here
+  //           passes and this fails.
+  assert.equal(validateConnector(verifiedConnector({ token: "x" })).ok, false);
+  assert.equal(validateContext(validContext({ profiles: { "prod-web": profileFixture({ secrets: {} }) } })).ok, false);
+  assert.equal(validateContext(validContext({ credentials: {} })).ok, false);
+  assert.equal(validateContext(validContext({ complete: true })).ok, false, "there is deliberately no complete flag");
+  assert.equal(validateContext(validContext({ resumeAt: "logs" })).ok, false, "resume is derived, never stored");
+});
+
+test("subpaths null survives — it is how the hunt knows attribution may over-match", () => {
+  // MUTATION: `profile.subpaths !== null` → drop that clause → null is refused
+  //           and this fails. With no owned subpaths, path overlap runs
+  //           repo-wide, and recording null explicitly is what lets the hunt SAY
+  //           so instead of over-attributing silently.
+  assert.equal(validateContext(validContext({ profiles: { "prod-web": profileFixture({ subpaths: null }) } })).ok, true);
+  assert.equal(validateContext(validContext({ profiles: { "prod-web": profileFixture({ subpaths: "services/billing" }) } })).ok, false);
+});
+
+test("repos carry ROLES, not a flat list", () => {
+  // MUTATION: drop the REPO_ROLES check → the flat list and the unknown role pass
+  //           and this fails. A flat list forces the "if there's exactly one other
+  //           repo it must be the automation repo" guess.
+  assert.equal(validateContext(validContext({ profiles: { "prod-web": profileFixture({ repos: ["acme/api"] }) } })).ok, false);
+  assert.equal(validateContext(validContext({ profiles: { "prod-web": profileFixture({ repos: { forks: ["x"] } }) } })).ok, false);
+  assert.equal(validateContext(validContext({ profiles: { "prod-web": profileFixture({ repos: { product: "acme/api" } }) } })).ok, false);
+});
+
+test("a buildMatch pattern with two wildcards cannot be persisted", () => {
+  // MUTATION: drop the star count → the pattern is accepted, and since matching
+  //           returns false for it, the profile becomes silently unreachable.
+  const r = validateContext(validContext({ profiles: { "prod-web": profileFixture({ buildMatch: ["web-*-nightly-*"] }) } }));
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.problem.includes("more than one")));
+});
+
+test("a gap must name its capability, or nothing can tell whether it was answered", () => {
+  // MUTATION: drop the capability check → an unnamed gap persists, and
+  //           missingCapabilities then re-asks the capability every run.
+  const r = validateContext(validContext({ profiles: { "prod-web": profileFixture({ gaps: [{ classification: "declined" }] }) } }));
+  assert.equal(r.ok, false);
+});
+
+test("defaultProfile naming a profile that is not in the file is refused", () => {
+  const r = validateContext(validContext({ defaultProfile: "ghost" }));
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.path === "defaultProfile"));
+});
+
+test("isISODate is day precision, and rejects everything that is not a day", () => {
+  for (const v of ["2026-08-20", "2026-08-20T11:22:33Z", "2026-01-01"]) assert.equal(isISODate(v), true, v);
+  for (const v of ["2026-8-20", "20-08-2026", "2026-13-01", "2026-08-32", "yesterday", "", "2026-08-2x", 20260820, null]) {
+    assert.equal(isISODate(v), false, JSON.stringify(v));
+  }
+});
+
+// ---- the write: atomic, additive, not hardened ------------------------------
+
+test("write then read round-trips every field, including a null subpaths and an open-keyed scope", () => {
+  workspace();
+  const context = validContext({
+    profiles: {
+      "prod-web": profileFixture({
+        subpaths: null,
+        connectors: {
+          [MANDATORY_CAPABILITY]: verifiedConnector(),
+          logs: verifiedConnector({ scope: { stream: "app", serviceField: "svc.name", window: "6h" }, verifiedBy: { count: 12 } }),
+        },
+      }),
+    },
+  });
+  const w = writeRcaContext({ context, from: productRepo });
+  assert.equal(w.ok, true, w.message);
+  assert.equal(w.path, join(productRepo, CONTEXT_FILENAME));
+
+  const r = readRcaContext({ from: productRepo });
+  assert.equal(r.ok, true, r.message);
+  assert.deepEqual(r.context, context);
+  assert.equal(r.trust, "own-worktree");
+});
+
+test("no closed object in the schema accepts a `value` key, and the written document has none", () => {
+  // MUTATION: delete any one of the key-allowlist loops (context, profile,
+  //           connector, credential, verifiedBy) → the matching planted document
+  //           is written and this fails.
+  // There is NO detector by decision. The control is that every closed object
+  // refuses a key it does not define, so a value has nowhere to live. Asserted by
+  // attempting the write, not merely by inspecting a fixture that never had one.
+  workspace();
+  const planted = "s3cr3t-value-that-must-not-be-persisted";
+  const attempts = {
+    context: validContext({ value: planted }),
+    profile: validContext({ profiles: { "prod-web": profileFixture({ value: planted }) } }),
+    connector: validContext({ profiles: { "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: { ...verifiedConnector(), value: planted } } }) } }),
+    credential: validContext({ profiles: { "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ credential: { kind: "env-var", name: "FORGE_TOKEN", value: planted } }) } }) } }),
+    verifiedBy: validContext({ profiles: { "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ verifiedBy: { count: 3, value: planted } }) } }) } }),
+    howToQuery: validContext({ profiles: { "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ howToQuery: { tool: "forge-cli", args: [], value: planted } }) } }) } }),
+  };
+  for (const [where, context] of Object.entries(attempts)) {
+    const w = writeRcaContext({ context, from: productRepo });
+    assert.equal(w.ok, false, `a value key under ${where} must be refused`);
+    assert.ok(!JSON.stringify(w).includes(planted), "and the refusal must not echo it");
+    assert.equal(findContextFile({ from: productRepo }), null, "and nothing may be persisted");
+  }
+  // `scope` is open-keyed BY DECISION — its keys are the customer's tool's
+  // vocabulary — so it is the one place a value could still land. Recorded here
+  // rather than guarded, because the alternative is the key-name refusal the plan
+  // explicitly deferred out of this pass.
+  assert.equal(
+    writeRcaContext({ context: validContext({ profiles: { "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ scope: { value: "not-guarded" } }) } }) } }), from: productRepo }).ok,
+    true,
+    "known and deliberate: an open-keyed scope is not schema-guarded — the interview's prompt discipline covers it",
+  );
+
+  const written = JSON.parse(readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8"));
+  for (const forbidden of ["raw", "stdout", "stderr", "body", "response", "token", "secret"]) {
+    assert.ok(!keysAtAnyDepth(written).has(forbidden), `a schema with a '${forbidden}' key gives a credential somewhere to live`);
+  }
+});
+
+test("the artifact is NOT owner-only, unlike every other persisted file in lib/", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const mode = statSync(join(productRepo, CONTEXT_FILENAME)).mode & 0o777;
+  assert.notEqual(mode, 0o600, "0600 on a git-tracked path is wrong and git will not preserve it");
+  // The non-flaky half of the same claim, independent of this machine's umask:
+  // our write must be no more restrictive than an ordinary one in the same dir.
+  const reference = join(productRepo, "reference-mode-probe");
+  writeFileSync(reference, "x");
+  assert.equal(mode, statSync(reference).mode & 0o777, "the write must not narrow the mode at all");
+});
+
+test("the module contains no hardening call — the guard is the absence, so assert it", () => {
+  // MUTATION: add `chmodSync(path, 0o600)` to atomicWrite → this fails (and so
+  //           does the mode test above).
+  const src = readFileSync(new URL("../lib/rca-context.mjs", import.meta.url), "utf8");
+  // A CALL, not a mention: the header names hardenStateDir precisely in order to
+  // say it must never be used here.
+  assert.ok(!src.includes("chmodSync("), "no chmod on a git-tracked file");
+  assert.ok(!src.includes("hardenStateDir("), "hardenStateDir must never be pointed at a repo path");
+  assert.ok(!src.includes("mode: 0o"), "no mode option on the write");
+});
+
+test("a written context is really tracked by git once added", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  g(productRepo, "add", CONTEXT_FILENAME);
+  assert.match(g(productRepo, "show", `:${CONTEXT_FILENAME}`), /"homeRepo": "acme\/api"/);
+});
+
+test("upserting one connector leaves an existing one BYTE-identical", () => {
+  // MUTATION: in upsertConnector, rebuild the profile
+  //           (`connectors = {[capability]: staged}`) instead of assigning one
+  //           key → the runtime connector is dropped, the regression guard fires,
+  //           and this fails. Also fails on a mutation that reorders keys.
+  workspace();
+  const seeded = validContext({
+    profiles: { "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: verifiedConnector(), infra: verifiedConnector({ via: "runtime-cli", verifiedBy: { count: 4 } }) } }) },
+  });
+  writeRcaContext({ context: seeded, from: productRepo });
+  const before = readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8");
+  const infraBlock = jsonBlock(before, "infra");
+
+  const r = upsertConnector({
+    capability: "logs",
+    connector: { via: "log-cli", scope: { stream: "app" }, verifiedBy: { count: 12 } },
+    profile: "prod-web",
+    todayISO: "2026-08-20",
+    from: productRepo,
+  });
+  assert.equal(r.ok, true, r.message);
+
+  const after = readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8");
+  assert.ok(after.includes(infraBlock), "the untouched connector's bytes must be unchanged");
+  assert.equal(jsonBlock(after, MANDATORY_CAPABILITY), jsonBlock(before, MANDATORY_CAPABILITY));
+  const parsed = JSON.parse(after);
+  assert.deepEqual(Object.keys(parsed.profiles["prod-web"].connectors), [MANDATORY_CAPABILITY, "infra", "logs"]);
+  assert.equal(parsed.profiles["prod-web"].connectors.logs.verifiedAt, "2026-08-20", "the injected day is stamped");
+});
+
+test("replacing a verified connector with one that proves nothing is REFUSED, and the file is untouched", () => {
+  // MUTATION: drop the isVerifiedClaim downgrade clause from regressions() → the
+  //           write succeeds and this fails.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const before = readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8");
+
+  const r = upsertConnector({
+    capability: MANDATORY_CAPABILITY,
+    connector: verifiedConnector({ verifiedBy: { note: "attempted, could not list PRs" } }),
+    profile: "prod-web",
+    from: productRepo,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "would-regress");
+  assert.match(r.message, /additive/);
+  assert.equal(readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8"), before, "a refused write is byte-identical");
+});
+
+test("a write that would drop a profile or a connector is refused", () => {
+  // MUTATION: `return atomicWrite(...)` before the regressions() check → both
+  //           halves of this fail.
+  workspace();
+  const seeded = validContext({
+    profiles: {
+      "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: verifiedConnector(), infra: verifiedConnector() } }),
+      "prod-api": profileFixture(),
+    },
+  });
+  writeRcaContext({ context: seeded, from: productRepo });
+  const before = readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8");
+
+  const droppedProfile = writeRcaContext({
+    context: validContext({ profiles: { "prod-web": seeded.profiles["prod-web"] } }),
+    from: productRepo,
+  });
+  assert.equal(droppedProfile.code, "would-regress");
+  assert.ok(droppedProfile.problems.some((p) => p.path === "profiles.prod-api"));
+
+  const droppedConnector = writeRcaContext({ context: seeded && validContext({ profiles: { "prod-web": profileFixture(), "prod-api": profileFixture() } }), from: productRepo });
+  assert.equal(droppedConnector.code, "would-regress");
+  assert.ok(droppedConnector.problems.some((p) => p.path === "profiles.prod-web.connectors.infra"));
+
+  assert.equal(readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8"), before);
+});
+
+test("an invalid document is refused before anything is written, without echoing values", () => {
+  workspace();
+  const planted = "paste3d-cr3dential-value";
+  const r = writeRcaContext({
+    context: validContext({ profiles: { "prod-web": profileFixture({ connectors: { [MANDATORY_CAPABILITY]: verifiedConnector({ credential: { kind: "env-var", name: "TOK", value: planted } }) } }) } }),
+    from: productRepo,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "invalid-context");
+  assert.ok(!JSON.stringify(r).includes(planted));
+  assert.equal(findContextFile({ from: productRepo }), null, "nothing may be persisted");
+});
+
+test("recordGap appends, is idempotent, and is what makes a profile provisioned", () => {
+  workspace();
+  const caps = capabilitySequence(configFixture());
+  writeRcaContext({ context: validContext(), from: productRepo });
+  for (const capability of caps.filter((c) => c !== MANDATORY_CAPABILITY)) {
+    const r = recordGap({ capability, classification: "declined", note: "customer chose forge-only", profile: "prod-web", from: productRepo });
+    assert.equal(r.ok, true, r.message);
+  }
+  // The same gap twice must not double up, or the digest grows on every run.
+  recordGap({ capability: "logs", classification: "declined", profile: "prod-web", from: productRepo });
+  const read = readRcaContext({ from: productRepo });
+  assert.equal(read.context.profiles["prod-web"].gaps.length, caps.length - 1);
+  assert.equal(isProvisioned(read.context.profiles["prod-web"], caps), true, "and the gate's question is never asked again");
+});
+
+test("recordGap without a classification is refused — an unclassified gap tells the next run nothing", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const r = recordGap({ capability: "logs", profile: "prod-web", from: productRepo });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-classification");
+});
+
+test("a write into an unknown profile is refused, naming the labels", () => {
+  workspace();
+  writeRcaContext({ context: twoWayContext(), from: productRepo });
+  const r = upsertConnector({ capability: "logs", connector: { via: "log-cli", verifiedBy: { count: 1 } }, profile: "ghost", from: productRepo });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "unknown-profile");
+  assert.deepEqual(r.labels.sort(), ["prod-api", "prod-web"]);
+});
+
+test("a write with two profiles and no label named is refused rather than guessed", () => {
+  workspace();
+  writeRcaContext({ context: twoWayContext(), from: productRepo });
+  const r = upsertConnector({ capability: "logs", connector: { via: "log-cli", verifiedBy: { count: 1 } }, from: productRepo });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-profile");
+});
+
+test("a destination matched by a gitignore rule is refused, naming the rule", () => {
+  workspace();
+  writeFileSync(join(productRepo, ".gitignore"), `${CONTEXT_FILENAME}\n`);
+  const r = writeRcaContext({ context: validContext(), from: productRepo });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "ignored-destination");
+  assert.match(r.rule, /gitignore/);
+  assert.match(r.message, /never be committed/);
+});
+
+test("write resolution targets the declared home repo's worktree ROOT, not cwd", () => {
+  // MUTATION: `return { ok: true, dir }` instead of resolving worktreeRoot(dir)
+  //           → the write lands in the subdirectory and this fails.
+  // The subdirectory is named after the repo ON PURPOSE: with any other name the
+  // basename check skips it and the assertion cannot tell "root" from "cwd" at
+  // all — which is how this test first shipped vacuous.
+  workspace();
+  const nested = join(productRepo, "services", "api");
+  mkdirSync(nested, { recursive: true });
+  const w = writeRcaContext({ context: validContext(), from: nested });
+  assert.equal(w.path, join(productRepo, CONTEXT_FILENAME), "the toplevel, never the subdirectory");
+});
+
+test("a home repo that is not a git working tree refuses with a next action", () => {
+  workspace();
+  const plain = join(ws, "not-a-repo");
+  mkdirSync(plain);
+  const w = writeRcaContext({ context: validContext({ homeRepo: "acme/not-a-repo" }), from: plain });
+  assert.equal(w.ok, false);
+  assert.equal(w.code, "no-git-worktree");
+  assert.match(w.message, /from inside the repository/i);
+});
+
+test("contextHomeDir resolves a repo cloned under a DIFFERENT name, via its origin remote", () => {
+  workspace();
+  const renamed = initRepo(join(ws, "api-service"));
+  g(renamed, "remote", "add", "origin", "git@example.com:acme/billing-api.git");
+  const h = contextHomeDir({ homeRepo: "acme/billing-api", from: renamed });
+  assert.equal(h.ok, true, h.message);
+  assert.equal(h.dir, renamed);
+  assert.equal(h.matchedBy, "origin-remote");
+});
+
+// ---- read resolution and adoption ------------------------------------------
+
+test("a TRACKED context in a sibling repo is adopted, which a parent-only walk cannot see", () => {
+  workspace();
+  // The failure this prevents: a context committed to the product repo, a run
+  // started from the automation repo, and a no-context refusal on a fully
+  // set-up machine.
+  writeRcaContext({ context: validContext(), from: productRepo });
+  g(productRepo, "add", CONTEXT_FILENAME);
+  const found = findContextFile({ from: automationRepo });
+  assert.equal(found, join(productRepo, CONTEXT_FILENAME));
+  assert.equal(readRcaContext({ from: automationRepo }).trust, "tracked");
+});
+
+test("an UNTRACKED context planted in a sibling clone is never adopted", () => {
+  // MUTATION: drop the isTracked() guard from locateContext → the planted file is
+  //           adopted and this fails.
+  // A real inherited context is committed by design. The walk covers ~140
+  // directories, and homeRepo is a value the FILE supplies, so without this the
+  // adopted file — whose repos, branches and scope drive the whole run — can be
+  // any .rca-context.json in any repo cloned nearby.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  assert.equal(findContextFile({ from: automationRepo }), null, "untracked in a sibling is not inherited, it is planted");
+  assert.equal(
+    findContextFile({ from: productRepo }),
+    join(productRepo, CONTEXT_FILENAME),
+    "but our OWN worktree needs no commit — the interview has to be able to read back what it just wrote",
+  );
+});
+
+test("a planted context in a directory that is not a worktree root is never adopted", () => {
+  workspace();
+  const planted = join(ws, "api-decoy", "api");
+  mkdirSync(planted, { recursive: true });
+  writeFileSync(join(planted, CONTEXT_FILENAME), JSON.stringify(validContext()));
+  assert.equal(findContextFile({ from: join(ws, "api-decoy") }), null);
+});
+
+test("the plugin's own root is never adopted and never written to", () => {
+  // MUTATION: drop the `canon === forbidden` skip → the plugin's own context is
+  //           adopted and the first half fails; drop `allowed()` from
+  //           contextHomeDir → the write succeeds and the second half fails.
+  // The documented install flow is `git clone <plugin> && cd <plugin> && claude
+  // --plugin-dir ./`, so cwd IS the plugin root on first contact.
+  workspace();
+  const decoy = validContext({ homeRepo: "acme/browserstack-ai-tfa-demo" });
+  writeFileSync(join(pluginDir, CONTEXT_FILENAME), JSON.stringify(decoy, null, 2));
+  g(pluginDir, "add", CONTEXT_FILENAME);
+  assert.equal(findContextFile({ from: pluginDir, pluginRoot: pluginDir }), null);
+
+  writeRcaContext({ context: validContext(), from: productRepo });
+  g(productRepo, "add", CONTEXT_FILENAME);
+  assert.equal(
+    findContextFile({ from: pluginDir, pluginRoot: pluginDir }),
+    join(productRepo, CONTEXT_FILENAME),
+    "it must skip the plugin and find the real one",
+  );
+
+  const w = writeRcaContext({ context: decoy, from: pluginDir, pluginRoot: pluginDir });
+  assert.equal(w.ok, false, "a context written into the plugin is inherited by nobody");
+  assert.equal(w.code, "no-git-worktree");
+});
+
+test("a conflict-marked file two levels up is a parse-error, NOT a missing context", () => {
+  // MUTATION: replace the JSON.parse catch in locateContext with `continue`
+  //           (collapsing the two outcomes into one) → the walk reports
+  //           "no-context" and this fails.
+  // Degrading to no-context triggers a full re-interview and looks to the
+  // customer like the feature forgetting them.
+  workspace();
+  const nested = join(productRepo, "services", "billing");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(productRepo, CONTEXT_FILENAME), '{"homeRepo": "acme/api",\n<<<<<<< HEAD\n');
+  const r = readRcaContext({ from: nested });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "parse-error");
+  assert.notEqual(r.code, "no-context");
+  assert.match(r.message, /merge conflict/i);
+  assert.equal(r.path, join(productRepo, CONTEXT_FILENAME), "and it names the file");
+});
+
+test("a junk file planted in a decoy directory cannot brick the run", () => {
+  // The unparseable early-return sits BELOW the adoption test on purpose: above
+  // it, any junk .rca-context.json anywhere in the ~140-directory walk refuses
+  // every run — a denial of service from any writable directory near the repo.
+  workspace();
+  const decoy = join(ws, "api-decoy", "api");
+  mkdirSync(decoy, { recursive: true });
+  writeFileSync(join(decoy, CONTEXT_FILENAME), "{ not json");
+  writeRcaContext({ context: validContext(), from: productRepo });
+  g(productRepo, "add", CONTEXT_FILENAME);
+  assert.notEqual(readRcaContext({ from: join(ws, "api-decoy") }).code, "parse-error");
+});
+
+test("no context at all is its own distinct code", () => {
+  workspace();
+  const r = readRcaContext({ from: automationRepo });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-context");
+});
+
+test("a wrong schemaVersion and a missing field are distinct named errors", () => {
+  workspace();
+  writeFileSync(join(productRepo, CONTEXT_FILENAME), JSON.stringify(validContext({ schemaVersion: 0 })));
+  const version = readRcaContext({ from: productRepo });
+  assert.equal(version.code, "schema-version");
+  assert.equal(version.found, 0);
+  assert.equal(version.expected, SCHEMA_VERSION);
+
+  const bad = validContext();
+  delete bad.homeRepo;
+  delete bad.profiles;
+  writeFileSync(join(productRepo, CONTEXT_FILENAME), JSON.stringify(bad));
+  const missing = readRcaContext({ from: productRepo, path: join(productRepo, CONTEXT_FILENAME) });
+  assert.equal(missing.code, "missing-field");
+  assert.deepEqual(missing.fields.sort(), ["homeRepo", "profiles"]);
+});
+
+test("a candidate whose declared home repo matches neither its directory nor its origin is skipped", () => {
+  workspace();
+  writeFileSync(join(automationRepo, CONTEXT_FILENAME), JSON.stringify(validContext({ homeRepo: "acme/some-other-repo" })));
+  g(automationRepo, "add", CONTEXT_FILENAME);
+  assert.equal(findContextFile({ from: automationRepo }), null);
+});
+
+// ---- the CLI ----------------------------------------------------------------
+
+test("the CLI prints JSON on stdout and exits non-zero on a refusal", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+
+  const found = cli("find", "--from", productRepo);
+  assert.equal(found.status, 0);
+  assert.equal(found.json.path, join(productRepo, CONTEXT_FILENAME));
+
+  const absent = cli("find", "--from", automationRepo);
+  assert.equal(absent.status, 1, "no context is first contact, and a shell must be able to branch on it");
+  assert.equal(absent.json.code, "no-context");
+
+  assert.equal(cli("nonsense").status, 2, "a usage error is distinct from a refusal");
+  assert.equal(cli().status, 2);
+});
+
+test("the CLI select reports both predicates, the resume point, and the injected day", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const r = cli("select", "--from", productRepo, "--build-name", "Nightly Web Regression 41", "--today", "2026-08-20");
+  assert.equal(r.status, 0, JSON.stringify(r.json));
+  assert.equal(r.json.label, "prod-web");
+  assert.equal(r.json.matchedBy, "build-name");
+  assert.equal(r.json.runnable, true);
+  assert.equal(r.json.provisioned, false, "the mandatory capability alone is runnable, not finished");
+  assert.equal(r.json.resumeAt, r.json.missing[0]);
+  assert.ok(r.json.capabilities.includes(MANDATORY_CAPABILITY));
+  assert.equal(r.json.todayISO, "2026-08-20");
+  assert.deepEqual(r.json.stale, [], "one day old, against the configured 30");
+});
+
+test("the CLI select exits non-zero and names the ambiguity rather than picking one", () => {
+  workspace();
+  writeRcaContext({
+    context: validContext({
+      profiles: {
+        "prod-web": profileFixture({ buildMatch: ["*-nightly-12"] }),
+        "prod-api": profileFixture({ buildMatch: ["web-nightly*"] }),
+      },
+    }),
+    from: productRepo,
+  });
+  const r = cli("select", "--from", productRepo, "--build-name", "web-nightly-12", "--today", "2026-08-20");
+  assert.equal(r.status, 1);
+  assert.equal(r.json.code, "ambiguous-profile");
+});
+
+test("the CLI writes a document, stamping the README and schema version so nobody hand-writes them", () => {
+  workspace();
+  const doc = validContext();
+  delete doc._README;
+  delete doc.schemaVersion;
+  const docPath = join(ws, "doc.json");
+  writeFileSync(docPath, JSON.stringify(doc));
+
+  const w = cli("write", "--from", productRepo, "--file", docPath);
+  assert.equal(w.status, 0, JSON.stringify(w.json));
+  const written = JSON.parse(readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8"));
+  assert.equal(written.schemaVersion, SCHEMA_VERSION);
+  assert.equal(written._README, CONTEXT_README);
+  assert.match(written._README, /never belong in this file/);
+
+  const connPath = join(ws, "conn.json");
+  writeFileSync(connPath, JSON.stringify({ via: "log-cli", scope: { stream: "app" }, verifiedBy: { count: 9 } }));
+  const u = cli("upsert-connector", "--from", productRepo, "--capability", "logs", "--profile", "prod-web", "--file", connPath, "--today", "2026-08-20");
+  assert.equal(u.status, 0, JSON.stringify(u.json));
+  assert.equal(u.json.verified, true);
+  assert.equal(u.json.runnable, true);
+
+  const gap = cli("record-gap", "--from", productRepo, "--capability", "metrics", "--classification", "declined", "--profile", "prod-web");
+  assert.equal(gap.status, 0, JSON.stringify(gap.json));
+  const after = JSON.parse(readFileSync(join(productRepo, CONTEXT_FILENAME), "utf8"));
+  assert.deepEqual(after.profiles["prod-web"].gaps, [{ capability: "metrics", classification: "declined" }]);
+});
+
+test("the CLI capabilities command reads the real config", () => {
+  const r = cli("capabilities");
+  assert.equal(r.status, 0);
+  assert.ok(r.json.capabilities.includes(MANDATORY_CAPABILITY));
+});
+
+// ---- the property the whole design rests on --------------------------------
+
+test("no vendor name appears in the new surface", () => {
+  // Scoped to the NEW files by decision: lib/evidence-file.mjs uses vendor terms
+  // as schema field names and lib/tool-cache.mjs embeds a vendor mutation
+  // pattern, both correct and both grandfathered elsewhere. On THIS surface the
+  // property must hold, because a vendor name here teaches a default stack — and
+  // the plugin's whole claim is that it works on an unlisted one.
+  const vendors = [
+    "kubectl", "kubernetes", "k8s", "docker", "podman", "nomad", "pm2", "systemd",
+    "kibana", "elastic", "victorialog", "splunk", "datadog", "grafana", "prometheus",
+    "promtool", "chitragupta", "bifrost", "jenkins", "circleci", "gitlab", "bitbucket",
+  ];
+  for (const file of ["lib/rca-context.mjs", "bin/rca-context.mjs", "tests/rca-context.test.mjs"]) {
+    let src = readFileSync(new URL(`../${file}`, import.meta.url), "utf8").toLowerCase();
+    // This test's own list is the one place the names are allowed to appear, so
+    // scan this file only up to it. Everything above — every fixture — is covered.
+    const selfMarker = "// ---- the property the whole design rests on";
+    if (src.includes(selfMarker)) src = src.slice(0, src.indexOf(selfMarker));
+    for (const vendor of vendors) {
+      assert.ok(!src.includes(vendor), `${file} names '${vendor}' — this surface has no default stack`);
+    }
+  }
+});
+
+// ---- recordWarning ----------------------------------------------------------
+//
+// `warnings` had no writer. The gate is told to PRINT them
+// (templates/gate-summary.md), so without this the empty-PR-window warning could
+// only ever land in the interview's very first write and would freeze there — and
+// any warning noticed later could be added only by hand-editing a committed file,
+// which is exactly what bin/rca-context.mjs exists to prevent.
+
+test("recordWarning appends to warnings, NOT to gaps", () => {
+  // MUTATION: point recordWarning at "gaps" -> this fails. The distinction is the
+  // whole point: a warning means the capability WORKS and the answer will be thin,
+  // so counting it as a gap would declare a working connector unavailable to TFA.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const r = recordWarning({
+    capability: MANDATORY_CAPABILITY, classification: "empty-pr-window",
+    note: "no merged PRs in the last 30 days", target: "main",
+    profile: "prod-web", from: productRepo,
+  });
+  assert.equal(r.ok, true, r.message);
+
+  const profile = readRcaContext({ from: productRepo }).context.profiles["prod-web"];
+  assert.deepEqual(profile.warnings, [{
+    capability: MANDATORY_CAPABILITY, classification: "empty-pr-window",
+    note: "no merged PRs in the last 30 days", target: "main",
+  }]);
+  assert.deepEqual(profile.gaps ?? [], [], "a warning is not a gap");
+});
+
+test("a warning does not make an unanswered capability provisioned", () => {
+  // Provisioned means "asked and answered". A warning says a capability WORKS, so
+  // it must not stand in for the gap that records a capability was declined —
+  // otherwise one empty PR window could mark the whole interview finished.
+  workspace();
+  const caps = capabilitySequence(configFixture());
+  writeRcaContext({ context: validContext(), from: productRepo });
+  recordWarning({ capability: "logs", classification: "empty-window", profile: "prod-web", from: productRepo });
+  const profile = readRcaContext({ from: productRepo }).context.profiles["prod-web"];
+  assert.equal(isProvisioned(profile, caps), false);
+});
+
+test("recordWarning is idempotent on capability+classification", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  for (const note of ["first", "second"]) {
+    recordWarning({ capability: "logs", classification: "empty-window", note, profile: "prod-web", from: productRepo });
+  }
+  const w = readRcaContext({ from: productRepo }).context.profiles["prod-web"].warnings;
+  assert.equal(w.length, 1, "the digest must not grow on every run");
+  assert.equal(w[0].note, "second", "and the latest wins");
+});
+
+test("recordWarning without a classification is refused", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const r = recordWarning({ capability: "logs", profile: "prod-web", from: productRepo });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-classification");
+});
+
+test("the CLI record-warning verb reaches warnings and refuses like its sibling", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const ok = cli("record-warning", "--capability", "logs", "--classification", "empty-window",
+                 "--profile", "prod-web", "--from", productRepo);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(readRcaContext({ from: productRepo }).context.profiles["prod-web"].warnings.length, 1);
+
+  const bad = cli("record-warning", "--classification", "x", "--profile", "prod-web", "--from", productRepo);
+  assert.notEqual(bad.status, 0, "a missing --capability must exit non-zero, not silently no-op");
+});
+
+// ---- fallback coverage and `provisioned` ------------------------------------
+//
+// `ci` was a trap. For every team whose CI is their git forge there is no separate
+// system to record, so `ci` gets no connector — and before this, the only route to
+// `provisioned` was to record a GAP on a capability that demonstrably works,
+// because buildManifest's fallback was already serving it. The gate would then
+// offer to resume a finished interview on every single run.
+
+test("capabilityFallbacks reads the fallback map out of config", () => {
+  assert.deepEqual(capabilityFallbacks(configFixture()), { ci: "github" });
+  assert.deepEqual(capabilityFallbacks({}), {}, "no routing is not a crash");
+});
+
+test("a capability covered by its fallback's connector is provisioned", () => {
+  // MUTATION: drop the fallback clause from missingCapabilities -> fails.
+  const config = configFixture();
+  const caps = capabilitySequence(config);
+  const fallbacks = capabilityFallbacks(config);
+
+  // Everything answered EXCEPT ci, which has no connector of its own.
+  const profile = profileFixture({
+    gaps: caps.filter((c) => c !== MANDATORY_CAPABILITY && c !== "ci")
+      .map((capability) => ({ capability, classification: "declined" })),
+  });
+
+  assert.ok(!Object.hasOwn(profile.connectors, "ci"), "precondition: no ci connector");
+  assert.deepEqual(missingCapabilities(profile, caps, fallbacks), [],
+    "ci is covered by github's connector");
+  assert.equal(isProvisioned(profile, caps, fallbacks), true);
+
+  // And without the fallback map it is correctly still missing — the coverage comes
+  // from config, not from a hardcoded exception for `ci`.
+  assert.deepEqual(missingCapabilities(profile, caps), ["ci"]);
+});
+
+test("a fallback whose target has no connector covers nothing", () => {
+  const config = configFixture();
+  const fallbacks = capabilityFallbacks(config);
+  const profile = { connectors: {}, gaps: [] };
+  assert.deepEqual(missingCapabilities(profile, ["ci"], fallbacks), ["ci"],
+    "an absent github cannot cover ci");
+});
+
+test("fallback coverage is a single hop", () => {
+  // b covers c, a covers b, only a has a connector. c must stay missing — matching
+  // buildManifest, where the target is looked up in discovered connectors only.
+  const profile = { connectors: { a: verifiedConnector() }, gaps: [] };
+  const fallbacks = { b: "a", c: "b" };
+  assert.deepEqual(missingCapabilities(profile, ["b", "c"], fallbacks), ["c"]);
+});

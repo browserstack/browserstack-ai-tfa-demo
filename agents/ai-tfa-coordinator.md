@@ -387,8 +387,10 @@ Notes:
   in `root_cause`.
 - `asks_skipped` always includes `test_logs` whenever TFA asked for logs.
   `asks_fulfilled` **never** includes `test_logs`.
-- `asks_unavailable` is the evidence-coverage signal the coverage stamp turns
-  into a confidence band.
+- `asks_unavailable` is the evidence-coverage signal: it records what could not be
+  gathered so a RESOLVED RCA built with infra, logs and metrics all unavailable does
+  not read like one built on full evidence. Report it accurately and completely —
+  the dashboard is what weighs it. There is no local confidence stamp to compute.
 - `failed` is the no-parseable-result / no-input case; the orchestrator
   synthesizes a `failed` row if this coordinator dies — keep the block valid.
 

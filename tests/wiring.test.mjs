@@ -93,7 +93,7 @@ test("every exported lib helper appears in the SKILL's API reference", () => {
     "hasTrustworthyPrList", "stalenessOf", "makeEvidenceCache", "assertGithubEntry",
     "replaySubmit", "replayRead",
     "selectRepresentative", "localCloneFor", "hasCommit", "ensureCommit",
-    "classifyCoverage", "coverageStamp", "orderAsks", "routeAsk",
+    "orderAsks", "routeAsk",
     "unavailableCapabilities", "toolCacheDirFor", "cacheKey",
     "isCacheable",
     // tool-cache module internals — agents drive the cache through

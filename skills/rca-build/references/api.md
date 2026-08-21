@@ -169,9 +169,21 @@ readRcaContext({from, pluginRoot, path}) → {ok:true, context, path, raw, trust
     Distinct on purpose. `parse-error` is a THIRD state, not "no context": a
     hand-resolved merge conflict degraded to "no context" would re-interview and
     then overwrite the team's file. Refuse and write nothing.
-    trust: own-worktree · origin-match · tracked · caller-supplied
-contextHomeDir({homeRepo, from, pluginRoot}) → {ok:true, dir, matchedBy} | refusal
-    Resolves through `homeRepo`, so it cannot run before the repos are known.
+    trust: cwd · ancestor · caller-supplied   (found at the invocation directory,
+    at a parent within 3 levels, or at an explicit --path)
+contextDestination({from, pluginRoot}) → {ok:true, dir, matchedBy} | refusal
+    **The destination is the directory the agent was invoked in.** Nothing else —
+    no `homeRepo` lookup, no worktree search, no sibling scan. A customer can
+    predict the path before it is written, which the old resolver could not: on a
+    workspace holding three clones it silently picked one of them. The directory
+    need not be a git repo.
+    The ONE refusal is the plugin's own checkout (`plugin-root-destination`, and
+    `plugin-root-context` on read): the documented install flow leaves cwd there,
+    and a context written there puts the customer's repos, branches and infra scope
+    into the plugin repository.
+    **What this gave up:** a directory is not necessarily a repo, so the file is no
+    longer guaranteed committable and a teammate no longer inherits it by cloning.
+    Inside a repo it is still committable and the gitignore refusal still applies.
 
 writeRcaContext({context, from, pluginRoot, path}) → {ok:true, path} | refusal
     codes: invalid-context · no-home-repo · no-git-worktree · ignore-check-failed

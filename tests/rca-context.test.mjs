@@ -21,7 +21,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -33,7 +33,7 @@ import {
   SCHEMA_VERSION,
   capabilitySequence,
   capabilityFallbacks,
-  contextHomeDir,
+  contextDestination,
   findContextFile,
   isEnvVarName,
   isISODate,
@@ -694,7 +694,7 @@ test("write then read round-trips every field, including a null subpaths and an 
   const r = readRcaContext({ from: productRepo });
   assert.equal(r.ok, true, r.message);
   assert.deepEqual(r.context, context);
-  assert.equal(r.trust, "own-worktree");
+  assert.equal(r.trust, "cwd", "the file is anchored to the invocation directory");
 });
 
 test("no closed object in the schema accepts a `value` key, and the written document has none", () => {
@@ -905,69 +905,12 @@ test("a destination matched by a gitignore rule is refused, naming the rule", ()
   assert.match(r.message, /never be committed/);
 });
 
-test("write resolution targets the declared home repo's worktree ROOT, not cwd", () => {
-  // MUTATION: `return { ok: true, dir }` instead of resolving worktreeRoot(dir)
-  //           → the write lands in the subdirectory and this fails.
-  // The subdirectory is named after the repo ON PURPOSE: with any other name the
-  // basename check skips it and the assertion cannot tell "root" from "cwd" at
-  // all — which is how this test first shipped vacuous.
-  workspace();
-  const nested = join(productRepo, "services", "api");
-  mkdirSync(nested, { recursive: true });
-  const w = writeRcaContext({ context: validContext(), from: nested });
-  assert.equal(w.path, join(productRepo, CONTEXT_FILENAME), "the toplevel, never the subdirectory");
-});
 
-test("a home repo that is not a git working tree refuses with a next action", () => {
-  workspace();
-  const plain = join(ws, "not-a-repo");
-  mkdirSync(plain);
-  const w = writeRcaContext({ context: validContext({ homeRepo: "acme/not-a-repo" }), from: plain });
-  assert.equal(w.ok, false);
-  assert.equal(w.code, "no-git-worktree");
-  assert.match(w.message, /from inside the repository/i);
-});
 
-test("contextHomeDir resolves a repo cloned under a DIFFERENT name, via its origin remote", () => {
-  workspace();
-  const renamed = initRepo(join(ws, "api-service"));
-  g(renamed, "remote", "add", "origin", "git@example.com:acme/billing-api.git");
-  const h = contextHomeDir({ homeRepo: "acme/billing-api", from: renamed });
-  assert.equal(h.ok, true, h.message);
-  assert.equal(h.dir, renamed);
-  assert.equal(h.matchedBy, "origin-remote");
-});
 
 // ---- read resolution and adoption ------------------------------------------
 
-test("a TRACKED context in a sibling repo is adopted, which a parent-only walk cannot see", () => {
-  workspace();
-  // The failure this prevents: a context committed to the product repo, a run
-  // started from the automation repo, and a no-context refusal on a fully
-  // set-up machine.
-  writeRcaContext({ context: validContext(), from: productRepo });
-  g(productRepo, "add", CONTEXT_FILENAME);
-  const found = findContextFile({ from: automationRepo });
-  assert.equal(found, join(productRepo, CONTEXT_FILENAME));
-  assert.equal(readRcaContext({ from: automationRepo }).trust, "tracked");
-});
 
-test("an UNTRACKED context planted in a sibling clone is never adopted", () => {
-  // MUTATION: drop the isTracked() guard from locateContext → the planted file is
-  //           adopted and this fails.
-  // A real inherited context is committed by design. The walk covers ~140
-  // directories, and homeRepo is a value the FILE supplies, so without this the
-  // adopted file — whose repos, branches and scope drive the whole run — can be
-  // any .rca-context.json in any repo cloned nearby.
-  workspace();
-  writeRcaContext({ context: validContext(), from: productRepo });
-  assert.equal(findContextFile({ from: automationRepo }), null, "untracked in a sibling is not inherited, it is planted");
-  assert.equal(
-    findContextFile({ from: productRepo }),
-    join(productRepo, CONTEXT_FILENAME),
-    "but our OWN worktree needs no commit — the interview has to be able to read back what it just wrote",
-  );
-});
 
 test("a planted context in a directory that is not a worktree root is never adopted", () => {
   workspace();
@@ -977,30 +920,6 @@ test("a planted context in a directory that is not a worktree root is never adop
   assert.equal(findContextFile({ from: join(ws, "api-decoy") }), null);
 });
 
-test("the plugin's own root is never adopted and never written to", () => {
-  // MUTATION: drop the `canon === forbidden` skip → the plugin's own context is
-  //           adopted and the first half fails; drop `allowed()` from
-  //           contextHomeDir → the write succeeds and the second half fails.
-  // The documented install flow is `git clone <plugin> && cd <plugin> && claude
-  // --plugin-dir ./`, so cwd IS the plugin root on first contact.
-  workspace();
-  const decoy = validContext({ homeRepo: "acme/browserstack-ai-tfa-demo" });
-  writeFileSync(join(pluginDir, CONTEXT_FILENAME), JSON.stringify(decoy, null, 2));
-  g(pluginDir, "add", CONTEXT_FILENAME);
-  assert.equal(findContextFile({ from: pluginDir, pluginRoot: pluginDir }), null);
-
-  writeRcaContext({ context: validContext(), from: productRepo });
-  g(productRepo, "add", CONTEXT_FILENAME);
-  assert.equal(
-    findContextFile({ from: pluginDir, pluginRoot: pluginDir }),
-    join(productRepo, CONTEXT_FILENAME),
-    "it must skip the plugin and find the real one",
-  );
-
-  const w = writeRcaContext({ context: decoy, from: pluginDir, pluginRoot: pluginDir });
-  assert.equal(w.ok, false, "a context written into the plugin is inherited by nobody");
-  assert.equal(w.code, "no-git-worktree");
-});
 
 test("a conflict-marked file two levels up is a parse-error, NOT a missing context", () => {
   // MUTATION: replace the JSON.parse catch in locateContext with `continue`
@@ -1048,21 +967,22 @@ test("a wrong schemaVersion and a missing field are distinct named errors", () =
   assert.equal(version.found, 0);
   assert.equal(version.expected, SCHEMA_VERSION);
 
+  // `homeRepo` is deliberately NOT required any more: it used to select the write
+  // destination, and the destination is now the invocation directory, so nothing
+  // reads it to decide anything. It stays allowed for a human reading the file.
+  const noHome = validContext();
+  delete noHome.homeRepo;
+  writeFileSync(join(productRepo, CONTEXT_FILENAME), JSON.stringify(noHome));
+  assert.equal(readRcaContext({ from: productRepo }).ok, true, "homeRepo is optional");
+
   const bad = validContext();
-  delete bad.homeRepo;
   delete bad.profiles;
   writeFileSync(join(productRepo, CONTEXT_FILENAME), JSON.stringify(bad));
   const missing = readRcaContext({ from: productRepo, path: join(productRepo, CONTEXT_FILENAME) });
   assert.equal(missing.code, "missing-field");
-  assert.deepEqual(missing.fields.sort(), ["homeRepo", "profiles"]);
+  assert.deepEqual(missing.fields.sort(), ["profiles"]);
 });
 
-test("a candidate whose declared home repo matches neither its directory nor its origin is skipped", () => {
-  workspace();
-  writeFileSync(join(automationRepo, CONTEXT_FILENAME), JSON.stringify(validContext({ homeRepo: "acme/some-other-repo" })));
-  g(automationRepo, "add", CONTEXT_FILENAME);
-  assert.equal(findContextFile({ from: automationRepo }), null);
-});
 
 // ---- the CLI ----------------------------------------------------------------
 
@@ -1293,4 +1213,102 @@ test("fallback coverage is a single hop", () => {
   const profile = { connectors: { a: verifiedConnector() }, gaps: [] };
   const fallbacks = { b: "a", c: "b" };
   assert.deepEqual(missingCapabilities(profile, ["b", "c"], fallbacks), ["c"]);
+});
+
+// ---- the destination is the invocation DIRECTORY ----------------------------
+//
+// This block replaces seven tests of a resolver that no longer exists. The old
+// rule took the declared `homeRepo`, searched ~140 candidate directories for one
+// whose basename or `origin` remote matched, checked git-tracked-ness to decide
+// which of several nearby files to adopt, and refused when nothing matched.
+//
+// The new rule is: the directory you invoked from. It is predictable before the
+// write happens, which the old rule was not — on a workspace holding three clones
+// it silently picked one of them.
+//
+// What that gave up, recorded so it is a decision and not an accident: a directory
+// is not necessarily a repo, so the file is no longer guaranteed committable, and a
+// teammate no longer inherits it by cloning.
+
+test("the destination is the invocation directory, not a repo root", () => {
+  // MUTATION: resolve through homeRepo again -> fails. `sub` is INSIDE a worktree
+  // whose root is elsewhere, and the file must still land in `sub`.
+  workspace();
+  const sub = join(productRepo, "services", "billing");
+  mkdirSync(sub, { recursive: true });
+
+  const w = writeRcaContext({ context: validContext(), from: sub });
+  assert.equal(w.ok, true, w.message);
+  assert.equal(w.path, join(sub, CONTEXT_FILENAME), "lands in cwd, not the worktree root");
+  assert.ok(!existsSync(join(productRepo, CONTEXT_FILENAME)), "and not at the root");
+});
+
+test("a directory that is not a git repo at all is a valid destination", () => {
+  // The proving run hit exactly this: the agent was invoked in a workspace folder
+  // holding three clones, which is not itself a repo. The old rule could not write
+  // there and reached into a sibling clone instead.
+  workspace();
+  const plain = join(ws, "not-a-repo");
+  mkdirSync(plain, { recursive: true });
+  const w = writeRcaContext({ context: validContext(), from: plain });
+  assert.equal(w.ok, true, w.message);
+  assert.equal(w.path, join(plain, CONTEXT_FILENAME));
+  assert.equal(readRcaContext({ from: plain }).ok, true, "and it reads back");
+});
+
+test("a sibling clone's context is NOT consulted", () => {
+  // The inverse of a test that used to assert adoption. Siblings were searched to
+  // find a context committed to another repo; with a cwd-anchored file there is
+  // nothing to adopt, and reaching sideways would mean running against another
+  // directory's answers.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const other = automationRepo;
+  mkdirSync(other, { recursive: true });
+  const r = readRcaContext({ from: other });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-context", "a sibling's file must not be picked up");
+});
+
+test("a parent directory's context IS found, so a subdirectory still works", () => {
+  // The one part of the walk worth keeping: someone cd'd into a package inside the
+  // directory they set up. MUTATION: drop the upward walk -> fails.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const deep = join(productRepo, "services", "billing");
+  mkdirSync(deep, { recursive: true });
+  const r = readRcaContext({ from: deep });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.trust, "ancestor");
+});
+
+test("the plugin's own checkout is refused for both reading and writing", () => {
+  // The one directory cwd is never the right answer for: the documented install
+  // flow leaves cwd inside the plugin clone, and a context there would put the
+  // customer's repos, branches and infra scope into the plugin repository.
+  //
+  // MUTATION: drop the pluginRoot check in contextDestination, or the `forbidden`
+  // branch in readRcaContext -> one of these fails.
+  workspace();
+  const plugin = pluginDir;
+
+  const w = writeRcaContext({ context: validContext(), from: plugin, pluginRoot: plugin });
+  assert.equal(w.ok, false);
+  assert.equal(w.code, "plugin-root-destination");
+  assert.ok(!existsSync(join(plugin, CONTEXT_FILENAME)), "and nothing was written");
+
+  // Even a file already sitting there is refused rather than read.
+  writeFileSync(join(plugin, CONTEXT_FILENAME), JSON.stringify(validContext()));
+  const r = readRcaContext({ from: plugin, pluginRoot: plugin });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "plugin-root-context");
+});
+
+test("contextDestination names how it resolved, so the gate can print it", () => {
+  workspace();
+  const plain = join(ws, "somewhere");
+  mkdirSync(plain, { recursive: true });
+  const d = contextDestination({ from: plain });
+  assert.deepEqual(d, { ok: true, dir: realpathSync(plain), matchedBy: "invocation-directory" });
+  assert.equal(contextDestination({ from: join(ws, "nope-not-here") }).code, "no-directory");
 });

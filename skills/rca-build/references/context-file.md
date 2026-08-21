@@ -26,21 +26,36 @@ What goes *in* the file is judgement; where it goes is not.
 
 ## Where it lives, and how it is found
 
-One file, at the **working-tree root of the repo the document names as
-`homeRepo`**. Resolution from the invocation directory walks `.`, `..`, `../..`
-**plus each level's immediate child directories** — clones sit as siblings under a
-workspace root, so an upward-only walk misses a context committed to the sibling
-product repo while the run was started from the automation repo.
+**One file, in the directory the agent was invoked in.** That is the whole rule.
+Resolution reads `.rca-context.json` there, then walks up at most three levels so
+that running from a subdirectory of the same project still finds it.
 
-Four guards make that wide walk safe, and all four are in the resolver rather than
-in prose you have to remember:
+That directory **does not have to be a git repo.** A workspace folder holding
+several clones is a normal place to work, and it is where the file belongs if that
+is where you are.
 
-| Guard | Why |
-|---|---|
-| A candidate outside your own worktree must be **tracked by git** | A real inherited context is committed by design. `homeRepo` is a value the *file* supplies and it drives the whole run, so an untracked file planted in any nearby clone would otherwise be adopted. Your **own** worktree needs no commit — the interview has to read back what it just wrote |
-| The candidate's `homeRepo` must match its directory name or its `origin` remote | A context describing some other repo is not this repo's context |
-| The candidate must sit at a **worktree root** | A file in a subdirectory is a copy, not the context |
-| **The plugin's own root is never adopted and never written to** | The documented install flow is `git clone <plugin> && cd <plugin> && claude --plugin-dir ./`, so cwd *is* the plugin root on first contact. A context written there is inherited by nobody. There is no override |
+This replaced a resolver that took the `homeRepo` the document declared, searched
+every level up *plus each level's children*, and used git-tracked-ness and the
+`origin` remote to decide which of several nearby files to adopt. All of that
+answered "which repo owns this context". The answer is now "no repo owns it — the
+directory you are working in does", so there is nothing to adopt and nothing to
+guess. It is also predictable: a customer can see where the file will land before it
+lands, which the old rule could not offer. Run in a workspace of three clones, it
+silently picked one of them.
+
+**What that gave up, so it is a decision and not an accident:** a directory is not
+necessarily a repo, so the file is no longer guaranteed to be committable, and a
+teammate no longer inherits it just by cloning. Inside a repo it is still
+committable and the gitignore refusal below still applies — so tell the customer to
+commit it when they are in one. Outside a repo, say plainly that it is local to that
+directory.
+
+**One refusal, and it has no override: the plugin's own checkout.** The documented
+install flow is `git clone <plugin> && cd <plugin> && claude --plugin-dir ./`, so
+cwd *is* the plugin root on a first run. A context there would put the customer's
+repos, branches and infra scope into the plugin's repository, where any `git add -A`
+they run would stage it. Writing is refused (`plugin-root-destination`) and a file
+already sitting there is refused rather than read (`plugin-root-context`).
 
 ```
 node <pluginRoot>/bin/rca-context.mjs find   --from <dir>
@@ -48,11 +63,12 @@ node <pluginRoot>/bin/rca-context.mjs read   --from <dir>
 node <pluginRoot>/bin/rca-context.mjs select --from <dir> --build-name "<name>" [--profile <label>]
 ```
 
-**`--from` matters on first contact.** It defaults to cwd, which on the documented
-install flow is the plugin root — pass the customer's worktree explicitly.
+**`--from` defaults to cwd**, which is normally exactly right. Pass it explicitly
+only when the agent's cwd is not the directory the customer is working in — the
+documented install flow, where cwd is the plugin checkout, is the case that matters.
 
-`read` reports a **`trust`** field: `own-worktree` (you wrote it, it may be
-uncommitted) or `tracked` (inherited from a teammate). `select` adds `label`,
+`read` reports a **`trust`** field: `cwd` (found where you are), `ancestor` (found
+within three levels up) or `caller-supplied` (an explicit `--path`). `select` adds `label`,
 `matchedBy`, `alsoMatched`, `runnable`, `provisioned`, `capabilities`, `missing`,
 `resumeAt`, `stale`, `ages` and the injected `todayISO` — all **outputs, not fields
 in the file**. `resumeAt` in particular is *derived* (`missing[0]`); resume is never
@@ -126,7 +142,7 @@ on an older file is told which it is.
 |---|---|---|
 | `_README` | The file is reviewed in PRs by people who never ran the interview; the one thing they must know is that credential values do not belong in it | humans in a diff |
 | `schemaVersion` | An integer, so a future shape change is a named refusal rather than a misread | `read`, which refuses a version it does not expect |
-| `homeRepo` | Names the repo the file belongs to, so a context describing a *different* repo is skipped rather than adopted during the sibling walk | the resolver's corroboration guard, and the write-target resolver |
+| `homeRepo` | **Optional, and read by nothing.** It used to select the write destination; the destination is now the invocation directory. Kept because it is a useful line for a human opening the file, and `repos.product` already carries the same information for code | nothing — human readers only |
 | `defaultProfile` | The single-purpose fallback for **"the build name is genuinely unknown"** — nothing else | `select`, step 5 only. It is deliberately **not** consulted when a known build name matches nothing |
 | `profiles` | Labelled setups in one file, because one team runs several environments and a flat blob forces one to win | everything |
 
@@ -240,7 +256,7 @@ Gaps are **append-only and idempotent**: recording the same gap twice does not
 double it, or the digest would grow on every run.
 
 ```
-node <pluginRoot>/bin/rca-context.mjs record-gap --from <homeRepo worktree> \
+node <pluginRoot>/bin/rca-context.mjs record-gap --from <the invocation directory> \
      --capability <c> --classification <k> [--note <one line>] [--target <t>] --profile <label>
 ```
 
@@ -347,7 +363,8 @@ error. Prose goes to stderr so stdout stays parseable.
 | `would-regress` | The write would drop a profile, drop a connector, or replace a verified connector with an unverified one | The file is byte-identical. Fix the document, not the guard: writes are **additive** |
 | `invalid-context` | The document failed validation — a closed-key violation, a bad credential, a joined `howToQuery` | Refused **before** anything is written, and it names *where* without echoing *what* |
 | `ignored-destination` | A `.gitignore` rule matches the destination | Refuse: an ignored context can never be committed, so it can never be inherited |
-| `no-git-worktree` | The `homeRepo` does not resolve to a git working tree here — or the target is the plugin's own root | Re-run from inside the repository, or resolve the clone path (T2b/T3) |
+| `plugin-root-destination` | The invocation directory IS the plugin's own checkout | Run from the customer's working directory, with the plugin loaded via `--plugin-dir` |
+| `no-directory` | The invocation directory does not exist | Nothing to fix in the file; the caller passed a bad `--from` |
 
 Two of these are load-bearing enough to repeat: **`parse-error` is not
 `no-context`**, and a refused write leaves the committed file **byte-identical**.

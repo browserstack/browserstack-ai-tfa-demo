@@ -129,14 +129,13 @@ capability and what "verified" means for each.
 
 Four rules that live here because they are not negotiable:
 
-- **Check that a write target can exist before spending a question** (T2b). The
-  documented install flow is `git clone <plugin> && cd <plugin> && claude
-  --plugin-dir ./`, so **cwd is the plugin root on first contact** — and the plugin
-  root is never a valid home for the context. T2b cannot fully resolve the
-  destination (that needs `homeRepo`, which T3 supplies); what it can establish is
-  whether ANY non-plugin git worktree is reachable at all. If none is, the local
-  clone path becomes part of T3's question. Discovering this at write time means the
-  customer answered everything for nothing.
+- **The context lands in the directory you were invoked in** (T2b). Not in a repo
+  chosen by lookup — the directory itself, whether or not it is a git repo. The one
+  refusal is the plugin's own checkout: the documented install flow leaves cwd there
+  and a context written there puts the customer's scope into the plugin repository.
+  If that is where you are, say so and ask which directory is theirs; it costs part
+  of T3's question rather than a failed write after the whole interview.
+
 - **The repo pre-read runs against the CUSTOMER's worktree, never this plugin's**
   (T3b, after T3 resolves the repos). Our own repo names tools we do not want to
   suggest as their stack.

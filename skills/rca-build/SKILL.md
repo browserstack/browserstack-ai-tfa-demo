@@ -44,13 +44,22 @@ or it does not.
 
 | Phase | Precondition | `AskUserQuestion` budget |
 |---|---|---|
-| FIRST CONTACT (Step 0b) | no context file, or the selected profile has no verified GitHub connector | at most **8** — T1(1) + T3(1) + T4(≤2) + T5(1) + T6(1) + T7(≤1) + T8(1) |
+| FIRST CONTACT (Step 0b) | no context file, or the selected profile has no verified GitHub connector | **8**, plus at most 2 further T8 passes = **10** hard |
 | THE GATE (Step 1) | a runnable profile exists | at most **1**, consolidated, at gate close |
 | AFTER GATE CLOSE (Steps 2–6, Resume) | always | **0. Forever. No exception.** |
 
 Before any `AskUserQuestion` call, state which row you are in **by naming the
 file's state** — not by asserting a phase. If you cannot point at the file state
 that puts you in a row, you are in the row below it.
+
+The arithmetic, because a ceiling nobody can compute is not a ceiling:
+T1(1) + T3(1) + T4(≤2) + T5(1) + T6(1) + T7(≤1) + T8(1) = 8, and T8 may be
+re-entered **at most twice more** — for a correction, or for the one place the
+customer may deliberately spend more: closing a named gap. On the third T8 entry
+the extension option is gone, so the loop terminates by construction rather than by
+judgement. A customer who wants to go further re-runs `/rca-build`, which resumes at
+the first capability with neither a connector nor a gap — the profile is already on
+disk.
 
 The GitHub retry loop in Step 0b is never cut short by this ceiling: GitHub is the
 one capability a run cannot proceed without, so its re-asks are inside the budget

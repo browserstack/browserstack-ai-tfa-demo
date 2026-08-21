@@ -491,14 +491,42 @@ SETUP — review before I commit it
   "options": [
     {"label": "Write it", "description": "commits to <path>; teammates inherit it"},
     {"label": "Correct a field", "description": "name the field and the value in the same reply"},
+    {"label": "Close <gap>, <gap> — <N> more questions", "description": "<what each one buys, concretely>"},
     {"label": "Discard", "description": "keeps what already verified; nothing new is written"}
   ]
 }]}
 ```
 
-**A correction is a re-verify, not a new question.** The field and its new value
-arrive together in that one reply, so the loop is: re-run that capability's proving
-read, re-print the digest, and re-ask *this* call. It never becomes a ninth question.
+**The third option is offered only when there is something specific to close, and
+it is named by VALUE, not by count.** "Want to answer more questions?" asks the
+customer to price something they cannot see. "`metrics` is a gap — 2 questions and
+pressure-vs-functional becomes distinguishable on this build" is a decision they can
+actually make. Build the label from the digest's own gap lines: which capabilities
+are gaps, what each would cost, and what each buys. If nothing is closable, the
+option is absent — never offered as a bare "anything else?".
+
+This is also where a dropped `Something else` goes. When T5's option cap forced the
+free-form entry out (four real candidates fill the render budget), the open
+"anything else do you have?" question has not been asked at all — and that is the
+one question that catches a stack nobody wrote down. Offer it here, by name.
+
+**T8 is a bounded loop, and this is the one place the budget can grow.** A
+correction or a gap-closing round re-runs the relevant proving read, re-prints the
+digest, and re-asks *this* call — which IS another `AskUserQuestion`, so pretending
+otherwise is how the ceiling gets exceeded in practice. A real run spent three of
+its five questions here.
+
+So: **T8 is entered at most three times.** On the third entry the extension option
+is gone and only `Write it` / `Correct a field` / `Discard` remain, so it terminates
+by construction rather than by the agent's judgement. Worst case for the whole
+interview is therefore **10**: the 8 of § The question budget, plus two further T8
+passes. Still arithmetic, still checkable — which is the property that matters, and
+the reason the ceiling is a number at all.
+
+A customer who wants to keep going past that has a better route than more questions
+in one sitting: the profile is already on disk and every capability persists the
+moment it verifies, so re-running `/rca-build` resumes at the first capability with
+neither a connector nor a gap. Say that instead of asking a fourth time.
 
 Then apply any correction to the portable fields with a final `write` (additive —
 the CLI refuses a document that would drop a profile, drop a connector, or replace

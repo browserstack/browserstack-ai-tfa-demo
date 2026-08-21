@@ -1312,3 +1312,62 @@ test("contextDestination names how it resolved, so the gate can print it", () =>
   assert.deepEqual(d, { ok: true, dir: realpathSync(plain), matchedBy: "invocation-directory" });
   assert.equal(contextDestination({ from: join(ws, "nope-not-here") }).code, "no-directory");
 });
+
+// ---- connector.source: what KIND of thing serves this, and where it came from --
+//
+// `via` says what the tool is, in the customer's words. It could not say whether
+// there was a PROCEDURE behind it. A connector-shaped skill under the customer's
+// `.claude/skills/` carries a repo map, branch conventions and query conventions a
+// raw CLI does not, and a coordinator behaves differently when one exists — but the
+// interview read those skills and then lost the fact that it had, so a later run
+// could not re-read one, notice it had changed, or follow it.
+
+test("a skill source must record its path, or it cannot be re-read later", () => {
+  // MUTATION: drop the path requirement for kind:"skill" -> fails. Without a path
+  // the record says "a skill informed this" and gives no way back to it, which is
+  // strictly worse than not recording it at all.
+  const withPath = validateConnector({ ...verifiedConnector(),
+    source: { kind: "skill", path: ".claude/skills/logs/SKILL.md" } });
+  assert.equal(withPath.ok, true, JSON.stringify(withPath.problems));
+
+  const noPath = validateConnector({ ...verifiedConnector(), source: { kind: "skill" } });
+  assert.equal(noPath.ok, false);
+  assert.match(noPath.problems[0].path, /source\.path$/);
+});
+
+test("only a skill carries a path; a cli or mcp is named by via", () => {
+  // A path on an mcp/cli record is a second, unmaintained name for the same thing —
+  // the drift this schema keeps closing everywhere else.
+  assert.equal(validateConnector({ ...verifiedConnector(), source: { kind: "mcp" } }).ok, true);
+  assert.equal(validateConnector({ ...verifiedConnector(), source: { kind: "cli" } }).ok, true);
+  const stray = validateConnector({ ...verifiedConnector(), source: { kind: "cli", path: "/usr/bin/x" } });
+  assert.equal(stray.ok, false);
+});
+
+test("source is optional, and its kind is a closed set", () => {
+  // Optional: a context written before this field existed stays valid, and a
+  // connector the agent could not classify is better left unmarked than guessed.
+  assert.equal(validateConnector(verifiedConnector()).ok, true);
+  assert.equal(validateConnector({ ...verifiedConnector(), source: { kind: "vibes" } }).ok, false);
+  assert.equal(validateConnector({ ...verifiedConnector(), source: { kind: "mcp", server: "x" } }).ok, false,
+    "closed object, like every other in this schema");
+  assert.equal(validateConnector({ ...verifiedConnector(), source: "skill" }).ok, false);
+});
+
+test("a source survives a write/read round-trip and an upsert", () => {
+  workspace();
+  const ctx = validContext();
+  ctx.profiles["prod-web"].connectors.github.source = { kind: "cli" };
+  assert.equal(writeRcaContext({ context: ctx, from: productRepo }).ok, true);
+
+  const source = { kind: "skill", path: ".claude/skills/logs/SKILL.md" };
+  const up = upsertConnector({
+    capability: "logs", connector: { ...verifiedConnector(), source },
+    profile: "prod-web", from: productRepo, todayISO: "2026-08-21",
+  });
+  assert.equal(up.ok, true, up.message);
+
+  const back = readRcaContext({ from: productRepo }).context.profiles["prod-web"].connectors;
+  assert.deepEqual(back.logs.source, source);
+  assert.deepEqual(back.github.source, { kind: "cli" }, "and the existing one is untouched");
+});

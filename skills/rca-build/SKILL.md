@@ -187,11 +187,16 @@ the profile records — `discovered` is `[{capability, via}]`. It also resolves
 `fallbackCapability`, which is how a team whose CI *is* their git forge keeps
 gathering `ci` evidence without declaring a phantom gap to TFA.
 
-A connector-shaped skill under `.claude/skills/` is **one additional source the
-interview may have used**, nothing more. Its absence is the normal case and is
-**never** a warning — the previous version of this file emitted
-"scope probes missing" for every customer who did not have BrowserStack-authored
-skills on disk, which is all of them.
+A connector-shaped skill under `.claude/skills/` is a **procedure**, not a hint: it
+carries the repo map, branch conventions and query conventions its author wrote
+down, which is the knowledge that makes attribution accurate and that no probe can
+recover. When the profile records `source: {kind: "skill", path}` for a capability,
+**read that file and follow it** — and if it has changed since `verifiedAt`, prefer
+what it now says over the stored `howToQuery`.
+
+Its absence is the normal case and is **never** a warning. The previous version of
+this file emitted "scope probes missing" for every customer without
+BrowserStack-authored skills on disk, which is all of them.
 
 **GitHub is mandatory.** A GitHub capability that fails replay here **refuses the
 run**: culprit-PR attribution is this plugin's primary deliverable and cannot be

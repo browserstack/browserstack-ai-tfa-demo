@@ -142,6 +142,7 @@ on an older file is told which it is.
 |---|---|---|
 | `_README` | The file is reviewed in PRs by people who never ran the interview; the one thing they must know is that credential values do not belong in it | humans in a diff |
 | `schemaVersion` | An integer, so a future shape change is a named refusal rather than a misread | `read`, which refuses a version it does not expect |
+| `connectors.<cap>.source` | `{kind: "skill"\|"mcp"\|"cli"\|"api", path?}`. Whether there is a *procedure* behind the tool. A skill carries a repo map and query conventions a raw CLI does not; `via` is free text and could not distinguish them. `path` is required for a skill (so a later run can re-read it and notice it changed) and refused for the rest (`via` already names them) | Part A, when deciding whether to follow a skill; a coordinator's gather |
 | `homeRepo` | **Optional, and read by nothing.** It used to select the write destination; the destination is now the invocation directory. Kept because it is a useful line for a human opening the file, and `repos.product` already carries the same information for code | nothing — human readers only |
 | `defaultProfile` | The single-purpose fallback for **"the build name is genuinely unknown"** — nothing else | `select`, step 5 only. It is deliberately **not** consulted when a known build name matches nothing |
 | `profiles` | Labelled setups in one file, because one team runs several environments and a flat blob forces one to win | everything |

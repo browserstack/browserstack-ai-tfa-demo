@@ -171,17 +171,55 @@ drives profile selection on every later run.
 
 ## T2 — session inventory only
 
-No question, no repo reading. Enumerate what this session has: MCP servers and
-their tools, connector-shaped skills, CLIs already established by tier 1. The repo
-pre-read waits for T3b because there is no customer worktree to read yet — see
-§ Provenance for why reading the one under cwd is worse than reading nothing.
+No question, no repo reading. Enumerate what this session has, in **one parallel
+batch**:
+
+1. **MCP servers and their tools** — already in your tool list. Nothing to run.
+2. **CLIs** established by tier 1 of § Provenance.
+3. **Connector-shaped skills.** Glob these four, because a skill can be
+   project-scoped, workspace-scoped or personal, and only the first is obvious:
+
+   ```
+   .claude/skills/*/SKILL.md
+   ../.claude/skills/*/SKILL.md
+   ../../.claude/skills/*/SKILL.md
+   ~/.claude/skills/*/SKILL.md
+   ```
+
+   Read the frontmatter and any capability declaration of each hit. **Absence is
+   the normal case and is never a warning** — most customers have none.
+
+**A skill is not a hint; it is a procedure.** An MCP tool or a CLI tells you a
+capability is reachable. A connector-shaped skill additionally carries the repo map,
+the branch conventions and the query conventions its author wrote down — which is
+exactly the knowledge that makes attribution accurate and that no probe can
+recover. So when a skill declares a capability:
+
+- take its scope as **pre-filled**, and confirm rather than ask (T5/T6);
+- still **verify it with a live read** — a declaration is not evidence, and treating
+  one as proof is the defect that made the old gate trust scope probes it never ran;
+- record `source: {kind: "skill", path: "<the SKILL.md you read>"}` on that
+  connector, so a later run can re-read it and notice it changed. Without the path
+  the record says "a skill informed this" and gives no way back to it.
+
+For everything else, record `source: {kind: "mcp" | "cli" | "api"}` — no path, since
+`via` already names it.
+
+There is deliberately **no script for this.** Globbing four paths and judging
+whether a skill is about your capability is reading and judgement, which is yours;
+a discovery module would only be a list of places and patterns that goes stale.
+
+The repo pre-read waits for T3b because there is no customer worktree to read yet —
+see § Provenance for why reading the one under cwd is worse than reading nothing.
 
 ## T2b — resolve the write target
 
-No question. `.rca-context.json` lands at the **worktree root of the repo the
-document declares as `homeRepo`**, and **the plugin root is never a valid home** —
-a context written there is inherited by nobody and the CLI refuses it
-(`code: "no-git-worktree"`). Run:
+No question. `.rca-context.json` lands in **the directory you were invoked in** —
+not a repo chosen by lookup, and it need not be a git repo at all. The one refusal
+is the plugin's own checkout: the documented install flow leaves cwd there, and a
+context written there stages the customer's scope into the plugin's repository
+(`code: "plugin-root-destination"`, and `plugin-root-context` when one is already
+sitting there). Run:
 
 ```
 node <pluginRoot>/bin/rca-context.mjs find --from <a candidate customer worktree>
@@ -213,7 +251,7 @@ call.
    "header": "Branches", "multiSelect": false,
    "options": [{"label": "main → main", "description": "default branch of acme/api; no build metadata yet"},
                {"label": "main → release/24.9", "description": "release/24.9 is checked out here"}]},
-  {"question": "Where is the product repo cloned on this machine? I write the context to its worktree root.",
+  {"question": "Which directory should I set up? The context file lands there, and I did not find one here.",
    "header": "Clone path", "multiSelect": false,
    "options": [{"label": "/Users/me/src/api", "description": "sibling of this plugin clone"}]}
 ]}
@@ -247,19 +285,23 @@ See `capabilities.md` § github for what counts. `gh auth status` and a version
 banner are **route checks, not verification** — they prove a binary exists and say
 nothing about whether this credential can see that repo.
 
-**On pass, write the document immediately.** T4 is the first moment at which
-`homeRepo`, `repos`, `branches` and one verified connector are all known, and the
-CLI's per-connector verbs read a context that already exists:
+**On pass, write the document immediately.** T4 is the first moment at which the
+repos, the branches and one verified connector are all known, and the CLI's
+per-connector verbs read a context that already exists:
 
 ```
-node <pluginRoot>/bin/rca-context.mjs write --from <homeRepo worktree> --file <doc.json>
+node <pluginRoot>/bin/rca-context.mjs write --from <the directory being set up> --file <doc.json>
 ```
 
-`homeRepo` must be a repo whose local worktree you are writing into — the resolver
-corroborates it against the directory name or the `origin` remote and skips any
-context whose `homeRepo` matches neither. Print the path. From here on every
-capability is persisted the moment it verifies, so abandonment costs the customer
-nothing and there is no partial state to model.
+Print the path, and say whether that directory is a git repo: inside one, tell them
+to commit the file so a teammate inherits it; outside one, say plainly that it is
+local to that directory. From here on every capability is persisted the moment it
+verifies, so abandonment costs the customer nothing and there is no partial state to
+model.
+
+`homeRepo` is optional and read by nothing — record it if you like, as a line for a
+human opening the file. It used to select the destination; the destination is now
+the directory you were invoked in.
 
 **On failure, classify before you re-ask.** An unclassified loop re-asks a repo
 name at an auth problem.
@@ -355,9 +397,9 @@ immediately.
   GitHub is the only capability that loops.**
 
 ```
-node <pluginRoot>/bin/rca-context.mjs upsert-connector --from <homeRepo worktree> \
+node <pluginRoot>/bin/rca-context.mjs upsert-connector --from <the directory being set up> \
      --capability <c> --profile <label> --file <conn.json>
-node <pluginRoot>/bin/rca-context.mjs record-gap --from <homeRepo worktree> \
+node <pluginRoot>/bin/rca-context.mjs record-gap --from <the directory being set up> \
      --capability <c> --profile <label> --classification <class> [--note <one line>] [--target <t>]
 ```
 

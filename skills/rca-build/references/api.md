@@ -171,6 +171,18 @@ readRcaContext({from, pluginRoot, path}) → {ok:true, context, path, raw, trust
     then overwrite the team's file. Refuse and write nothing.
     trust: cwd · ancestor · caller-supplied   (found at the invocation directory,
     at a parent within 3 levels, or at an explicit --path)
+
+connectors.<cap>.source: {kind: "skill"|"mcp"|"cli"|"api", path?}
+    What KIND of thing serves this capability. `via` says what the tool is; this
+    says whether there is a PROCEDURE behind it. A connector-shaped skill carries a
+    repo map and query conventions a raw CLI does not, so a coordinator behaves
+    differently when one exists — and `via` being free text made a skill and an MCP
+    server named after the same backend indistinguishable.
+    `path` is REQUIRED for kind "skill" and refused for the others: a skill is a
+    file we must be able to go back to (to re-read, and to notice it changed),
+    while an mcp/cli/api is named by `via` and a second name would only drift.
+    Optional overall — a connector the agent could not classify is better left
+    unmarked than guessed.
 contextDestination({from, pluginRoot}) → {ok:true, dir, matchedBy} | refusal
     **The destination is the directory the agent was invoked in.** Nothing else —
     no `homeRepo` lookup, no worktree search, no sibling scan. A customer can

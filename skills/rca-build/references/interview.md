@@ -207,6 +207,18 @@ recover. So when a skill declares a capability:
   connector, so a later run can re-read it and notice it changed. Without the path
   the record says "a skill informed this" and gives no way back to it.
 
+  **Write the path relative to the context file** when the skill sits inside that
+  directory's tree — `.claude/skills/logs/SKILL.md`. That is the portable case: a
+  teammate who clones the repo gets the same skill at the same place.
+
+  A skill found at `../.claude/skills/…` or `~/.claude/skills/…` is **machine-local**
+  by construction — the first assumes the same workspace layout, the second is one
+  person's home. Record it as you read it anyway: re-verification happens on the
+  machine that will use it, so a local path is genuinely useful there. Just say at
+  T8 that the capability is backed by a local skill, so nobody is surprised when a
+  teammate is asked about it. An unresolvable path is not an error — it degrades to
+  a targeted re-ask for that one capability, exactly like a missing tool.
+
 For everything else, record `source: {kind: "mcp" | "cli" | "api"}` — no path, since
 `via` already names it.
 

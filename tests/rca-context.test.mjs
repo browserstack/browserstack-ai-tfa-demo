@@ -1497,3 +1497,119 @@ test("the CLI verb writes knowledge and refuses without its own flags", () => {
                   "--profile", "prod-web", "--from", productRepo);
   assert.notEqual(bad.status, 0, "a missing --artifact-path must exit non-zero");
 });
+
+// ---- project is the coarse bound, and it is checked first -------------------
+//
+// `--build-name` was structurally always empty on the path that matters: the
+// invocation carries a build ID, profile selection matches on the NAME, and nothing
+// fetched the name before selecting. So every multi-profile context resolved to
+// whichever profile happened to be `defaultProfile`, and no refusal in selectProfile
+// ever fired. Fetching the insights first supplies both names — and once the project
+// is available it has to be USED, or it is another field read by nothing.
+
+test("two projects running near-identically named suites do not select each other", () => {
+  // MUTATION: drop the projectMatch filter (labels = allLabels) -> the two buildMatch
+  //           patterns tie on specificity, so this becomes an ambiguous refusal and
+  //           fails. That tie is the real-world case: the same suite name in two
+  //           projects. Without the filter the ONLY outcomes are refuse or coin-toss.
+  const context = validContext({
+    profiles: {
+      "web-nightly": profileFixture({ buildMatch: ["Nightly*"], projectMatch: ["Web Platform"] }),
+      "api-nightly": profileFixture({ buildMatch: ["Nightly*"], projectMatch: ["API Platform"] }),
+    },
+  });
+
+  const web = selectProfile({ context, buildName: "Nightly Regression", projectName: "Web Platform", todayISO: "2026-08-20" });
+  assert.equal(web.ok, true, web.message);
+  assert.equal(web.label, "web-nightly");
+  assert.deepEqual(web.alsoMatched, [], "the other project's profile was filtered out, not out-scored");
+
+  const api = selectProfile({ context, buildName: "Nightly Regression", projectName: "API Platform", todayISO: "2026-08-20" });
+  assert.equal(api.ok, true, api.message);
+  assert.equal(api.label, "api-nightly");
+});
+
+test("a profile declaring no projectMatch has no opinion and survives the filter", () => {
+  // MUTATION: make the filter require a matching projectMatch (drop the
+  //           `return true` for an absent one) -> fails. Every context written
+  //           before this field existed declares none; requiring it would refuse
+  //           every one of them on the first run after upgrade.
+  const context = validContext({ profiles: { only: profileFixture({ buildMatch: ["Nightly*"] }) } });
+  const r = selectProfile({ context, buildName: "Nightly Regression", projectName: "Any Project", todayISO: "2026-08-20" });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.label, "only");
+  assert.equal(r.projectUnchecked, false, "nothing declared a project constraint, so nothing went unchecked");
+});
+
+test("a project matching nothing refuses instead of falling through to the build name", () => {
+  // MUTATION: return the unfiltered labels when the filter empties -> this selects
+  //           'web' on its buildMatch and fails. Falling through is the wrong-context
+  //           run: the build's own project says the file does not describe it.
+  const context = validContext({
+    profiles: { web: profileFixture({ buildMatch: ["Nightly*"], projectMatch: ["Web Platform"] }) },
+    defaultProfile: "web",
+  });
+  const r = selectProfile({ context, buildName: "Nightly Regression", projectName: "Mobile Platform", todayISO: "2026-08-20" });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-matching-project");
+  assert.match(r.message, /Mobile Platform/);
+  assert.match(r.message, /web/, "the refusal names what the file does hold");
+});
+
+test("an unknown project does not refuse, but says the check could not be made", () => {
+  // MUTATION: refuse when projectName is absent while a projectMatch is declared ->
+  //           fails. Insights can be unavailable and that must degrade, not block.
+  // MUTATION: hardcode projectUnchecked to false -> also fails. The flag is the only
+  //           thing standing between "the constraint agreed" and "the constraint was
+  //           never applied", and those are indistinguishable on the gate screen.
+  const context = validContext({
+    profiles: { web: profileFixture({ buildMatch: ["Nightly*"], projectMatch: ["Web Platform"] }) },
+  });
+  const r = selectProfile({ context, buildName: "Nightly Regression", todayISO: "2026-08-20" });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.label, "web");
+  assert.equal(r.projectUnchecked, true);
+});
+
+test("projectMatch is validated exactly like buildMatch", () => {
+  // MUTATION: exclude "projectMatch" from the validated pair -> both asserts fail.
+  // The two fields share one checker precisely so they cannot drift into a pattern
+  // that is legal in one and refused in the other.
+  const twoStars = validateContext(
+    validContext({ profiles: { p: profileFixture({ projectMatch: ["a*b*c"] }) } }),
+  );
+  assert.equal(twoStars.ok, false);
+  assert.match(JSON.stringify(twoStars.problems), /projectMatch\[0\]/);
+
+  const empty = validateContext(
+    validContext({ profiles: { p: profileFixture({ projectMatch: ["  "] }) } }),
+  );
+  assert.equal(empty.ok, false);
+  assert.match(JSON.stringify(empty.problems), /projectMatch\[0\]/);
+});
+
+test("the select verb passes --project-name through to the filter", () => {
+  // MUTATION: drop the projectName wiring in bin/ -> the filter never runs, the
+  //           wrong-project build selects a profile, and this fails. The lib being
+  //           right is not the same as the CLI reaching it — the same class as
+  //           `--path` silently meaning the context file.
+  workspace();
+  writeRcaContext({
+    from: productRepo,
+    context: validContext({
+      profiles: {
+        web: profileFixture({ buildMatch: ["Nightly*"], projectMatch: ["Web Platform"] }),
+      },
+      defaultProfile: "web",
+    }),
+  });
+  const run = (...extra) => cli("select", "--from", productRepo, "--build-name", "Nightly Regression", ...extra);
+
+  const wrong = run("--project-name", "Mobile Platform");
+  assert.notEqual(wrong.status, 0, "a build from another project must not resolve");
+  assert.equal(wrong.json?.code, "no-matching-project");
+
+  const right = run("--project-name", "Web Platform");
+  assert.equal(right.status, 0, right.stderr);
+  assert.equal(right.json.projectUnchecked, false);
+});

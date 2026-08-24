@@ -109,6 +109,7 @@ guarantee, which is why it is code's job and not yours.
   "profiles": {
     "prod-web": {
       "buildMatch": ["Nightly Web Regression*", "web-prod-smoke-*"],
+      "projectMatch": ["Web Platform"],
       "repos": { "product": ["acme/api"], "automation": ["acme/web-e2e"] },
       "subpaths": ["services/billing"],          // or null — see below
       "branches": { "default": "main", "observed": ["release/24.9"] },
@@ -153,6 +154,7 @@ on an older file is told which it is.
 | Field | Why it exists | What reads it |
 |---|---|---|
 | `buildMatch` | Binds build **names** to this profile so a later run auto-selects with no question | `select` (§ Profile selection) |
+| `projectMatch` | Binds **project names**. Checked BEFORE `buildMatch`, as a filter — the coarse bound that stops two projects' near-identically named suites from selecting each other's profile | `select` (§ Profile selection) |
 | `repos.product` | The code under test — the culprit-PR search surface | Part B intake, the culprit-PR hunt |
 | `repos.automation` | The suite that produced the build — where a test-side defect lives | Part B intake |
 | `subpaths` | Bounds path-overlap attribution inside a monorepo. **`null` is a real value, not an omission**: it records "path overlap runs repo-wide", which lets the hunt print *"attribution may over-match"* instead of confidently naming a PR that touched an unrelated package | the culprit-PR hunt (`<pluginRoot>/skills/rca-build/references/github-evidence.md` § Falsification protocol) |
@@ -314,28 +316,43 @@ hit wins:
    labels. No fuzzy match: a typo resolving to a neighbouring label is a
    wrong-context run with no signal at all. An explicit label outranks a build name
    that matches a different profile (`matchedBy: "requested"`).
-2. **A build name** → candidates are profiles with a matching `buildMatch`
+2. **A project name FILTERS the candidates**, before anything is scored: a profile
+   survives if its `projectMatch` matches, or if it declares none (no opinion).
+   Project is the coarser bound and it goes first because two projects routinely run
+   suites with near-identical names — selecting on the name alone would pick one of
+   them by coin toss and run against the other's repos. Nothing surviving **refuses**
+   (`code: "no-matching-project"`).
+
+   **An unknown project does not refuse.** Insights can be unavailable, and a
+   declared `projectMatch` that cannot be evaluated passes rather than eliminating —
+   the same degradation as an absent build name. The result then carries
+   `projectUnchecked: true`, the gate prints it, and the reader knows the profile on
+   screen was chosen without the constraint its author added. A silently unapplied
+   constraint is how a build gets attributed to the wrong project's repos while every
+   refusal in this list stays quiet.
+3. **A build name** → surviving candidates are those with a matching `buildMatch`
    (`matchedBy: "build-name"`).
-3. **Several candidates** → most literal characters wins, and the loser comes back
+4. **Several candidates** → most literal characters wins, and the loser comes back
    as `alsoMatched` so the gate can print it — that is how a bad `buildMatch` gets
    fixed instead of quietly mis-routing every night. **An exact tie refuses**,
    naming both labels. Never alphabetical, never first-key-in-file: JSON key order
    is a hidden ordering a reformat silently changes.
-4. **Zero candidates with a known build name** → one profile in the file: use it and
+5. **Zero candidates with a known build name** → one profile in the file: use it and
    say so (`matchedBy: "sole-profile"`); more than one: **refuse**.
    `defaultProfile` is deliberately not consulted — a name matching nothing means
    the file does not describe this build.
-5. **Build name genuinely unknown** → `defaultProfile`
+6. **Build name genuinely unknown** → `defaultProfile`
    (`matchedBy: "default-profile"`), printed loudly. Its only job.
-6. The selected profile must then be **runnable**. If it is not, **refuse — never
+7. The selected profile must then be **runnable**. If it is not, **refuse — never
    silently switch to a runnable sibling.** That substitution is the wrong-context
    run in its purest form: the customer asked about one environment and got an
    answer about another.
 
-### Authoring `buildMatch`
+### Authoring `buildMatch` and `projectMatch`
 
-Matching is **case-folded, whole-string, and at most one `*`**, implemented with
-string arithmetic:
+Both fields are the same shape, validated by the same code and matched by the same
+function — `matchesBuildName` is the matcher for either. Matching is **case-folded,
+whole-string, and at most one `*`**, implemented with string arithmetic:
 
 - **Anchor it.** `nightly` does **not** match `web-nightly-*`, and `web-nightly-*`
   does not match `prod-web-nightly-12`. Substring matching is how the wrong profile

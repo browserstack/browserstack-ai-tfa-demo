@@ -208,6 +208,11 @@ build's own metadata immediately:
 fetchBuildInsights(buildId=<id>)
 ```
 
+**Already read at Step 0 when the invocation carried the id** — that is where it has
+to happen, because selection needs the build's name and project (`SKILL.md` § Step 0).
+Do not call it twice. This turn exists for the other path: T1 just supplied an id that
+the invocation did not, so nothing has been fetched yet.
+
 This is the cheapest scope material in the whole interview and the only source that
 describes *this run* rather than the customer's setup in general. Every later turn is
 worse without it, so it is not something to get around to — it is the first tool call
@@ -608,6 +613,19 @@ environment signal, or a context already holds a profile. Otherwise one call:
 pattern that could match one is `*`. Authoring rules and the selection order are in
 `context-file.md` § Profile selection; get the pattern wrong and every future run
 either refuses or runs the wrong environment's repos.
+
+**Record `projectMatch` alongside it, from the project the insights named.** Project
+is the coarser bound and it is checked first: two projects routinely run suites with
+near-identical names, and a `buildMatch` that matches both selects on a coin toss.
+Write it even when the customer has one project — it costs nothing now and it is the
+field nobody thinks to add later, when a second project is exactly what made
+selection ambiguous.
+
+Both patterns come from **T1b's insights**, not from the customer. They are already
+exact; asking someone to retype a build name introduces a typo that fails silently as
+a non-match on the next run. What the question above is for is the **label** and how
+wide the pattern should be — that is a judgement about their environments, and it is
+the only part they can answer better than the metadata can.
 
 ## T8 — confirm and write
 

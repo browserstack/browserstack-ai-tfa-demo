@@ -316,10 +316,14 @@ test("every bin/ CLI verb named in a prompt file actually exists", () => {
 // question.
 test("the greeting is instructed as the first output, over a silent context load", () => {
   // MUTATION: drop either instruction from SKILL.md -> fails.
-  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+  // Whitespace-normalised, and matching the RULE rather than its exact wording: this
+  // sentence legitimately changes as Step 0 grows silent calls ("it" -> "both"), and a
+  // guard that breaks on the object of the verb fails on correct edits while still
+  // missing a reworded deletion.
+  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8").replace(/\s+/gu, " ");
 
   assert.match(
-    skill, /silently\s*—\s*\n?\s*emit nothing about it|Run it silently/i,
+    skill, /silently — emit nothing about/iu,
     "Step 0 must tell the agent to load the context WITHOUT narrating it; " +
       "narrating it is what pushed the greeting to seventh place",
   );
@@ -572,4 +576,51 @@ test("the artifact pass precedes every question but the build id", () => {
         "sits there at least as readily as in a skill",
     );
   }
+});
+
+// ---- selection needs a name, and only insights have one --------------------
+//
+// Step 0 ran `select --build-name "<build name, if known>"` and the name is NEVER
+// known there: the invocation carries an id. A proving run passed `""`, no
+// `buildMatch` could match, and selection fell through to `defaultProfile` — the
+// wrong-context run that selectProfile's five refusals exist to prevent, reached
+// without one of them firing. Nothing in the code can catch this; the fetch either
+// precedes the select in the prose or it does not.
+test("Step 0 fetches the build's insights before it selects a profile", () => {
+  // MUTATION: reorder the two, or drop --project-name from the documented call -> fails.
+  const src = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+  const step0 = src.slice(src.search(/^## Step 0 —/mu), src.search(/^### Step 0a/mu));
+
+  const fetchAt = step0.indexOf("fetchBuildInsights");
+  const selectAt = step0.indexOf("rca-context.mjs select");
+  assert.ok(fetchAt > 0, "Step 0 must fetch the build's insights — an id is not a name");
+  assert.ok(selectAt > 0, "Step 0 must select a profile");
+  assert.ok(
+    fetchAt < selectAt,
+    "the fetch must come FIRST. Selecting on an empty build name matches no buildMatch " +
+      "and silently resolves to defaultProfile, which is the wrong-context run",
+  );
+
+  const flat = step0.replace(/\s+/gu, " ");
+  assert.match(flat, /--build-name/u, "and pass the name it just fetched");
+  assert.match(flat, /--project-name/u, "and the project — the coarse bound, checked first");
+
+  // The stale form: a placeholder admitting the name is not known is the bug itself.
+  assert.doesNotMatch(
+    flat, /--build-name "<build name, if known>"/u,
+    "'if known' was never true at Step 0; that is what made every selection blind",
+  );
+});
+
+test("the gate prints what selection matched on, not only what it chose", () => {
+  // MUTATION: drop matchedBy or projectUnchecked from the template -> fails.
+  // `label` alone cannot distinguish "this build's name and project chose this" from
+  // "nothing matched, so you got the default", and those need different reactions.
+  const flat = readFileSync(join(ROOT, "skills/rca-build/templates/gate-summary.md"), "utf8")
+    .replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+
+  assert.match(flat, /matchedBy/u, "the gate screen must show HOW the profile was chosen");
+  assert.match(flat, /projectUnchecked/u,
+    "and must say when a declared project constraint could not be evaluated — a " +
+      "silently unapplied constraint is indistinguishable from one that agreed");
 });

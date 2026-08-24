@@ -31,6 +31,14 @@ silent failure this design has, so both are always on screen. When selection had
 break a tie on specificity, print what else matched — that is how a bad
 `buildMatch` gets fixed instead of quietly mis-routing every night.
 
+**Print what selection MATCHED ON, not just what it chose.** `matchedBy` is the
+difference between "this build's name and project picked this profile" and "nothing
+matched, so you got the default" — and those look identical on a screen that prints
+only the label. `default-profile` on a build the file was supposed to describe is the
+single most useful line on this screen. And when `projectUnchecked` is set, say so:
+the file declared a `projectMatch` and this run could not evaluate it, so the profile
+on screen was chosen without the constraint its author added.
+
 **Do not list a capability that can never be recognised.** `other` is the
 catch-all; it would otherwise appear as a missing connector on every single run.
 
@@ -42,7 +50,8 @@ CI connector.
 
 ```
 GATE CLOSED
-  profile: <label>   matched <pattern>   [also matched: <label>, … — narrow buildMatch]
+  profile: <label>   matched <pattern> (<matchedBy>)   [also matched: <label>, … — narrow buildMatch]
+  build:   <name>    project: <name>   [project unchecked — insights unavailable]
   context: <abs path>/.rca-context.json
 
 Capabilities:

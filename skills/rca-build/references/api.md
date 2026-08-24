@@ -157,12 +157,17 @@ capabilityFallbacks(config) → {capability: fallbackCapability}   e.g. {ci: "gi
 isRunnable/isProvisioned take the sequence, so adding a capability to config
     changes both without touching this module.
 
-selectProfile({context, buildName, requested, todayISO, staleAfterDays})
-    → {ok:true, label, profile, matchedBy, alsoMatched[], stale[], ages{}}
+selectProfile({context, buildName, projectName, requested, todayISO, staleAfterDays})
+    → {ok:true, label, profile, matchedBy, alsoMatched[], projectUnchecked, stale[], ages{}}
     | {ok:false, code, message, labels[]}
     `todayISO` is injected — never read the clock in here. `matchedBy` says which
     rule won; `alsoMatched` is what else claimed this build and MUST be printed, or
     a bad `buildMatch` mis-routes every night unnoticed.
+    `projectName` FILTERS on `projectMatch` before build names are scored — project
+    is the coarser bound and two projects routinely run near-identically named
+    suites. Unknown project + a declared `projectMatch` passes rather than refusing
+    (insights may be unavailable) and sets `projectUnchecked`, which the gate prints:
+    a constraint the file asked for and this run could not apply.
 matchesBuildName(pattern, buildName) → boolean
     Case-folded, whole-string, ONE `*`. No regex. A second wildcard matches nothing
     rather than being guessed at, and `nightly` does not match `web-nightly-*`.

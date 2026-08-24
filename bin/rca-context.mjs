@@ -4,7 +4,7 @@
 //   node bin/rca-context.mjs find              [--from DIR]
 //   node bin/rca-context.mjs read              [--from DIR] [--path FILE]
 //   node bin/rca-context.mjs capabilities      [--config FILE]
-//   node bin/rca-context.mjs select            [--build-name NAME] [--profile LABEL]
+//   node bin/rca-context.mjs select            [--build-name NAME] [--project-name NAME] [--profile LABEL]
 //                                             [--today YYYY-MM-DD] [--stale-after-days N]
 //   node bin/rca-context.mjs write             --file DOC.json | -
 //   node bin/rca-context.mjs upsert-connector  --capability C --file CONN.json
@@ -179,6 +179,7 @@ if (command === "select") {
   const selected = selectProfile({
     context: read.context,
     buildName: args["build-name"] && args["build-name"] !== true ? String(args["build-name"]) : null,
+    projectName: args["project-name"] && args["project-name"] !== true ? String(args["project-name"]) : null,
     requested: args.profile && args.profile !== true ? String(args.profile) : null,
     todayISO: today,
     staleAfterDays: Number.isFinite(staleAfterDays) ? staleAfterDays : DEFAULT_STALE_AFTER_DAYS,
@@ -195,6 +196,7 @@ if (command === "select") {
       label: selected.label,
       matchedBy: selected.matchedBy,
       alsoMatched: selected.alsoMatched,
+      projectUnchecked: selected.projectUnchecked,
       // Two predicates, two consumers. `runnable` gated the selection above and is
       // restated for the digest; `provisioned` decides only whether the gate
       // offers to finish setup — it never blocks a run.

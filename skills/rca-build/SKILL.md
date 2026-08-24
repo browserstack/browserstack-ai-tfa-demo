@@ -90,15 +90,29 @@ Parse the build id from the invocation args. Accepted forms: a bare build id, a
 any **PR URLs** and **repo hints** (product/automation repo names or paths) the
 user supplies — carry them into Gate Part B as pre-answered intake.
 
-Then load the context, because it decides everything below. **Run it silently —
-emit nothing about it.** No "checking for a context file", no "none found near the
-plugin root", no path resolution. That is plumbing; the customer's first screen
-should not be spent on it, and the greeting below has to be the first thing they
-read:
+**Then read the build's insights, before selecting anything.** The invocation carries
+a build **id**; profile selection matches on the build **NAME** and the **project**,
+neither of which an id tells you. Skipping this leaves `--build-name` empty, and an
+empty name cannot match any `buildMatch` — so selection silently falls through to
+`defaultProfile` and every multi-profile context resolves to whichever profile
+happens to be the default. That is the wrong-context run this file's refusals exist
+to prevent, arrived at without a single refusal firing.
 
 ```
-node <pluginRoot>/bin/rca-context.mjs select --build-name "<build name, if known>"
+fetchBuildInsights(buildId=<id>)          → the build's name and its project
+node <pluginRoot>/bin/rca-context.mjs select \
+  --build-name "<name from insights>" --project-name "<project from insights>"
 ```
+
+No id, or insights unavailable? Pass what you have and let selection degrade
+honestly: `matchedBy: "default-profile"` says out loud that nothing was matched, and
+`projectUnchecked: true` says the file asked for a project check that could not be
+made. Both belong on the gate screen. Never invent a name to fill the flag.
+
+**Run both silently — emit nothing about either.** No "checking for a context file",
+no "none found near the plugin root", no path resolution, and no build summary. That
+is plumbing; the customer's first screen should not be spent on it, and the greeting
+below has to be the first thing they read.
 
 `select`, not `read`: `read` returns the document and does no selection, so it
 cannot tell you whether this run may proceed. `select` returns the chosen profile

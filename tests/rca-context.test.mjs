@@ -1613,3 +1613,78 @@ test("the select verb passes --project-name through to the filter", () => {
   assert.equal(right.status, 0, right.stderr);
   assert.equal(right.json.projectUnchecked, false);
 });
+
+// ---- flags are a closed set, per verb --------------------------------------
+//
+// Flag parsing was open: any `--anything value` landed in the args object and was
+// ignored if nothing read it. So `--projectname` — one missing hyphen — parsed, was
+// dropped, and `select` ran with no project filter, resolved to `defaultProfile`, and
+// exited 0. That is the wrong-context run `projectMatch` exists to prevent, reachable
+// by a typo, silent at every layer. A live run also invented `--plugin-dir` and the
+// CLI obliged it.
+//
+// Same principle as the schema's closed key sets, and the same reason: an unknown key
+// is a mistake, and accepting it quietly buys a wrong answer nobody is told about.
+
+test("a misspelled flag is a usage error, not silence", () => {
+  // MUTATION: delete the checkFlags call -> exit 0 and the typo is ignored -> fails.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+
+  const typo = cli("select", "--from", productRepo, "--projectname", "Web Platform");
+  assert.equal(typo.status, 2, "usage error, distinct from a refusal (1) and success (0)");
+  assert.match(typo.stderr, /--projectname/, "name the flag that was rejected");
+  assert.match(typo.stderr, /did you mean --project-name\?/, "and the near miss, which is the whole fix");
+
+  // The exact flag a live run invented.
+  const invented = cli("select", "--from", productRepo, "--plugin-dir", "/somewhere");
+  assert.equal(invented.status, 2);
+  assert.match(invented.stderr, /--plugin-dir/);
+
+  // And the false positive the same replay caught: `<verb> --help` is a real thing to
+  // type, and answering it with an unknown-flag error is the least useful response
+  // available. MUTATION: remove the args.help branch -> the assert below fails.
+  const help = cli("write", "--help");
+  assert.equal(help.status, 2, "usage exits 2, help included");
+  assert.match(help.stderr, /usage: rca-context\.mjs/, "help prints usage");
+  assert.doesNotMatch(help.stderr, /unknown flag/, "asking for help is not a mistake");
+});
+
+test("a flag valid for one verb is refused on another", () => {
+  // MUTATION: use one flat allowlist instead of per-verb sets -> fails. `--capability`
+  // is meaningful for upsert-connector and meaningless for select; accepting it there
+  // hides a caller that thinks it is scoping a selection.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+
+  const borrowed = cli("select", "--from", productRepo, "--capability", "logs");
+  assert.equal(borrowed.status, 2, "--capability does nothing for select and must not be swallowed");
+  assert.match(borrowed.stderr, /--capability/);
+});
+
+test("every flag the CLI documents is accepted by the verb it documents", () => {
+  // The other half, and the one that matters for false positives: a closed set that
+  // omits a real flag breaks the documented call. Parsed from the usage header so the
+  // two cannot drift — adding a flag to the header without the allowlist fails here.
+  // MUTATION: remove any flag from a VERB_FLAGS entry -> fails.
+  const src = readFileSync(new URL("../bin/rca-context.mjs", import.meta.url), "utf8");
+  const header = src.slice(0, src.indexOf("import "));
+
+  const documented = new Map();
+  for (const m of header.matchAll(/rca-context\.mjs (\S+)([^\n]*(?:\n\/\/\s{20,}[^\n]*)*)/gu)) {
+    const flags = [...m[2].matchAll(/--([a-z-]+)/gu)].map((f) => f[1]);
+    documented.set(m[1], [...new Set([...(documented.get(m[1]) ?? []), ...flags])]);
+  }
+  assert.ok(documented.size >= 9, `parsed ${documented.size} verbs from the usage header`);
+
+  for (const [verb, flags] of documented) {
+    for (const flag of flags) {
+      // A documented flag must not produce a usage error about ITSELF.
+      const r = cli(verb, `--${flag}`, "x", "--from", "/nonexistent-on-purpose");
+      assert.doesNotMatch(
+        r.stderr ?? "", new RegExp(`unknown flags? --${flag}\\b`, "u"),
+        `${verb} documents --${flag} in its usage header but the allowlist refuses it`,
+      );
+    }
+  }
+});

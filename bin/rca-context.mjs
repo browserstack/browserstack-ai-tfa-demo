@@ -17,6 +17,10 @@
 // argv in, JSON on stdout, non-zero exit on refusal: 1 = refused (a `code` and a
 // `message` say why), 2 = usage. Prose goes to stderr so stdout stays parseable.
 //
+// Flags are a CLOSED set per verb: an unknown or misspelled flag is a usage error,
+// never ignored. `--projectname` used to parse and vanish, and selection then ran
+// with no project filter and exited 0.
+//
 // WHY THIS EXISTS: the alternative is an agent hand-writing JS to edit a
 // git-tracked file mid-interview. Every deterministic decision — where the file
 // lives, whether a profile is runnable, which profile a build name selects, and
@@ -132,6 +136,54 @@ function loadConfig(args) {
   }
 }
 
+// Closed flag sets, per verb. The same principle as the schema's closed key sets and
+// for the same reason: an unknown key is a MISTAKE, and the cost of accepting it
+// quietly is a wrong answer nobody is told about.
+//
+// This was open. `--projectname` (one missing hyphen) parsed, was ignored, and
+// `select` ran with no project filter — resolving to `defaultProfile` and exiting 0.
+// That is the wrong-context run `projectMatch` was added to prevent, reachable by a
+// typo, with no signal at any layer. A live run also invented `--plugin-dir` and was
+// silently obliged.
+//
+// Nothing here validates a VALUE. Deciding whether a flag's value is sensible is the
+// library's job or the agent's; this only decides whether a flag is a flag.
+const COMMON_FLAGS = ["from", "path", "config", "today", "stale-after-days"];
+const VERB_FLAGS = {
+  find: [],
+  read: [],
+  capabilities: [],
+  select: ["build-name", "project-name", "profile"],
+  write: ["file"],
+  "upsert-connector": ["capability", "file", "profile"],
+  "record-knowledge": ["artifact", "artifact-path", "part", "capability", "note", "profile"],
+  "record-gap": ["capability", "classification", "note", "target", "profile"],
+  "record-warning": ["capability", "classification", "note", "target", "profile"],
+};
+
+function checkFlags(verb, parsed) {
+  const allowed = VERB_FLAGS[verb];
+  if (allowed === undefined) return; // unknown verb — reported by its own usage error
+  const permitted = new Set([...COMMON_FLAGS, ...allowed]);
+  const unknown = Object.keys(parsed).filter((k) => k !== "_" && !permitted.has(k));
+  if (unknown.length === 0) return;
+  // Name the near miss. Every real instance of this has been a typo or a flag
+  // borrowed from another verb, and both are one edit from correct.
+  const near = (bad) => {
+    const hit = [...permitted].find(
+      (ok) => ok.replaceAll("-", "") === bad.replaceAll("-", "").toLowerCase(),
+    );
+    return hit ? ` (did you mean --${hit}?)` : "";
+  };
+  usage(
+    `${verb}: unknown flag${unknown.length > 1 ? "s" : ""} ` +
+      unknown.map((u) => `--${u}${near(u)}`).join(", ") +
+      `\n\nAccepted here: ${[...permitted].sort().map((f) => `--${f}`).join(" ")}\n` +
+      `Refused rather than ignored: an ignored --project-name selects a profile without ` +
+      `checking the project, which is a run against another environment's repos.`,
+  );
+}
+
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0];
 const from = args.from && args.from !== true ? String(args.from) : process.cwd();
@@ -141,6 +193,14 @@ const today =
 const common = { from, pluginRoot: PLUGIN_ROOT, path };
 
 if (!command || command === "--help" || command === "-h" || command === "help") usage();
+
+// `<verb> --help` is a real thing to type and reaches here with command set, so it is
+// handled before the closed-flag check — otherwise asking for help earns an unknown-flag
+// error, which is the least helpful possible response to it. Found by replaying a live
+// run's invocations against the new allowlist.
+if (args.help || args.h) usage();
+
+checkFlags(command, args);
 
 if (command === "find") {
   const found = findContextFile({ from, pluginRoot: PLUGIN_ROOT });

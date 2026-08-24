@@ -53,7 +53,7 @@ file's state** — not by asserting a phase. If you cannot point at the file sta
 that puts you in a row, you are in the row below it.
 
 The arithmetic, because a ceiling nobody can compute is not a ceiling:
-T1(1) + T3(1) + T4(≤2) + T5(1) + T6(1) + T7(≤1) + T8(1) = 8, and T8 may be
+T1(≤1) + T3(≤1) + T4(≤2) + T5(1) + T6(1) + T7(≤1) + T8(1) = 8, and T8 may be
 re-entered **at most twice more** — for a correction, or for the one place the
 customer may deliberately spend more: closing a named gap. On the third T8 entry
 the extension option is gone, so the loop terminates by construction rather than by
@@ -65,9 +65,16 @@ The GitHub retry loop in Step 0b is never cut short by this ceiling: GitHub is t
 one capability a run cannot proceed without, so its re-asks are inside the budget
 by construction, not competing with it.
 
-`AskUserQuestion` renders at most **4 parts per call and 4 options per part**, which
-is why the interview turns MERGE parts that share an identifier rather than splitting
-into more calls (`references/interview.md`). Splitting T6 into one question per
+T1 and T3 are `≤1` because either can cost **nothing**: a build id supplied in the
+args needs no question, and a part the pre-read settled is stated rather than asked.
+Coming in under the ceiling is the goal, not a shortfall.
+
+`AskUserQuestion` renders at most **4 parts per call and 4 options per part**, and
+requires **at least 2 options per part** — a one-option part is rejected and the whole
+call fails, so the parts that genuinely needed asking are lost with it. That is why
+the interview turns MERGE parts sharing an identifier rather than splitting into more
+calls, and why a settled part is dropped rather than sent as a confirmation
+(`references/interview.md` § Question mechanics). Splitting T6 into one question per
 capability would be the obvious-looking edit and would blow this budget on the first
 customer who selects five.
 

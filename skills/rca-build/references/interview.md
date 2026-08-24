@@ -107,15 +107,29 @@ Every call is one `AskUserQuestion` with this shape:
   {"question": "<one sentence, names the downstream consumer>",
    "header": "<≤12 chars>",
    "multiSelect": false,
-   "options": [{"label": "<the answer itself>", "description": "<where it came from>"}]}
+   "options": [{"label": "<the answer itself>", "description": "<where it came from>"},
+               {"label": "<the other answer>", "description": "<where THAT came from>"}]}
 ]}
 ```
+
+Two options in the schematic because two is the **minimum**, not an illustration of
+a batch. Every shape below shows at least two for the same reason.
 
 Constraints the shapes below are designed to:
 
 - **At most 4 parts per call, at most 4 options per part.** A fifth of either is
   not rendered, so a batched turn that would need five parts merges two instead of
   overflowing into a second call — a second call spends a second question.
+- **At least 2 options per part, and the tool enforces it.** A part carrying one
+  option is **rejected**, the whole call fails, and the customer sees nothing — so a
+  batch mixing one settled part with open ones loses the open ones too. Two live runs
+  lost a turn to exactly this.
+
+  A part you can give only one answer to is not a question, it is a finding. **State
+  it and move on**, and keep the question for something undecided. Never pad to two:
+  an invented alternative you would not act on asks the customer to ratify a decision
+  you already made, and if they choose it you are committed to something worse than
+  what you had.
 - **Options are answers, not prompts.** `label` is the value the agent will use;
   `description` names its provenance (`from git remote`, `named in
   .github/workflows/deploy.yml`, `MCP tool in this session`).
@@ -182,22 +196,21 @@ node <pluginRoot>/bin/rca-context.mjs capabilities
 
 ## T1 — build id
 
-Skip entirely if the invocation args already carry one. Otherwise one call, folded
-into T0's message:
+Skip entirely if the invocation args already carry one.
 
-```json
-{"questions": [{
-  "question": "Which build am I analysing? A build id or a dashboard link.",
-  "header": "Build id",
-  "multiSelect": false,
-  "options": [{"label": "<candidate id>", "description": "<from the invocation args | from a link in this session>"}]
-}]}
-```
+Otherwise: **ask in the greeting's own text, not with `AskUserQuestion`.** A build id
+is free text with no alternatives, and a part needs two genuine options or the call is
+refused (§ Question mechanics). One sentence, folded into T0's message:
 
-With no candidate, the options list holds nothing usable and the answer arrives in
-the free-form field — that is the expected path, not a degraded one. The build id
-is the one genuinely load-bearing field: it drives `listTestIds`, and its **name**
-drives profile selection on every later run.
+> Which build am I analysing? A build id, or a link to it on the dashboard.
+
+**Two or more candidate ids** — several in the args, several links in this session —
+is the one case that *is* a question, and then it is one call with one option per
+candidate.
+
+The build id is the one genuinely load-bearing field: it drives `listTestIds`, and
+the **name and project** it resolves to at T1b drive profile selection on every later
+run.
 
 ## T1b — fetch the build's insights
 
@@ -228,6 +241,10 @@ What it answers, so you can stop asking for it:
 | the **CI run URL** | the CI system and the job path — `ci`'s project and pipeline identity, without asking |
 | the **dashboard URL** | the project these results land in |
 | failure categories, error overview, flake counts | what the artifact pass at T2 judges relevance *against* |
+
+**A bound read here becomes a T5 candidate.** Naming a capability's project and
+pipeline, or its grouping, and then not offering that capability is how a build ends
+up declaring as a gap the one thing it told you where to find.
 
 Read them as **candidate bounds, not verified ones**: a tag naming a grouping is a
 name, and `capabilities.md` § Verified means still requires the read that proves the
@@ -288,6 +305,27 @@ product. Judge those the same way and use only the parts that apply:
 - Record each part you will use with `record-knowledge`, naming the artifact, where you
   read it, and which part. Omit `--capability` when the knowledge is about the product
   as a whole.
+
+**Account for every artifact you opened.** For each one: the parts recorded, or one
+line saying nothing applied and why. This is a rule because the pass has no other
+outcome — reading is silent, judging is silent, and "I looked and took nothing" is
+indistinguishable from "I did not look" when both produce no record and no sentence.
+
+That is not hypothetical. A live run opened three of a team's own artifacts — a
+regression-RCA procedure, a culprit-PR finder, a build-triage engine — and recorded
+nothing from any of them, in a run whose whole deliverable is culprit-PR attribution.
+The culprit-PR artifact carried an explicit attribution heuristic. Everything else in
+those files was machinery, so *most* of the judgement was right; what was missing was
+any obligation to land the part that was not.
+
+**A heavily-machinery artifact is the normal case, not a reason to take nothing from
+it.** These files are written to orchestrate — phases, triggers, output contracts,
+sub-agent rules — and all of that is correctly refused. The takeable part is usually
+one or two sentences buried in it: what a failure shape implies, which surface owns
+which kind of change, what the team has learned reads as a false positive. Read for
+that, and expect to find it in a file that is 90% things you must not take.
+
+The digest at T8 lists what was recorded, so this is visible rather than trusted.
 
 **This is why T1b comes first.** Judging "does this apply to THIS build" needs the
 build's metadata; with only an artifact's own description to go on, every artifact
@@ -399,10 +437,16 @@ for. Spend it before T4.
 
 ## T3 — GitHub: repos, branches, and the clone path
 
-One call. What T2c read becomes the pre-selected options, and **every option's
-description names the artifact it came from** — that is what makes it checkable, and
-a candidate you cannot cite is not one. When the pre-read was conclusive this
-degrades to a single confirm, which is still one call.
+One call, or **none**. What T2c read becomes the pre-selected options, and **every
+option's description names the artifact it came from** — that is what makes it
+checkable, and a candidate you cannot cite is not one.
+
+**When the pre-read settled a part, drop that part.** This used to say a conclusive
+pre-read "degrades to a single confirm, which is still one call", and that shape does
+not exist: a part with one option is refused by the tool (§ Question mechanics), so
+the whole call is lost — including the parts that *were* open. Say what you resolved
+and what named it, then carry on. If every part is settled, T3 asks nothing and the
+interview is one question shorter, which is the best outcome this turn has.
 
 An option whose only provenance is a git remote is the weakest kind, and a question
 built entirely from remotes means the pre-read found nothing — say so in the
@@ -414,22 +458,27 @@ descriptions rather than presenting a directory listing as a finding.
    "header": "Product", "multiSelect": true,
    "options": [{"label": "acme/api", "description": "named in <the file that named it>, under ./web-e2e"},
                {"label": "acme/api-worker", "description": "named in the same file"}]},
-  {"question": "Which repo holds the automation suite that produced this build?",
-   "header": "Tests", "multiSelect": true,
-   "options": [{"label": "acme/web-e2e", "description": "origin remote of cwd; holds the suite this build's name matches"}]},
   {"question": "Which branch do merged PRs land on, and which branch did this build run against?",
    "header": "Branches", "multiSelect": false,
    "options": [{"label": "release/24.9 → release/24.9", "description": "named in <the file that named the repos>, beside them"},
                {"label": "main → main", "description": "default branch of acme/api; nothing read here named another"}]},
   {"question": "Which directory should I set up? The context file lands there, and I did not find one here.",
    "header": "Clone path", "multiSelect": false,
-   "options": [{"label": "/Users/me/src/api", "description": "sibling of this plugin clone"}]}
+   "options": [{"label": "/Users/me/src/api", "description": "sibling of this plugin clone"},
+               {"label": "/Users/me/src/web-e2e", "description": "the other checkout reachable from here"}]}
 ]}
 ```
 
-Part 4 is present **only** when T2b resolved nothing. The base/build branch pair is
-deliberately one part with a `base → build` label so all four fit the render cap;
-when part 4 is absent, split them into two parts and ask each plainly.
+**The automation repo is absent from this example on purpose.** The pre-read settled
+it — one checkout, holding the suite this build's name matches — so it is stated, not
+asked. That is the dropped-part rule above, and a live run lost a whole call by
+sending it as a one-option part instead.
+
+The clone-path part is present **only** when T2b resolved nothing, and only when more
+than one directory is a genuine candidate; with exactly one, state it. The base/build
+branch pair is deliberately one part with a `base → build` label so all four fit the
+render cap; when the clone-path part is absent, split them into two parts and ask each
+plainly.
 
 Every part names its downstream consumer, because a question whose answer nothing
 reads is cut (`capabilities.md` § Two hard rules).
@@ -518,6 +567,17 @@ candidates would push it past four, drop `Something else` first (the free-form
 field covers it), never a candidate the pre-read actually found. A candidate you
 cannot cite an artifact for is not a candidate — see § Provenance.
 
+**A capability the build's own metadata identified is a candidate, and one of the
+strongest.** T1b's fields are bounds: the CI run URL names the CI system and the job
+path, the dashboard URL names the project. Those are cited to the build itself, which
+outranks anything found by looking around — so they belong in this list before
+anything the pre-read guessed at. A live run recorded `ci` as a gap while its own gap
+note said the CI run URL was known from the insights: the bound was produced, then
+dropped, and the customer was never offered the capability the build had already
+located for them. **If T1b named a bound for a capability, that capability appears
+here** — or the gap note has to say why it was not worth offering, and "it was known
+but not offered" is not a reason.
+
 Every unselected capability gets a recorded gap at T8, which is what makes the
 profile `provisioned` and stops the gate re-offering setup forever.
 
@@ -531,12 +591,18 @@ already answer:
 {"questions": [
   {"question": "Which <grouping> and which <workload> should I read for this service? I need both to scope a runtime read.",
    "header": "Runtime", "multiSelect": false,
-   "options": [{"label": "<grouping>/<workload>", "description": "named in <artifact>"}]},
+   "options": [{"label": "<grouping>/<workload>", "description": "named in <artifact>"},
+               {"label": "<other grouping>/<workload>", "description": "also present; named in <artifact>"}]},
   {"question": "Which <dataset> holds this service's logs, and which field carries the service name?",
    "header": "Logs", "multiSelect": false,
-   "options": [{"label": "<dataset> · <field>", "description": "named in <artifact>"}]}
+   "options": [{"label": "<dataset> · <field>", "description": "named in <artifact>"},
+               {"label": "<dataset> · <other field>", "description": "the other field carrying an identity"}]}
 ]}
 ```
+
+**A capability the pre-read fully bounded gets no part at all** — state the bounds and
+verify them. Sending it as a one-option part fails the whole call, taking the
+capabilities that genuinely needed asking down with it.
 
 More than four selected capabilities: merge the parts that share an identifier
 (logs and metrics usually share the service name) rather than spending a second
@@ -654,14 +720,21 @@ SETUP — review before I commit it
 
   knowledge: <artifact> — <part>                 will be used for <capability | this product>
              <artifact> — <part>                 will be used for <capability | this product>
+             <artifact> — nothing applied         <one clause: why>
 ```
 
 **The knowledge block is TEXT, never options.** A `multiSelect` here would hit the
 four-options-per-part render cap, and a workspace holding a dozen artifacts makes
 overflow the expected case rather than an edge. Corrections go through the existing
-free-form "Correct a field" path — the same shape as correcting a branch. Omit the
-block entirely when nothing was recorded: absence is never a warning, and that applies
-to the question budget as much as to the digest.
+free-form "Correct a field" path — the same shape as correcting a branch.
+
+**Omit the block only when nothing was OPENED.** It used to say "omit when nothing was
+recorded", and that is the hole: a pass that read three of the team's artifacts and
+took nothing from any of them printed the same screen as a pass that never looked, so
+the customer had no way to tell which had happened — and neither did anyone reading the
+run afterwards. An artifact that was opened and yielded nothing gets the
+`nothing applied` line with its reason. Nothing opened, no block; absence of artifacts
+is never a warning.
 
 ```json
 {"questions": [{

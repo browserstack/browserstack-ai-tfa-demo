@@ -624,3 +624,87 @@ test("the gate prints what selection matched on, not only what it chose", () => 
     "and must say when a declared project constraint could not be evaluated — a " +
       "silently unapplied constraint is indistinguishable from one that agreed");
 });
+
+// ---- every documented question shape must be a LEGAL question shape ---------
+//
+// `AskUserQuestion` refuses a part carrying fewer than 2 options, and refuses the
+// WHOLE call — so one settled part takes the genuinely-open parts down with it. Two
+// live runs lost a turn to this, and the reference file was the reason: it documented
+// a conclusive pre-read as degrading to "a single confirm, which is still one call",
+// and six of its own JSON examples showed one-option parts.
+//
+// This parses the examples rather than trusting the prose, because the examples are
+// what gets copied.
+test("no documented question shape has a part with fewer than two options", () => {
+  // MUTATION: drop an option from any example in interview.md -> fails.
+  const src = readFileSync(join(ROOT, "skills/rca-build/references/interview.md"), "utf8");
+
+  const offenders = [];
+  for (const block of src.matchAll(/```json\n([\s\S]*?)\n```/gu)) {
+    const line = src.slice(0, block.index).split("\n").length;
+    for (const opts of block[1].matchAll(/"options":\s*\[([\s\S]*?)\]\}/gu)) {
+      const n = (opts[1].match(/\{\s*"label"/gu) ?? []).length;
+      if (n < 2) offenders.push(`interview.md:${line} (${n} option${n === 1 ? "" : "s"})`);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "a part with <2 options is rejected by the tool and the whole call fails, losing " +
+      "the parts that did need asking. State a settled part; never pad it to two",
+  );
+
+  const flat = src.replace(/\s+/gu, " ");
+  assert.match(flat, /At least 2 options per part/iu,
+    "and the minimum must be stated where the maximum is — only the max was documented");
+  // The deleted instruction must not return — but the replacement QUOTES it as its
+  // own rationale, which is how this repo records what it removed. So the assertion is
+  // that every occurrence is a citation: preceded by "used to say". An instructional
+  // one is not. Third time a guard here has needed this distinction; matching the bare
+  // words would forbid explaining the deletion.
+  const DELETED = "degrades to a single confirm, which is still one call";
+  for (let i = flat.indexOf(DELETED); i !== -1; i = flat.indexOf(DELETED, i + 1)) {
+    assert.match(
+      flat.slice(Math.max(0, i - 60), i), /used to say/iu,
+      "that shape does not exist — a settled part is dropped, not confirmed. Only a " +
+        "citation of the removed rule is allowed here, not the rule itself",
+    );
+  }
+  assert.match(flat, /When the pre-read settled a part, drop that part/iu,
+    "and the replacement must be stated positively, or its absence reads as an oversight");
+});
+
+test("a bound the build's metadata produced becomes an offered capability", () => {
+  // MUTATION: drop either statement -> fails. A live run recorded `ci` as a gap while
+  // its own gap note said the CI run URL was known from the insights: the bound was
+  // produced and then dropped, so the customer was never offered the capability the
+  // build had located for them.
+  const flat = readFileSync(join(ROOT, "skills/rca-build/references/interview.md"), "utf8")
+    .replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+
+  assert.match(flat, /If T1b named a bound for a capability, that capability appears here/iu,
+    "T5 must offer what the metadata bounded — it is the strongest-cited candidate there is");
+  assert.match(flat, /A bound read here becomes a T5 candidate/iu,
+    "and T1b must say so where the fields are introduced, not only where they are used");
+});
+
+test("the artifact pass has to account for what it opened", () => {
+  // MUTATION: drop the accounting rule, or restore T8's "omit when nothing was
+  // recorded" -> fails.
+  //
+  // The pass had no outcome: reading is silent and judging is silent, so "I looked and
+  // took nothing" produced exactly the screen that "I never looked" produced. A live
+  // run opened a team's regression-RCA procedure, culprit-PR finder and build-triage
+  // engine, recorded nothing from any of them, and nothing anywhere said so — in a run
+  // whose deliverable is culprit-PR attribution.
+  const flat = readFileSync(join(ROOT, "skills/rca-build/references/interview.md"), "utf8")
+    .replace(/\s+/gu, " ");
+
+  assert.match(flat, /Account for every artifact you opened/iu,
+    "each opened artifact needs a recorded part or a stated reason nothing applied");
+  assert.match(flat, /Omit the block only when nothing was OPENED/u,
+    "and the digest must distinguish 'opened, nothing applied' from 'never looked'");
+  assert.doesNotMatch(
+    flat, /Omit the block entirely when nothing was recorded/iu,
+    "that rule is what made the two cases print the same screen",
+  );
+});

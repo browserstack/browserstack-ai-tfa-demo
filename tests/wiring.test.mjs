@@ -490,3 +490,86 @@ test("the build's own metadata is named as a bound, not just as context", () => 
       "so the empty-read rule cannot catch it",
   );
 });
+
+// ---- nothing is asked before the build is read and the artifacts are opened ----
+//
+// Two ordering defects from the same proving run, and neither is visible in any
+// single sentence — only in the sequence.
+//
+// The interview referenced "the insights read at T1" while T1 only ASKED for the
+// build id; nothing fetched them. `fetchBuildInsights` was named once, at the gate,
+// long after the interview had spent its questions. So the run asked for branches
+// the build's own tags carried, and searched a live control plane for a grouping the
+// build's environment tag named exactly.
+//
+// And the artifact pass carried the sentence "so this happens after T1 — not at T2"
+// while itself sitting inside T2 — a contradiction that resolves in the reader's
+// favour only by luck.
+test("the build's insights are read before any turn that asks", () => {
+  // MUTATION: move the fetch turn after T2, or delete it -> fails.
+  const src = readFileSync(join(ROOT, "skills/rca-build/references/interview.md"), "utf8");
+
+  const fetchTurn = src.search(/^##\s+\S+\s+—\s+fetch the build's insights/mu);
+  const artifacts = src.search(/^##\s+T2\s+—/mu);
+  const firstScopeAsk = src.search(/^##\s+\S+\s+—\s+GitHub: repos/mu);
+
+  assert.ok(fetchTurn > 0, "the interview must have a turn that fetches build insights");
+  assert.ok(
+    fetchTurn < artifacts,
+    "insights come BEFORE the artifact pass — judging whether an artifact applies to " +
+      "THIS build is what the metadata is for; without it nothing can be ruled out",
+  );
+  assert.ok(
+    fetchTurn < firstScopeAsk,
+    "and before the first scope question, or the interview asks for what the build stated",
+  );
+
+  // The tool has to be named, not gestured at. It was referenced as "the insights"
+  // by a turn that never called anything.
+  assert.match(
+    src.slice(fetchTurn, artifacts), /fetchBuildInsights/u,
+    "the fetch turn must name the tool it calls",
+  );
+
+  // Nothing may claim insights were read at a turn that only asks for the build id.
+  assert.doesNotMatch(
+    src, /insights read at T1\./u,
+    "T1 asks for the build id; the fetch is its own turn and must be cited as such",
+  );
+});
+
+test("the artifact pass precedes every question but the build id", () => {
+  // MUTATION: drop either statement -> fails. The rule is an ORDERING, so it cannot
+  // be inferred from any one section; both files have to assert it.
+  const flat = (rel) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+  const interview = flat("skills/rca-build/references/interview.md");
+  const skill = flat("skills/rca-build/SKILL.md");
+
+  assert.match(
+    interview, /No question is asked before this pass/iu,
+    "the artifact pass must state that it precedes the questions",
+  );
+  assert.match(
+    skill, /Nothing is asked before the artifact pass/iu,
+    "and SKILL.md must carry it as a hard rule — the reference file is loaded at Step " +
+      "0b, so a rule only stated there cannot govern whether Step 0b is entered right",
+  );
+
+  // The contradiction: the pass asserted it happened somewhere other than where it is.
+  assert.doesNotMatch(
+    interview, /so this happens after T1 — not at T2/iu,
+    "the pass sat inside T2 while claiming not to be at T2",
+  );
+
+  // The three harness-defined artifact directories, not just skills. A populated
+  // knowledge/ directory and six agent definitions were unreachable by a skills-only
+  // glob. This closes the harness's set; it is not a list that grows.
+  for (const dir of ["skills", "agents", "knowledge"]) {
+    assert.match(
+      interview, new RegExp(`\\.claude/${dir}/`, "u"),
+      `the artifact glob must reach .claude/${dir}/ — a customer's triage knowledge ` +
+        "sits there at least as readily as in a skill",
+    );
+  }
+});

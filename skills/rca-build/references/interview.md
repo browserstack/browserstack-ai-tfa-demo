@@ -49,7 +49,7 @@ Work down it. Stop as soon as a capability is bounded; the human is tier 5, not 
 1. **The session's own tool list** — authoritative. If an MCP tool is listed, it
    exists and is reachable; no probe is needed to establish that.
 2. **The build's own metadata** — its name, branch, tags, environment label and CI
-   URL, from the insights read at T1. Free, exact, and describing *this* run rather
+   URL, from the insights read at T1b. Free, exact, and describing *this* run rather
    than the customer's setup in general, which is what makes it the strongest bound
    available: an environment or tenant label here is frequently the literal name of
    the grouping a runtime, log or metric read has to be scoped to. Read it as a
@@ -199,25 +199,72 @@ the free-form field — that is the expected path, not a degraded one. The build
 is the one genuinely load-bearing field: it drives `listTestIds`, and its **name**
 drives profile selection on every later run.
 
-## T2 — session inventory only
+## T1b — fetch the build's insights
 
-No question, no repo reading. Enumerate what this session has, in **one parallel
-batch**:
+**No question, and nothing else happens first.** With the id in hand, read the
+build's own metadata immediately:
+
+```
+fetchBuildInsights(buildId=<id>)
+```
+
+This is the cheapest scope material in the whole interview and the only source that
+describes *this run* rather than the customer's setup in general. Every later turn is
+worse without it, so it is not something to get around to — it is the first tool call
+of the interview.
+
+What it answers, so you can stop asking for it:
+
+| Field | What it bounds |
+|---|---|
+| the build **name** | which suite ran, and `buildMatch` for every later run's profile selection |
+| `branch`, and any branch-carrying **tag** | T3's base/build branch pair, per role — a build commonly names more than one |
+| an environment or tenant **tag** | frequently the literal name of the grouping `infra`, `logs` and `metrics` reads must be scoped to (§ Evidence hierarchy, tier 2) |
+| the **CI run URL** | the CI system and the job path — `ci`'s project and pipeline identity, without asking |
+| the **dashboard URL** | the project these results land in |
+| failure categories, error overview, flake counts | what the artifact pass at T2 judges relevance *against* |
+
+Read them as **candidate bounds, not verified ones**: a tag naming a grouping is a
+name, and `capabilities.md` § Verified means still requires the read that proves the
+credential can see it. What the metadata buys is not skipping verification — it is
+not spending a question, and not searching a live control plane for a name the build
+already gave you.
+
+**If it is unavailable or errors, say so once and continue.** Every later turn
+degrades to asking, which is the old behaviour and not a failure. What is not
+acceptable is proceeding as though it had been read: the tiers below are ordered on
+the assumption this one was tried.
+
+## T2 — session inventory and the artifact pass
+
+No question, and no repo reading yet. Enumerate what this session has and read what
+the customer has already written down, in **one parallel batch**:
 
 1. **MCP servers and their tools** — already in your tool list. Nothing to run.
 2. **CLIs** established by tier 1 of § Provenance.
-3. **Connector-shaped skills.** Glob these four, because a skill can be
-   project-scoped, workspace-scoped or personal, and only the first is obvious:
+3. **What the customer has written down for their agents.** At each of four
+   scopes — `.`, `..`, `../..`, `~` — because an artifact can be project-scoped,
+   workspace-scoped or personal and only the first is obvious:
 
    ```
    .claude/skills/*/SKILL.md
-   ../.claude/skills/*/SKILL.md
-   ../../.claude/skills/*/SKILL.md
-   ~/.claude/skills/*/SKILL.md
+   .claude/agents/*.md
+   .claude/knowledge/**/*.md
    ```
 
-   Read the frontmatter and any capability declaration of each hit. **Absence is
-   the normal case and is never a warning** — most customers have none.
+   Three directories rather than one, because those are the locations **the harness
+   itself defines**. This closes that set; it does not open a list — and the
+   difference matters, because a customer's triage knowledge sits in `knowledge/` or
+   in an agent definition at least as readily as in a skill, and a proving run walked
+   past a populated `knowledge/` directory that a skills-only glob could not see.
+
+   **Open each hit.** Read the frontmatter, any capability declaration, and enough of
+   the body to judge it — a listing of these directories is not this step, it is the
+   step before it. **Absence is the normal case and is never a warning.**
+
+   These four scopes reach up and sideways. The customer's own repos are *downward*,
+   and that is T2c's job — an artifact found there is a candidate on exactly the same
+   terms as one found here.
 
 **Some artifacts are not connectors at all, and those are the interesting ones.** An
 artifact may carry a product area's own triage knowledge rather than a way to reach a
@@ -237,11 +284,16 @@ product. Judge those the same way and use only the parts that apply:
   read it, and which part. Omit `--capability` when the knowledge is about the product
   as a whole.
 
-You need the build's metadata to judge "does this apply to THIS build", so this happens
-after T1 — not at T2, where only the artifact's own description is available. What you
-have is build-level: name, branch, tags, failure categories, error overview. What you do
-NOT have is per-test signatures; those arrive after the gate. So judge **candidates**
+**This is why T1b comes first.** Judging "does this apply to THIS build" needs the
+build's metadata; with only an artifact's own description to go on, every artifact
+looks plausibly relevant and none can be ruled out. What you have here is
+build-level: name, branch, tags, failure categories, error overview. What you do NOT
+have is per-test signatures; those arrive after the gate. So judge **candidates**
 here and decide **application** per ask later, when the signature is in front of you.
+
+**No question is asked before this pass** — T1 is the sole exception, and only when
+the invocation carried no build id. Asking first and reading afterwards is how a
+customer gets asked for something they had already written down.
 
 **A skill is not a hint; it is a procedure.** An MCP tool or a CLI tells you a
 capability is reachable. A connector-shaped skill additionally carries the repo map,
@@ -271,9 +323,11 @@ recover. So when a skill declares a capability:
 For everything else, record `source: {kind: "mcp" | "cli" | "api"}` — no path, since
 `via` already names it.
 
-There is deliberately **no script for this.** Globbing four paths and judging
-whether a skill is about your capability is reading and judgement, which is yours;
-a discovery module would only be a list of places and patterns that goes stale.
+There is deliberately **no script for this.** Globbing known directories and judging
+whether what is in them bears on your capability is reading and judgement, which is
+yours; a discovery module would only be a list of places and patterns that goes
+stale. The glob above is short and fixed because those directories are a harness
+convention. The judgement about what is *in* them is never a list.
 
 The repo pre-read is T2c, one turn later, once § Provenance's one refusal — this
 plugin's own worktree — has been ruled out. Everything else reachable from the
@@ -322,6 +376,12 @@ and it is the one part of T3 you least need help with.
 
 Record which artifact each name came from: T3, T5 and T6 must be able to cite it,
 and an option you cannot cite is not a candidate (§ Provenance).
+
+**Domain artifacts found here go through T2's pass, not a different one.** A repo's
+own runbooks, agent prompts and `.claude/` directory are the same kind of thing as
+what T2 globbed upward, and they are the likelier place for a product area's triage
+knowledge to live. Judge them on the same terms — take heuristics, never machinery,
+never anything that bounds scope — and record the parts with `record-knowledge`.
 
 Also record `subpaths`: the directories inside the product repo these tests
 actually exercise. If you cannot bound them, write `subpaths: null` explicitly — it

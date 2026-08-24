@@ -151,7 +151,7 @@ procedure-authoring template and the refusal wording.
 `<pluginRoot>/skills/rca-build/references/capabilities.md` owns what to ask per
 capability and what "verified" means for each.
 
-Four rules that live here because they are not negotiable:
+Six rules that live here because they are not negotiable:
 
 - **The context lands in the directory you were invoked in** (T2b). Not in a repo
   chosen by lookup — the directory itself, whether or not it is a git repo. The one
@@ -159,6 +159,18 @@ Four rules that live here because they are not negotiable:
   and a context written there puts the customer's scope into the plugin repository.
   If that is where you are, say so and ask which directory is theirs; it costs part
   of T3's question rather than a failed write after the whole interview.
+
+- **The build's insights are the interview's first tool call** (T1b), before the
+  artifact pass and before any scope question. They are the only source describing
+  *this run* rather than the setup in general — the branches per role, the
+  environment label that is frequently a grouping's literal name, the CI run URL that
+  identifies the pipeline. Read them late and the interview asks for what the build
+  already stated.
+
+- **Nothing is asked before the artifact pass** (T2, and T2c for what lives inside
+  their repos). The build id at T1 is the only question that may precede it, and only
+  when the invocation carried none. A customer asked for something they had already
+  written down reads as not having been listened to.
 
 - **The repo pre-read runs against the CUSTOMER's worktree, never this plugin's**
   (T2c, *before* T3 asks for the repos — its options are what the pre-read found,

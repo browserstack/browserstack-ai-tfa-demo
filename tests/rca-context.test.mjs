@@ -44,6 +44,7 @@ import {
   readRcaContext,
   recordGap,
   recordWarning,
+  recordKnowledge,
   selectProfile,
   upsertConnector,
   validateConnector,
@@ -1370,4 +1371,129 @@ test("a source survives a write/read round-trip and an upsert", () => {
   const back = readRcaContext({ from: productRepo }).context.profiles["prod-web"].connectors;
   assert.deepEqual(back.logs.source, source);
   assert.deepEqual(back.github.source, { kind: "cli" }, "and the existing one is untouched");
+});
+
+// ---- profile.knowledge: parts of a customer's own artifacts ------------------
+//
+// A customer's domain artifact — a skill, a runbook, an agent definition — can hold a
+// triage heuristic worth using and an orchestration model that would fight ours. The
+// interview judges which PARTS apply and records those. Judging is the model's job and
+// lives in references/interview.md; the only thing code owns here is that a committed
+// file cannot be hand-edited and cannot corrupt the two predicates.
+
+test("a knowledge entry round-trips, and capability is a FIELD not a location", () => {
+  // The location matters more than it looks. `missingCapabilities` tests coverage with
+  // Object.hasOwn(connectors, c) — presence of the key, whatever it holds — so putting
+  // knowledge under connectors.<cap> would mark an unverified capability covered.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const r = recordKnowledge({
+    artifact: "their triage artifact", artifactPath: ".claude/skills/x/SKILL.md",
+    part: "## Reading a timeout", capability: "logs", note: "distinguishes pressure from defect",
+    judgedAt: "2026-08-24", profile: "prod-web", from: productRepo,
+  });
+  assert.equal(r.ok, true, r.message);
+
+  const profile = readRcaContext({ from: productRepo }).context.profiles["prod-web"];
+  assert.deepEqual(profile.knowledge, [{
+    artifact: "their triage artifact", path: ".claude/skills/x/SKILL.md",
+    part: "## Reading a timeout", capability: "logs",
+    note: "distinguishes pressure from defect", judgedAt: "2026-08-24",
+  }]);
+});
+
+test("knowledge changes NEITHER predicate, for any capability it names", () => {
+  // MUTATION: make missingCapabilities consult profile.knowledge -> this fails.
+  // If it did, naming a capability in a knowledge entry would mark it provisioned and
+  // the gate would stop offering to finish setup for a connector never verified.
+  workspace();
+  const config = configFixture();
+  const caps = capabilitySequence(config);
+  const fallbacks = capabilityFallbacks(config);
+  writeRcaContext({ context: validContext(), from: productRepo });
+
+  const before = readRcaContext({ from: productRepo }).context.profiles["prod-web"];
+  const runnableBefore = isRunnable(before);
+  const missingBefore = missingCapabilities(before, caps, fallbacks);
+
+  for (const capability of caps) {
+    recordKnowledge({
+      artifact: "a", artifactPath: "p", part: `## ${capability}`,
+      capability, profile: "prod-web", from: productRepo,
+    });
+  }
+  const after = readRcaContext({ from: productRepo }).context.profiles["prod-web"];
+  assert.equal(isRunnable(after), runnableBefore, "runnable is untouched — nothing here is GitHub");
+  assert.deepEqual(missingCapabilities(after, caps, fallbacks), missingBefore,
+    "and knowledge never counts as a capability being answered");
+});
+
+test("product-wide knowledge omits capability rather than inventing one", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  recordKnowledge({ artifact: "a", artifactPath: "p", part: "## How the services relate",
+                    profile: "prod-web", from: productRepo });
+  const [entry] = readRcaContext({ from: productRepo }).context.profiles["prod-web"].knowledge;
+  assert.ok(!("capability" in entry), "absent, not empty — an empty string is refused");
+  assert.equal(validateContext(validContext({
+    profiles: { p: { ...profileFixture(), knowledge: [{ artifact: "a", path: "p", part: "t", capability: "" }] } },
+  })).ok, false);
+});
+
+test("an entry that could not be found again is refused", () => {
+  // artifact + path + part are all required: identity, so a repurposed file reads as
+  // gone rather than changed; path, so it can be re-read; part, so we know which bit.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  for (const missing of ["artifact", "artifactPath", "part"]) {
+    const args = { artifact: "a", artifactPath: "p", part: "t", profile: "prod-web", from: productRepo };
+    delete args[missing];
+    assert.equal(recordKnowledge(args).ok, false, `${missing} must be required`);
+  }
+});
+
+test("the knowledge list is closed-keyed like everything else here", () => {
+  const bad = validContext({
+    profiles: { p: { ...profileFixture(), knowledge: [{ artifact: "a", path: "p", part: "t", digest: "abc" }] } },
+  });
+  const r = validateContext(bad);
+  assert.equal(r.ok, false);
+  assert.match(r.problems[0].path, /knowledge\[0\]\.digest$/,
+    "a field nobody defined is refused, so adding one later is a deliberate act");
+});
+
+test("re-recording the same part replaces it; a different part appends", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const base = { artifact: "a", artifactPath: "p", profile: "prod-web", from: productRepo };
+  recordKnowledge({ ...base, part: "## one", note: "first" });
+  recordKnowledge({ ...base, part: "## one", note: "second" });
+  recordKnowledge({ ...base, part: "## two" });
+  const k = readRcaContext({ from: productRepo }).context.profiles["prod-web"].knowledge;
+  assert.equal(k.length, 2, "idempotent on (artifact, part) — a corrected T8 answer must not duplicate");
+  assert.equal(k[0].note, "second", "and the latest wins");
+});
+
+test("recording knowledge leaves connectors and gaps byte-identical", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const before = JSON.stringify(readRcaContext({ from: productRepo }).context.profiles["prod-web"].connectors);
+  recordKnowledge({ artifact: "a", artifactPath: "p", part: "t", profile: "prod-web", from: productRepo });
+  const after = readRcaContext({ from: productRepo }).context.profiles["prod-web"];
+  assert.equal(JSON.stringify(after.connectors), before);
+});
+
+test("the CLI verb writes knowledge and refuses without its own flags", () => {
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const ok = cli("record-knowledge", "--artifact", "a", "--artifact-path", "p",
+                 "--part", "## t", "--profile", "prod-web", "--from", productRepo);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(readRcaContext({ from: productRepo }).context.profiles["prod-web"].knowledge.length, 1);
+
+  // --path means the CONTEXT file, not the artifact. Using it here silently sent the
+  // artifact path to readRcaContext as the document to open.
+  const bad = cli("record-knowledge", "--artifact", "a", "--part", "t",
+                  "--profile", "prod-web", "--from", productRepo);
+  assert.notEqual(bad.status, 0, "a missing --artifact-path must exit non-zero");
 });

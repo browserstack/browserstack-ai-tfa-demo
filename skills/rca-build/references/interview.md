@@ -194,6 +194,30 @@ batch**:
    Read the frontmatter and any capability declaration of each hit. **Absence is
    the normal case and is never a warning** — most customers have none.
 
+**Some artifacts are not connectors at all, and those are the interesting ones.** An
+artifact may carry a product area's own triage knowledge rather than a way to reach a
+capability — decision heuristics, a taxonomy of suites, what a signature means for that
+product. Judge those the same way and use only the parts that apply:
+
+- **Take** what informs judgement: heuristics, taxonomies, what a failure means.
+- **Never take** machinery: another flow's phase ordering, its trigger conditions, its
+  output or digest contract, its own subagent model. Two orchestrations produce two
+  answers and only one reaches the dashboard.
+- **Never take anything that bounds scope.** An excerpt naming a repo, branch, path,
+  service or component **is scope**, however it is phrased — "failures here usually come
+  from <a service>" reads as triage and functions as a redirect. Scope is already
+  answered by verified profile fields that outrank any artifact, and overriding them
+  lands as a wrong PR on the dashboard.
+- Record each part you will use with `record-knowledge`, naming the artifact, where you
+  read it, and which part. Omit `--capability` when the knowledge is about the product
+  as a whole.
+
+You need the build's metadata to judge "does this apply to THIS build", so this happens
+after T1 — not at T2, where only the artifact's own description is available. What you
+have is build-level: name, branch, tags, failure categories, error overview. What you do
+NOT have is per-test signatures; those arrive after the gate. So judge **candidates**
+here and decide **application** per ask later, when the signature is in front of you.
+
 **A skill is not a hint; it is a procedure.** An MCP tool or a CLI tells you a
 capability is reachable. A connector-shaped skill additionally carries the repo map,
 the branch conventions and the query conventions its author wrote down — which is
@@ -498,7 +522,17 @@ SETUP — review before I commit it
   ci        gap        <class> on <target>
 
   credentials: <NAME> (env-var name only — no value is in this file)
+
+  knowledge: <artifact> — <part>                 will be used for <capability | this product>
+             <artifact> — <part>                 will be used for <capability | this product>
 ```
+
+**The knowledge block is TEXT, never options.** A `multiSelect` here would hit the
+four-options-per-part render cap, and a workspace holding a dozen artifacts makes
+overflow the expected case rather than an edge. Corrections go through the existing
+free-form "Correct a field" path — the same shape as correcting a branch. Omit the
+block entirely when nothing was recorded: absence is never a warning, and that applies
+to the question budget as much as to the digest.
 
 ```json
 {"questions": [{

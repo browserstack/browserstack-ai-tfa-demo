@@ -143,6 +143,7 @@ on an older file is told which it is.
 | `_README` | The file is reviewed in PRs by people who never ran the interview; the one thing they must know is that credential values do not belong in it | humans in a diff |
 | `schemaVersion` | An integer, so a future shape change is a named refusal rather than a misread | `read`, which refuses a version it does not expect |
 | `connectors.<cap>.source` | `{kind: "skill"\|"mcp"\|"cli"\|"api", path?}`. Whether there is a *procedure* behind the tool. A skill carries a repo map and query conventions a raw CLI does not; `via` is free text and could not distinguish them. `path` is required for a skill (so a later run can re-read it and notice it changed) and refused for the rest (`via` already names them). Relative to THIS file when the skill is inside its tree — the portable case. A `../` or `~/` path is machine-local: still worth recording, since re-verification runs where it resolves, and an unresolvable one degrades to a targeted re-ask rather than an error | Part A, when deciding whether to follow a skill; a coordinator's gather |
+| `knowledge` | Profile-level list of parts of the CUSTOMER's own artifacts judged worth using — `{artifact, path, part, capability?, note?, judgedAt?}`. `capability` is a FIELD, and the list is profile-level, precisely so it cannot reach `missingCapabilities`: coverage there is `Object.hasOwn(connectors, c)`, so knowledge stored under a connector would mark an unverified capability answered and silence the gate's finish-setup offer. Omit `capability` for product-wide knowledge | the dispatch prompt (as verbatim excerpts), the gate digest, Step 6's completion notice |
 | `homeRepo` | **Optional, and read by nothing.** It used to select the write destination; the destination is now the invocation directory. Kept because it is a useful line for a human opening the file, and `repos.product` already carries the same information for code | nothing — human readers only |
 | `defaultProfile` | The single-purpose fallback for **"the build name is genuinely unknown"** — nothing else | `select`, step 5 only. It is deliberately **not** consulted when a known build name matches nothing |
 | `profiles` | Labelled setups in one file, because one team runs several environments and a flat blob forces one to win | everything |
@@ -369,3 +370,26 @@ error. Prose goes to stderr so stdout stays parseable.
 
 Two of these are load-bearing enough to repeat: **`parse-error` is not
 `no-context`**, and a refused write leaves the committed file **byte-identical**.
+
+## Why a knowledge entry has no digest, and what that costs
+
+An entry is a locator — artifact identity, path, part — and nothing more. It carries no
+content hash, no lifecycle state, no tombstone. So on a later run the agent re-reads the
+part and **judges** whether it still says what it was recorded for; the file cannot tell
+it that the text changed.
+
+That is a deliberate trade and the cost is real: drift is not *provably* visible, only
+noticeable. A hash would make "this changed" decidable, and a state field would let a
+rename be distinguished from a deletion. Both were designed and both were left out,
+because they are machinery in service of a capability with no evidence behind it yet —
+and this project has repeatedly shipped that kind of mechanism and then deleted it.
+
+Adding a digest later is one field and one comparison. Removing a state machine nobody
+needed is not. If re-judgement proves too weak in practice, that is the first thing to
+add — and the absence is enforced by the closed key set, so adding it is a deliberate
+act rather than a drift.
+
+**Re-read rules, which are the agent's:** if the part is gone, drop it and say so — the
+artifact may still be present with only the part unresolvable, which is the signal a
+human needs. If it now reads as machinery or as a scope claim, do not use it, whatever it
+said when it was recorded. If it still applies, use it.

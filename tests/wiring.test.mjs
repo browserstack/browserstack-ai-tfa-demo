@@ -167,7 +167,9 @@ test("the new surface names no vendor, and neither do the templates or examples"
     ...["lib/rca-context.mjs", "bin/rca-context.mjs",
         "skills/rca-build/references/interview.md",
         "skills/rca-build/references/capabilities.md",
-        "skills/rca-build/references/context-file.md"],
+        "skills/rca-build/references/context-file.md",
+        "agents/ai-tfa-coordinator.md",
+        "skills/rca-build/SKILL.md"],
     ...filesUnder("skills/rca-build/templates", "skills/rca-build/examples"),
     // config/rca.config.json is deliberately NOT here. Its `evidenceRouting` keys
     // include `k8s` and `kibana` — TFA's wire vocabulary for an ask type, which we
@@ -357,4 +359,47 @@ test("agents get a scratch directory of their own and delete what they create", 
     "with the no-glob guarantee stated, or a 'cleanup' step becomes a sweep over user data");
   assert.match(skill, /scratchDirFor/,
     "the orchestrator must pass the helper down in its dispatch, and apply it to itself");
+});
+
+// ---- customer knowledge: excerpts, never paths ------------------------------
+//
+// A coordinator that receives a PATH reads the whole artifact — including the phase
+// ordering, trigger conditions and output contract that this feature exists to leave
+// behind — and a coordinator is a prompt-following agent. The excerpt/path distinction
+// is the entire screen, so it needs a guard: the rule is prose, and prose is what
+// nothing else can notice going missing.
+test("coordinators are handed knowledge as text, never as an artifact path", () => {
+  // MUTATION: change the coordinator's `knowledge` input to carry a path -> fails.
+  // Whitespace-normalised: these phrases wrap across lines in prose, and whether a rule
+  // counts as stated must not depend on where the line happens to break. Same fix the
+  // question-budget guard above needed for the same reason.
+  const flat = (rel) => readFileSync(join(ROOT, rel), "utf8").replace(/\s+/gu, " ");
+  const coordinator = flat("agents/ai-tfa-coordinator.md");
+  const skill = flat("skills/rca-build/SKILL.md");
+
+  assert.match(coordinator, /text, never a path/i,
+    "the coordinator's knowledge input must say it carries text and not a path");
+  assert.match(skill, /never a path to it|verbatim/i,
+    "and Step 5 must say the same where it builds the dispatch prompt");
+
+  // The scope rule is the other half: an excerpt that names a place is scope, and scope
+  // is already answered by verified profile fields that outrank any artifact. Getting
+  // this wrong lands as a wrong PR on the dashboard.
+  assert.match(coordinator, /never to decide which repo, branch or path/i,
+    "an excerpt must never be allowed to bound scope");
+});
+
+test("the knowledge surface is inside the no-vendor-name scan", () => {
+  // The excerpt input, the Step 5 clause and the candidate-pass rules are the largest
+  // new prompt surface this feature adds, and none of the three files carrying them was
+  // scanned before. A named product area in any of them teaches a default.
+  const scan = readFileSync(join(ROOT, "tests/wiring.test.mjs"), "utf8");
+  for (const rel of [
+    "agents/ai-tfa-coordinator.md",
+    "skills/rca-build/SKILL.md",
+    "skills/rca-build/references/interview.md",
+  ]) {
+    assert.ok(scan.includes(`"${rel}"`),
+      `${rel} must be in the vendor scan's target list — it now carries customer-facing prose`);
+  }
 });

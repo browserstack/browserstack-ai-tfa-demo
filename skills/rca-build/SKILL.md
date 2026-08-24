@@ -697,6 +697,14 @@ product_code / deploy / ci ask. Use `<resolved-infra-skill>` for every infra
 ask."_ Omitting a manifest-listed connector lets the coordinator infer repos
 from workspace `git remote` or cwd, landing wrong PR attributions.
 
+**Hand coordinators the knowledge itself, never a path to it.** When the profile
+records `knowledge` entries, put the relevant part's text **verbatim** in the dispatch
+prompt. Not the path: a coordinator reading the whole artifact reads the machinery this
+excludes, and it is a prompt-following agent. Withhold any part that asserts a verdict
+("signature X is always environment") from a **sibling** dispatch — a sibling's
+confirmation has to stay its own, which Step 5 and the coordinator's Principle 0 already
+require. If a part contradicts a rule of ours, ours applies and the coordinator says so.
+
 **Coordinator prompts MUST also name the Step 4 evidence file.** Every
 dispatch prompt (representative and sibling alike) includes the absolute
 `evidenceFilePath` from Step 4 with the instruction: _"Read `<path>` (via the
@@ -797,6 +805,12 @@ link — that is all. When every row is terminal:
    ```
    Full report on the Test Observability UI: <viewReport>
    ```
+
+**One carve-out, and only one: name the knowledge parts that were applied.** If any
+coordinator used a recorded part, list them — artifact and part — in this notice. It is
+the only surface the plugin owns that a human reads, and the per-ask decision to apply a
+part is made after the gate where nothing can be asked, so this line is its entire audit
+trail. `RCA_OUTPUT` carries which part each coordinator used; this aggregates them.
 
 **Do NOT print** root causes, culprit/related PRs, cluster breakdowns, per-test
 analysis, confidence rationales, or a per-test table — root_cause, related_prs,

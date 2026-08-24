@@ -112,6 +112,7 @@ write             --file DOC.json | -
 upsert-connector  --capability C --file CONN.json [--profile LABEL] [--today …]
 record-gap        --capability C --classification K [--note …] [--target …]
 record-warning    --capability C --classification K [--note …] [--target …]
+record-knowledge  --artifact A --artifact-path P --part T [--capability C] [--note N]
 ```
 
 **`select` is the verb Step 0 and the gate call.** `read` returns the document and
@@ -214,6 +215,22 @@ writeRcaContext({context, from, pluginRoot, path}) → {ok:true, path} | refusal
     codes: invalid-context · no-home-repo · no-git-worktree · ignore-check-failed
          · ignored-destination · would-regress · write-failed
 upsertConnector({capability, connector, profile, todayISO, …}) → {ok:true, …} | refusal
+recordKnowledge({artifact, artifactPath, part, capability?, note?, judgedAt?, profile, …})
+   → {ok:true, …} | refusal
+    Records ONE part of one customer artifact as worth using. `artifact` is its declared
+    identity and `artifactPath` where it was read — both, because *same path, different
+    artifact* (a repurposed file) must read as gone rather than changed. `part` names the
+    section or file inside it.
+    **`--artifact-path`, never `--path`**: `--path` is a common flag meaning the CONTEXT
+    file, and reusing it sent the artifact's path to `readRcaContext` as the document to
+    open.
+    `capability` is a FIELD and the list is PROFILE-level, deliberately. Coverage is
+    tested with `Object.hasOwn(connectors, c)` — presence of the key, whatever it holds —
+    so writing knowledge under `connectors.<cap>` would mark an unverified capability
+    covered, flip `isProvisioned`, and silence the gate's offer to finish setup. Omit
+    `capability` for knowledge about the product as a whole.
+    Idempotent on (artifact, part), so a correction at T8 replaces rather than appends.
+
 recordGap({capability, classification, note, target, profile, …}) → {ok:true, …} | refusal
 recordWarning({…same…}) → {ok:true, …} | refusal
     Same schema, opposite meaning, and the distinction is load-bearing. A GAP means

@@ -9,6 +9,7 @@
 //   node bin/rca-context.mjs write             --file DOC.json | -
 //   node bin/rca-context.mjs upsert-connector  --capability C --file CONN.json
 //                                             [--profile LABEL] [--today YYYY-MM-DD]
+//   node bin/rca-context.mjs record-knowledge  --artifact A --artifact-path P --part T
 //   node bin/rca-context.mjs record-gap        --capability C --classification K
 //   node bin/rca-context.mjs record-warning    --capability C --classification K
 //                                             [--note TEXT] [--target T] [--profile LABEL]
@@ -39,6 +40,7 @@ import {
   missingCapabilities,
   readRcaContext,
   recordGap,
+  recordKnowledge,
   recordWarning,
   selectProfile,
   upsertConnector,
@@ -61,6 +63,7 @@ const USAGE = [
   "  select                      choose a profile for this run",
   "  write --file DOC.json|-     create the context document",
   "  upsert-connector --capability C --file CONN.json [--profile L] [--today D]",
+  "  record-knowledge --artifact A --artifact-path P --part T [--capability C] [--note N] [--profile L]",
   "  record-gap --capability C --classification K [--note T] [--target T] [--profile L]",
   "  record-warning --capability C --classification K [--note T] [--target T] [--profile L]",
   "",
@@ -243,6 +246,27 @@ if (command === "upsert-connector") {
 // only difference is whether the entry degrades evidence (a gap, declared to TFA)
 // or merely predicts a thin answer (a warning, printed at the gate). Two dispatch
 // arms would drift.
+if (command === "record-knowledge") {
+  const str = (k) => (args[k] && args[k] !== true ? String(args[k]) : null);
+  // NOT `--path`: that is a common flag meaning the CONTEXT file. Reusing it here
+  // silently sent the artifact's path to readRcaContext as the document to open.
+  for (const [flag, key] of [["artifact", "artifact"], ["artifact-path", "artifactPath"], ["part", "part"]]) {
+    if (str(flag) === null) usage(`record-knowledge needs --${flag} <value>`);
+  }
+  const result = recordKnowledge({
+    artifact: str("artifact"),
+    artifactPath: str("artifact-path"),
+    part: str("part"),
+    capability: str("capability"),
+    note: str("note"),
+    judgedAt: str("today"),
+    profile: str("profile"),
+    ...common,
+  });
+  if (!result.ok) refuse(result);
+  emit(result, 0);
+}
+
 if (command === "record-gap" || command === "record-warning") {
   const capability = args.capability && args.capability !== true ? String(args.capability) : null;
   if (capability === null) usage(`${command} needs --capability <name>`);

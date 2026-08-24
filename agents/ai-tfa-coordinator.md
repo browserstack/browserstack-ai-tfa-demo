@@ -119,7 +119,7 @@ read-only and has no side effects, so a read is always safe to repeat.
    shares digested findings; the cache shares raw call results. Given
    `buildId` and your own `testRunId` as `writerId`:
 
-   - **Shell (`gh`/`kubectl`/`curl`/`git`)** — prefix the fetch with the
+   - **Shell (any read-only command — the forge CLI, a runtime CLI, `curl`, `git`)** — prefix the fetch with the
      wrapper; it behaves exactly like the raw command (same stdout, same exit
      code) but only executes on a miss:
      `node <pluginRoot>/bin/cached-exec.mjs <buildId> <testRunId> '<command>'`
@@ -142,13 +142,51 @@ read-only and has no side effects, so a read is always safe to repeat.
      Skip caching for one-off queries only this test needs.
    - **NEVER cache `tfaRcaTurn` / `getTfaTurnResult` / `triggerRcaReport`** —
      they are stateful, and the cache refuses them outright.
-   - Don't re-probe a connector the gate already validated (`gh auth status`,
-     `kubectl version`); the manifest above is the answer.
-   - Two wrapper gotchas: **(i)** hit/miss banners go to stderr — don't
-     `2>&1 | jq` (merges banner into pipe). **(ii)** commands containing single
-     quotes can't nest inside a single-quoted argument; pipe on stdin instead:
+   - Don't re-probe a connector the gate already validated; the manifest above is
+     the answer, and it records what proved each one.
+   - Hit/miss banners go to stderr. `2>/dev/null` if you don't want them; see
+     § You clean up what you create before you redirect them to a file.
+   - Two more wrapper gotchas: **(i)** don't `2>&1 | jq` — that merges the banner
+     into the pipe, which is why the banner is on stderr in the first place.
+     **(ii)** commands containing single quotes can't nest inside a single-quoted
+     argument; pipe on stdin instead:
      `printf '%s' '<command>' | node .../cached-exec.mjs <buildId> <writerId> -`.
      A pipe belongs outside the wrapper.
+
+   **Scratch goes in your own directory, and you delete what you create.**
+
+   Your cwd is the CUSTOMER's working directory, and every coordinator in this run
+   shares it. Never write scratch there.
+
+   Prefer holding a fetched file in context — the tool cache already dedupes the
+   fetch, so a second copy on disk buys nothing. When you genuinely need one (a
+   response too large to hold, a message worth re-reading), put it in the directory
+   that is yours alone:
+
+   ```
+   node -e 'import("<pluginRoot>/lib/state-dir.mjs").then(m =>
+     console.log(m.scratchDirFor("<buildId>", "<yourTestRunId>")))'
+   ```
+
+   Keyed on your own id, so no other agent can collide with you however you name a
+   file inside it — and it sits beside the CSV and the tool cache, where run state
+   already lives and the OS reclaims it, rather than in anyone's repo.
+
+   **Then delete what you created, by name, before you finish.** Not a glob, not a
+   sweep, not "tidy the directory": you are the only party that knows which paths
+   you wrote, which is why this cannot be handed to the orchestrator or a later
+   step. **The plugin never deletes a file it did not create** — it runs on
+   someone's machine, so a wildcard would take their files with yours. Your own
+   directory makes that safe to get right; it does not excuse skipping it.
+
+   One real run left 28 files and 572 KB in a customer's repo root — fetched
+   sources, saved diffs, raw API responses, redirected stderr, a drafted message.
+   Several coordinators had independently chosen the same short names, so they were
+   overwriting each other as well as littering. Nothing referenced any of it: the
+   findings live in the CSV rows, the evidence shards and the dashboard report.
+
+   If a file must outlive your turn, name its path in your `RCA_OUTPUT` block so the
+   orchestrator knows it is deliberate rather than residue.
 
    **Never read an empty `prsInWindow` as "no PRs in the window."** An empty
    list means "no PRs" ONLY when the entry also has `prsSearched: true`.
@@ -387,8 +425,10 @@ Notes:
   in `root_cause`.
 - `asks_skipped` always includes `test_logs` whenever TFA asked for logs.
   `asks_fulfilled` **never** includes `test_logs`.
-- `asks_unavailable` is the evidence-coverage signal the coverage stamp turns
-  into a confidence band.
+- `asks_unavailable` is the evidence-coverage signal: it records what could not be
+  gathered so a RESOLVED RCA built with infra, logs and metrics all unavailable does
+  not read like one built on full evidence. Report it accurately and completely —
+  the dashboard is what weighs it. There is no local confidence stamp to compute.
 - `failed` is the no-parseable-result / no-input case; the orchestrator
   synthesizes a `failed` row if this coordinator dies — keep the block valid.
 
@@ -404,10 +444,9 @@ Notes:
 - **Never** let drain reads consume the turn cap, and never drain past the
   `softPendingDrain` budget — a wedged turn must not hang the batch.
 - **Never** dump raw logs, full diffs, or full file contents into a turn message — digest only.
-- **Never** run an unfiltered gather call (a bare `gh api ...` with no `--jq`,
-  `kubectl get ... -o wide`/`-o yaml` when a narrower `-o custom-columns`
-  answers the ask) — project to the needed field(s) before the call runs, not
-  by reading past the noise after.
+- **Never** run an unfiltered gather call — a bare `gh api ...` with no `--jq`, or
+  any tool's full-object output when a narrower projection answers the ask. Project
+  to the needed field(s) before the call runs, not by reading past the noise after.
 - **Never** write to any repo / cluster / ticket / the run — every action is read-only.
 - **Never** editorialize a cause — pass TFA's `glimpse` through verbatim.
 - **Never** blindly inherit a representative's cause for a sibling — confirm against its own logs.

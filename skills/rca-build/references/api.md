@@ -76,6 +76,167 @@ csv-state.RESUMABLE  "pending-resume" — a SOFT terminal: claim released, row s
 routing.TEST_LOGS    the ask type TFA owns; never gather it, always skip
 ```
 
+**Scratch — `lib/state-dir.mjs`**
+
+```
+scratchDirFor(buildId, writerId, stateDir="") → an existing 0700 directory
+    Yours alone, keyed on writerId, under the state tree beside the CSV and the
+    tool cache. Never the invocation directory — that is the customer's, and every
+    agent in a run shares it, so short filenames collide and the loser's work is
+    gone. Prefer holding a file in context over writing it at all; the tool cache
+    already dedupes the fetch. Whatever you do write, delete by name before you
+    finish — the plugin never removes a file it did not create.
+hardenStateDir(dir) → {dirs, files, skipped}    tightens to owner-only; never deletes
+```
+
 **Config — `config/rca.config.json`**: `concurrency`, `turnCap`, `softPendingDrain`,
 `reaperHeartbeatTtlSec`, `paths.stateDir`, `evidenceRouting`. Read it once at the
 gate and pass the values down; a coordinator should never need to open it.
+
+## The setup context — `lib/rca-context.mjs`, driven through `bin/rca-context.mjs`
+
+**Drive this through the CLI, not by importing the module.** The context file is
+committed and shared; hand-written JSON in it is how a team's answers get silently
+dropped. Every verb below refuses rather than half-writing, and every write is
+temp-file-then-rename, so a refusal leaves the file byte-identical.
+
+```
+node <pluginRoot>/bin/rca-context.mjs <verb> [flags]
+
+find                                            → the resolved path, or nothing
+read              [--from DIR] [--path FILE]    → {path, trust, context}
+select            [--build-name NAME] [--profile LABEL]
+                  [--today YYYY-MM-DD] [--stale-after-days N]
+capabilities      [--config FILE]               → the interview sequence
+write             --file DOC.json | -
+upsert-connector  --capability C --file CONN.json [--profile LABEL] [--today …]
+record-gap        --capability C --classification K [--note …] [--target …]
+record-warning    --capability C --classification K [--note …] [--target …]
+```
+
+**`select` is the verb Step 0 and the gate call.** `read` returns the document and
+nothing else — it does no selection, takes no `--build-name`, and cannot tell you
+whether the run may proceed. `select` is what returns the chosen profile plus
+`runnable`, `provisioned`, `resumeAt` and `stale`. A non-zero exit means it refused;
+the message names what it would otherwise have had to guess.
+
+Refusal codes: `no-profiles` · `unknown-profile` · `no-matching-profile` ·
+`ambiguous-profile` · `unknown-default-profile` · `no-default-profile` ·
+`not-runnable`. **A refusal is never resolved by picking a profile yourself** — an
+ambiguous match means two `buildMatch` patterns claim this build, and choosing one
+silently is the wrong-context run this design exists to prevent.
+
+### The module surface
+
+```
+CONTEXT_FILENAME  ".rca-context.json"     SCHEMA_VERSION  1
+MANDATORY_CAPABILITY  "github"            DEFAULT_STALE_AFTER_DAYS  30
+CREDENTIAL_KIND  { ENV_VAR: "env-var", PROVIDER_MANAGED: "provider-managed" }
+CONTEXT_README    the header the CLI stamps into a new document
+
+isRunnable(profile) → boolean
+    THE gating predicate. True iff `connectors.github` exists AND its `verifiedBy`
+    carries a `count` or an `observedAt`. Deliberately NOT "verifiedBy is
+    non-empty": that is a presence check `{note: "TODO"}` satisfies, and an agent
+    hedging instead of failing writes exactly that.
+isProvisioned(profile, capabilities) → boolean
+    The OTHER predicate, and it gates something different: whether the interview
+    finished. True iff every capability has a `connectors` entry or a `gaps` entry.
+    A profile can be runnable and unprovisioned — GitHub verified, the rest never
+    asked — and that is what the gate offers to resume.
+missingCapabilities(profile, capabilities, fallbacks) → string[]
+    Element [0] IS the resume point. No stored `resumeAt`, so nothing can drift.
+    A capability whose FALLBACK has a connector counts as covered — pass
+    `capabilityFallbacks(config)` or `ci` becomes a trap: a team whose CI is their
+    git forge has no second system to record, so `ci` gets no connector, and the
+    only other route to provisioned would be recording a gap on a capability the
+    fallback is demonstrably serving. Single hop, matching `buildManifest`.
+capabilitySequence(config) → string[]      from evidenceRouting; TFA-owned excluded
+capabilityFallbacks(config) → {capability: fallbackCapability}   e.g. {ci: "github"}
+isRunnable/isProvisioned take the sequence, so adding a capability to config
+    changes both without touching this module.
+
+selectProfile({context, buildName, requested, todayISO, staleAfterDays})
+    → {ok:true, label, profile, matchedBy, alsoMatched[], stale[], ages{}}
+    | {ok:false, code, message, labels[]}
+    `todayISO` is injected — never read the clock in here. `matchedBy` says which
+    rule won; `alsoMatched` is what else claimed this build and MUST be printed, or
+    a bad `buildMatch` mis-routes every night unnoticed.
+matchesBuildName(pattern, buildName) → boolean
+    Case-folded, whole-string, ONE `*`. No regex. A second wildcard matches nothing
+    rather than being guessed at, and `nightly` does not match `web-nightly-*`.
+
+validateContext(context)   → {ok} | {ok:false, problems:[{path, problem}]}
+validateConnector(c, at)   → same shape
+    Closed-object validation: an object refuses a key it does not define. This IS
+    the secrets control — there is no credential detector anywhere in this module,
+    by decision. Remove the key allowlist and `{kind, name, value:"<secret>"}`
+    persists into a committed file. `scope` is the one open-keyed object, so
+    `scope.value` is accepted; the interview's prompt discipline covers it.
+
+findContextFile({from, pluginRoot}) → path | null
+readRcaContext({from, pluginRoot, path}) → {ok:true, context, path, raw, trust}
+    | {ok:false, code, message}
+    codes: no-context · unreadable · parse-error · schema-version · missing-field
+         · invalid-context
+    Distinct on purpose. `parse-error` is a THIRD state, not "no context": a
+    hand-resolved merge conflict degraded to "no context" would re-interview and
+    then overwrite the team's file. Refuse and write nothing.
+    trust: cwd · ancestor · caller-supplied   (found at the invocation directory,
+    at a parent within 3 levels, or at an explicit --path)
+
+connectors.<cap>.source: {kind: "skill"|"mcp"|"cli"|"api", path?}
+    What KIND of thing serves this capability. `via` says what the tool is; this
+    says whether there is a PROCEDURE behind it. A connector-shaped skill carries a
+    repo map and query conventions a raw CLI does not, so a coordinator behaves
+    differently when one exists — and `via` being free text made a skill and an MCP
+    server named after the same backend indistinguishable.
+    `path` is REQUIRED for kind "skill" and refused for the others: a skill is a
+    file we must be able to go back to (to re-read, and to notice it changed),
+    while an mcp/cli/api is named by `via` and a second name would only drift.
+    Optional overall — a connector the agent could not classify is better left
+    unmarked than guessed.
+contextDestination({from, pluginRoot}) → {ok:true, dir, matchedBy} | refusal
+    **The destination is the directory the agent was invoked in.** Nothing else —
+    no `homeRepo` lookup, no worktree search, no sibling scan. A customer can
+    predict the path before it is written, which the old resolver could not: on a
+    workspace holding three clones it silently picked one of them. The directory
+    need not be a git repo.
+    The ONE refusal is the plugin's own checkout (`plugin-root-destination`, and
+    `plugin-root-context` on read): the documented install flow leaves cwd there,
+    and a context written there puts the customer's repos, branches and infra scope
+    into the plugin repository.
+    **What this gave up:** a directory is not necessarily a repo, so the file is no
+    longer guaranteed committable and a teammate no longer inherits it by cloning.
+    Inside a repo it is still committable and the gitignore refusal still applies.
+
+writeRcaContext({context, from, pluginRoot, path}) → {ok:true, path} | refusal
+    codes: invalid-context · no-home-repo · no-git-worktree · ignore-check-failed
+         · ignored-destination · would-regress · write-failed
+upsertConnector({capability, connector, profile, todayISO, …}) → {ok:true, …} | refusal
+recordGap({capability, classification, note, target, profile, …}) → {ok:true, …} | refusal
+recordWarning({…same…}) → {ok:true, …} | refusal
+    Same schema, opposite meaning, and the distinction is load-bearing. A GAP means
+    the capability will not be gathered: it degrades evidence and is declared to
+    TFA. A WARNING means the capability WORKS and the answer will be thin — an empty
+    PR window is the case it exists for. Recording an empty window as a gap would
+    declare a working connector unavailable; recording a declined capability as a
+    warning would leave the profile unprovisioned forever, so the gate would keep
+    offering to resume an interview the customer already finished. A warning never
+    satisfies `isProvisioned`.
+    Additive, all three of them. They refuse any write that would drop a profile, drop a
+    connector, or replace a verified connector with an unverified one. That is what
+    makes an abandoned interview cost nothing: whatever verified is already on disk.
+
+isISODate(value) · isEnvVarName(name)    character-class checks, no patterns
+```
+
+**The file is git-tracked and deliberately NOT permission-hardened.** Every other
+persisted file here is 0600 inside a 0700 directory; git preserves neither, so a
+hardened mode on this one is a confusing artifact rather than a protection. Never
+point `hardenStateDir` at it.
+
+**`howToQuery` is documentation, not an executable.** It records WHICH call to
+make. Re-author and re-quote it at call time from `{tool, args[]}`; never join it
+into a string handed to `bin/cached-exec.mjs`, which runs `execSync(cmd, {shell:
+true})` — a committed file must not be able to choose what shell command runs.

@@ -4,7 +4,9 @@ This plugin is built so the **MCP core is truly cross-client** and the **harness
 layer ports via the cross-vendor Agent Skills standard**. Only one piece is
 genuinely Claude-Code-specific (the batch *dynamic workflow*); on Cursor and
 Codex that role is filled by the sequential harness or subagents. Every path is
-autonomous after the single `/rca-build` gate — no host ever prompts mid-run.
+autonomous after the single `/rca-build` gate — no host ever prompts mid-run. The
+setup interview is a phase of that same skill: it runs on a repo's first invocation
+and never again, so it is the one interactive surface and it is not per build.
 
 ## What transfers, what doesn't
 

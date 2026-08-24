@@ -1,12 +1,12 @@
 {
-  "$comment": "Central config for the /rca-build RCA harness. All formerly-hardcoded product/infra values live here. No kubectl/chitragupta/bifrost literals — connectors are discovered and probe-validated at the gate into the capability manifest (see skills/rca-build/references/evidence-routing.md). No reportFile: the plugin never writes a local RCA report — the full report lives on the Test Observability UI (triggerRcaReport).",
+  "$comment": "Central config for the /rca-build RCA harness. Run-level knobs only: concurrency, turn cap, drain budgets, state paths, and the evidenceType -> capability routing table. No product or vendor literals anywhere in this file, and no list of supported tools. Which of the customer's tools serves which capability is recorded per-profile in their committed .rca-context.json by the setup interview and re-verified at each gate; tests/config.test.mjs asserts that property rather than trusting this sentence, because the previous version of this comment claimed it while breaking it. No reportFile: the plugin never writes a local RCA report \u2014 the full report lives on the Test Observability UI (triggerRcaReport).",
   "mcpServerName": "bstack",
-  "$concurrencyComment": "Advisory fan-out width for Step 5. Honored on the default direct-dispatch path — the orchestrator batches this many ai-tfa-coordinator subagents in one message (the host may run slightly fewer at once). The sequential harness (lib/loop.mjs) runs one test at a time and ignores this; the opt-in Workflow path (workflows/rca-batch.mjs) is capped by its own runtime. See SKILL.md Step 5.",
+  "$concurrencyComment": "Advisory fan-out width for Step 5. Honored on the default direct-dispatch path \u2014 the orchestrator batches this many ai-tfa-coordinator subagents in one message (the host may run slightly fewer at once). The sequential harness (lib/loop.mjs) runs one test at a time and ignores this; the opt-in Workflow path (workflows/rca-batch.mjs) is capped by its own runtime. See SKILL.md Step 5.",
   "concurrency": 20,
   "turnCap": 6,
   "turnMessageMaxChars": 5000,
   "pollSoftPendingMs": 90000,
-  "$softPendingDrainComment": "tfaRcaTurn abandons its in-call poll at pollSoftPendingMs (90s) and returns a soft PENDING while the TFA agent keeps working — turns finalizing past 90s are routine. On a soft PENDING the loop READS the same turnId via getTfaTurnResult on this budget before it routes asks or submits anything further; reads do not consume turnCap. Only when the budget is spent does the run end PENDING (pending-resume row).",
+  "$softPendingDrainComment": "tfaRcaTurn abandons its in-call poll at pollSoftPendingMs (90s) and returns a soft PENDING while the TFA agent keeps working \u2014 turns finalizing past 90s are routine. On a soft PENDING the loop READS the same turnId via getTfaTurnResult on this budget before it routes asks or submits anything further; reads do not consume turnCap. Only when the budget is spent does the run end PENDING (pending-resume row).",
   "$maxErrorReadsComment": "A soft PENDING is drained on the full budget below, but a HARD read failure (a thrown error, or a result whose status/message says the TFA agent run failed) is a different signal: it will not resolve by asking again. After this many CONSECUTIVE failed reads the drain stops early and the row ends PENDING with a `tfa-error` note, still resumable. A single good read clears the streak. Measured motivation: on one real build, drain reads plus their sleeps were 23% of all coordinator tool calls, and the four tests that wedged this way were the four slowest in the batch.",
   "softPendingDrain": {
     "maxWaitMs": 600000,
@@ -26,45 +26,34 @@
       "skip": true
     },
     "product_code": {
-      "capability": "github",
-      "discoveryHints": [
-        "github-mcp",
-        "gh"
-      ]
+      "capability": "github"
     },
     "deploy": {
-      "capability": "github",
-      "discoveryHints": [
-        "github-mcp",
-        "gh"
-      ]
+      "capability": "github"
     },
     "ci": {
-      "capability": "github",
-      "discoveryHints": [
-        "github-mcp",
-        "gh"
-      ]
+      "capability": "ci",
+      "fallbackCapability": "github"
     },
     "infra": {
-      "capability": "infra",
-      "discoveryHints": []
+      "capability": "infra"
     },
     "k8s": {
-      "capability": "infra",
-      "discoveryHints": []
+      "capability": "infra"
     },
     "kibana": {
-      "capability": "logs",
-      "discoveryHints": []
+      "capability": "logs"
     },
     "metrics": {
-      "capability": "metrics",
-      "discoveryHints": []
+      "capability": "metrics"
     },
     "other": {
-      "capability": "other",
-      "discoveryHints": []
+      "capability": "other"
     }
+  },
+  "$evidenceRoutingComment": "Maps a TFA ask.evidenceType onto a capability. `owner: tfa` / `skip` means TFA owns that evidence and the client never gathers it. `discoveryHints` USED TO SIT HERE and is gone: it was a list of vendor names, produced by routeAsk into its gap payload and read by nothing but routeAsk's own test. A hint list privileges whoever is on it, needs maintaining, goes stale, and teaches a default \u2014 which is why the plugin decides what serves a capability by judgement instead. `fallbackCapability` is NOT a hint: it is a routing fact. `ci` is its own capability because a team's CI system is often not their git forge, but for the many teams where it IS, an unset `ci` connector must not silently degrade a ci ask to a gap \u2014 so it falls back to github. Resolved once in buildManifest rather than in routeAsk, so unavailableCapabilities cannot declare `ci` missing to TFA while a fallback is serving it.",
+  "$contextComment": "Settings for the committed setup context (.rca-context.json). `staleAfterDays` only relabels a gate digest line from `verified` to `stale`; it never blocks a run and never triggers a question on its own. Repair is lazy \u2014 the first routed ask that uses a connector is simultaneously its gather and its re-verification.",
+  "context": {
+    "staleAfterDays": 30
   }
 }

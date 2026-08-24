@@ -81,8 +81,8 @@ and passed in — reuse it; do not re-fetch per test.
 
 Every gather call should already be filtered to the field(s) the ask needs,
 not filtered after the fact by reading past the noise. This applies to
-whichever connector resolved for `github` and equally to `infra` gather
-calls (`kubectl` or whatever the manifest resolved to).
+whichever connector resolved for `github` and equally to every `infra`, `logs` and
+`metrics` gather call, whatever the manifest resolved to.
 
 | Need | Don't — pulls the whole object | Do — projects to the field(s) the ask needs |
 |---|---|---|
@@ -90,9 +90,16 @@ calls (`kubectl` or whatever the manifest resolved to).
 | Branch exists on the shipping branch | `gh api repos/OWNER/REPO/branches/BRANCH` | `gh api repos/OWNER/REPO/branches/BRANCH --jq '.name'` |
 | Commit history / PR-window search | `gh api "repos/OWNER/REPO/commits?sha=BRANCH&per_page=100"` | add `--jq '[.[] | {sha: .sha[0:8], date: .commit.committer.date, msg: (.commit.message | split("\n")[0])}]'` |
 | PR metadata | `gh pr view N --repo OWNER/REPO` (full payload) | `gh pr view N --repo OWNER/REPO --json state,mergedAt,baseRefName,headRefOid,files,author` — `--json` is itself a field allowlist; list only the fields this ask uses |
-| Pod / workload listing | `kubectl get pods -n NS -o wide` | `kubectl get pods -n NS -o custom-columns='NAME:.metadata.name,STATUS:.status.phase'` |
-| Deploy / image state | `kubectl get deploy -n NS -o yaml` | `kubectl get deploy -n NS -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image'` |
-| Log sweep | a raw `--tail` dump | `kubectl logs POD --since=<window> --tail=2000 \| grep -E '<correlation token>\|ERROR\|Exception'` — filter by the correlation token, never a raw tail |
+| Workload listing | the runtime's full description of every workload | its name-and-status projection, whatever that runtime calls it |
+| Deploy / image state | the whole spec or manifest | just the image or version field |
+| Log sweep | a raw tail dump | filter by the correlation token **at the source**, with an explicit window and limit — never a raw tail you then read past |
+| Metric read | every series the backend will return | the one series the ask needs, over the build's window |
+
+The GitHub rows above are concrete because GitHub is mandatory, so there is exactly
+one tool family to be concrete about. The rows in this second group are shapes
+rather than commands on purpose: the runtime, log store and metrics backend are
+whatever the customer recorded, and naming one here would teach it as the default.
+Read the projection flag off `--help` once, then filter every real call.
 
 **Never run the unfiltered form "to see the shape first."** If the exact
 field path is genuinely unknown, learn the shape from one throwaway call

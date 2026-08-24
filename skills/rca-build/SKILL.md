@@ -1,6 +1,6 @@
 ---
 name: rca-build
-description: Single-gate autonomous batch RCA over every failed test of a BrowserStack build via tfaRcaTurn. One gate (connector validation + assumed intake), then fully autonomous — clusters failures, routes evidence, triggers the dashboard report. Args: build id, optional PR URLs / repo hints.
+description: Autonomous batch RCA over every failed test of a BrowserStack build via tfaRcaTurn. First contact interviews you once and writes .rca-context.json; every run after that is one gate (context validation + resolved intake) then fully autonomous — clusters failures, routes evidence, triggers the dashboard report. Args: build id, optional PR URLs / repo hints.
 ---
 
 # rca-build — single-gate autonomous RCA over a build
@@ -18,10 +18,13 @@ per cluster representative, concurrent with Step 4. **The full RCA report
 lives on the Test Observability UI, not in Claude** — this run's job is to feed it, then surface a terse glimpse and the
 link.
 
-There is exactly **one mode**: autonomous. There is exactly **one gate** (Step
+There are two lifecycles. **First contact** (Step 0b) runs once per repo: it
+interviews you and writes `.rca-context.json`. **Every run after that** has exactly
+one mode — autonomous — and exactly one gate (Step 1) before execution; after that
+gate closes, the run never asks the user anything again.
 
-1. before execution. After the gate closes, **the run never asks the user
-   anything again.**
+Which lifecycle you are in is decided by a file, not by judgement — see
+§ The question budget.
 
 Config (concurrency, turn-cap, paths, evidence registry) lives in
 `config/rca.config.json`. State lives in the CSV/WAL spine (`lib/csv-state.mjs`).
@@ -32,6 +35,47 @@ evidence fetches, per-workload log sweeps. Only chain calls when one's
 output is a literal input to the next.
 </use_parallel_tool_calls>
 
+## The question budget
+
+The condition that separates the two lifecycles is a **file**, not a feeling.
+`.rca-context.json` (see `references/context-file.md`) either resolves to a profile
+whose `connectors.github` carries a `verifiedBy` with a `count` or an `observedAt`,
+or it does not.
+
+| Phase | Precondition | `AskUserQuestion` budget |
+|---|---|---|
+| FIRST CONTACT (Step 0b) | no context file, or the selected profile has no verified GitHub connector | **8**, plus at most 2 further T8 passes = **10** hard |
+| THE GATE (Step 1) | a runnable profile exists | at most **1**, consolidated, at gate close |
+| AFTER GATE CLOSE (Steps 2–6, Resume) | always | **0. Forever. No exception.** |
+
+Before any `AskUserQuestion` call, state which row you are in **by naming the
+file's state** — not by asserting a phase. If you cannot point at the file state
+that puts you in a row, you are in the row below it.
+
+The arithmetic, because a ceiling nobody can compute is not a ceiling:
+T1(1) + T3(1) + T4(≤2) + T5(1) + T6(1) + T7(≤1) + T8(1) = 8, and T8 may be
+re-entered **at most twice more** — for a correction, or for the one place the
+customer may deliberately spend more: closing a named gap. On the third T8 entry
+the extension option is gone, so the loop terminates by construction rather than by
+judgement. A customer who wants to go further re-runs `/rca-build`, which resumes at
+the first capability with neither a connector nor a gap — the profile is already on
+disk.
+
+The GitHub retry loop in Step 0b is never cut short by this ceiling: GitHub is the
+one capability a run cannot proceed without, so its re-asks are inside the budget
+by construction, not competing with it.
+
+`AskUserQuestion` renders at most **4 parts per call and 4 options per part**, which
+is why the interview turns MERGE parts that share an identifier rather than splitting
+into more calls (`references/interview.md`). Splitting T6 into one question per
+capability would be the obvious-looking edit and would blow this budget on the first
+customer who selects five.
+
+Every other mention of asking — in this file, in its references, and in
+`agents/ai-tfa-coordinator.md` — points here rather than re-deriving the rule.
+Restating it is what failed before: commit `164962f` added 52 lines enforcing a
+rule and `395960c` added 82 more because the same rule was violated again.
+
 ## API reference — read `references/api.md`, don't grep the source
 
 The `lib/`+`bin/` signatures the coordinator calls live in
@@ -39,110 +83,167 @@ The `lib/`+`bin/` signatures the coordinator calls live in
 signature (Step 2 onward) — not at gate time. Grepping `lib/` at runtime to
 relearn the API is the drift this file exists to prevent.
 
-## Step 0 — input
+## Step 0 — input, greeting, and context load
 
 Parse the build id from the invocation args. Accepted forms: a bare build id, a
 `build_id=<id>` token, or a build dashboard link (extract the id). Also accept
 any **PR URLs** and **repo hints** (product/automation repo names or paths) the
 user supplies — carry them into Gate Part B as pre-answered intake.
 
-- No build id present:
-  - interactive session → fold "which build?" into the gate's single
-    consolidated question (Step 1, Part B). It is the only genuinely
-    load-bearing field.
-  - **headless (`claude -p`) → end immediately (fail fast).**
+Then load the context, because it decides everything below. **Run it silently —
+emit nothing about it.** No "checking for a context file", no "none found near the
+plugin root", no path resolution. That is plumbing; the customer's first screen
+should not be spent on it, and the greeting below has to be the first thing they
+read:
 
-## Step 1 — THE GATE (one gate, two parts, closes once)
+```
+node <pluginRoot>/bin/rca-context.mjs select --build-name "<build name, if known>"
+```
 
-Everything the run could possibly need from the user is settled here, in one
-pass. The gate has two parts; both run before any RCA work starts.
+`select`, not `read`: `read` returns the document and does no selection, so it
+cannot tell you whether this run may proceed. `select` returns the chosen profile
+plus `runnable`, `provisioned`, `resumeAt` and `stale`, or exits non-zero with a
+refusal naming what it would otherwise have had to guess. Four outcomes:
 
-### Part A — connector discovery + validation
+| Outcome | What it means | What you do |
+|---|---|---|
+| runnable **and** provisioned | GitHub verified, every capability answered | skip to Step 1 |
+| runnable, **not** provisioned | GitHub verified but setup was abandoned partway | Step 1, and the gate's single question offers to finish — see `templates/gate-summary.md` |
+| no context, or not runnable | never set up here, or GitHub never verified | **Step 0b** |
+| `parse-error` | the file exists and is unreadable (a hand-resolved merge conflict is the common cause) | print the path and stop. **Write nothing.** Never treat this as "no context" — that would overwrite the team's file and throw away every answer already given |
 
-Enumerate every connector relevant to test RCA:
+**No build id?** It becomes the interview's first question at Step 0b (T1), or the
+gate's single consolidated question on a repeat run. It is the one genuinely
+load-bearing field.
 
-- from `config/rca.config.json` → `evidenceRouting`: **github**
-  (product_code/deploy/ci), **infra** (whatever runtime the user has — k8s,
-  ECS, docker, Nomad, plain VMs, PM2, …), **logs** (kibana or any log store),
-  **metrics**, **other**;
-- plus any connector-shaped skills / MCP servers present in the session
-  (a log-search MCP, a metrics MCP, an infra skill, …). A skill that declares
-  `capability: github | infra | logs | metrics | other` **supersedes** the raw
-  tool for that capability — it carries product-specific routing (repo map,
-  branch conventions) the raw tool lacks.
+### Step 0a — greeting (the ownership split), first contact only
 
-**Validate** each with a cheap probe — discovery alone is not enough. **Every
-row below is independent of every other row — fire them all as one batch of
-parallel tool calls, never one connector at a time.** A probe failing (or
-being absent) never blocks another connector's probe from running.
+**This is your first output to the customer — the first thing they read, not the
+first thing before a question.** In a real run this arrived seventh, after five tool
+calls, quoted inside a status update that opened with "No context file anywhere near
+either the plugin root or the working directory". The copy was complete and the
+customer still experienced it as missing, because it was buried in a wall of `ls`
+and `cat` output and framed as a footnote to a diagnostic.
 
-- **REQUIRED before your first probe Bash call:** write out the full list of
-  every probe you are about to run this pass — every base probe, every scope
-  probe, every target — one line each. Then issue every item on that list as
-  its own tool-call block **in this one message**.
-- **If a message you are about to send contains exactly one Bash call for a
-  probe, and your list above still has unissued items with no dependency on
-  that call's result — STOP.** Add the rest of the list to it before sending.
-- The only real dependency is per-connector: a connector's scope probes wait
-  on that SAME connector's base probe, nothing else. Two different
-  connectors' probes never wait on each other, ever.
+So: nothing precedes it on screen. Do not prefix it with what you looked for or
+where. Do not follow it with internal vocabulary — "session inventory", "write
+target", "T2b" mean nothing to them.
 
-| Connector | Probe                                                                                                                                                                                                                                                                                       |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| github    | `gh auth status` (or a GitHub MCP tool listed)                                                                                                                                                                                                                                              |
-| infra     | ANY runtime connector the user has — probe what exists, never assume one: `kubectl version --request-timeout=5s`, `docker ps`, `aws ecs list-clusters`, `nomad status`, `pm2 ls`, or an infra-shaped skill/MCP tool. Record the KIND in the manifest (`via: kubectl \| docker \| ecs \| …`) |
-| logs      | a log-search skill/MCP tool actually listed in the session                                                                                                                                                                                                                                  |
-| metrics   | a metrics skill/MCP tool actually listed in the session                                                                                                                                                                                                                                     |
-| other     | best-effort; default `absent`                                                                                                                                                                                                                                                               |
+Say what each side owns:
 
-**Scope validation — run the SCOPE PROBES declared by each connector skill.**
-The base probe above (`gh auth status`, `kubectl version`, …) only confirms the
-raw tool works. It does not confirm the _concrete targets_ a coordinator will
-touch — specific repos, branches, clusters, namespaces, indices — are actually
-reachable. That is the connector SKILL's job: each connector skill MUST
-declare, in its `Capability declaration` section, a `Scope probes:` list
-naming what to check and how. This orchestrator's contract is generic:
+> Through BrowserStack I already have the test logs, traces, screenshots and the
+> session for every failed test in this build — and the BrowserStack agent authors
+> the RCA itself. What I have none of is your side: the product code, your
+> application logs, your pipeline, whatever runs your services, your metrics.
+> I need to learn where your half lives. That takes a few questions, once, and
+> then never again.
 
-1. For every connector skill added to the manifest in Part A, read its
-   `Scope probes:` list.
-2. **Run every declared probe, across every connector and every target it
-   names, together in one batch — the same rule as the base probes above.**
-   The only real ordering constraint is *within* a single connector: its scope
-   probes are only worth running once that same connector's base probe has
-   passed (no point checking which repos github can reach if `gh auth status`
-   already failed). That is a per-connector dependency, not a global one —
-   e.g. github's repo-scope probes and infra's namespace-scope probes never
-   depend on each other, so they still fire in the same batch as soon as
-   their respective base probes clear. Never run one connector's scope
-   probes, wait for them, then move to the next connector's.
-3. Record every target's result in the manifest entry — passes go into a
-   resolved-scope field (e.g. `repos_validated: [...]`, `namespace: ok`),
-   failures go into a per-target gap (e.g. `<target>: 404 not_accessible`).
-4. A per-target failure is a scoped gap, not a connector-wide failure — the
-   connector stays `valid` for the targets that did pass.
+A canned split is true and useless. Name what you can actually see in this session,
+so the customer can tell the interview is short.
 
-Coordinators can then act freely inside the resolved scope and must fail
-closed outside it. This closes the failure mode where a coordinator degrades
-to `unavailable` because the orchestrator didn't confirm the specific target.
+Say once, here, that **GitHub is the only thing that can stop setup.**
 
-**Before your first `listTestIds`/discovery call: confirm you can name every
-scope probe you ran and its result, for every connector recorded `valid` in the
-manifest.** If a connector is `valid` in the manifest and you cannot name a
-single scope-probe result for it, STOP — go back and run its declared list (or,
-if it genuinely declares none, the manifest-time warning below is the only
-legitimate reason to have nothing to name).
+### Step 0b — FIRST CONTACT: the interview
 
-Skills that don't declare `Scope probes:` degrade to a manifest-time warning
-("scope probes missing — coordinator may over-degrade"). Do not invent
-product-specific probes here.
+Follow `<pluginRoot>/skills/rca-build/references/interview.md`. It owns the turn
+order (T0–T8), the exact question shapes, the pre-read budget, the
+procedure-authoring template and the refusal wording.
+`<pluginRoot>/skills/rca-build/references/capabilities.md` owns what to ask per
+capability and what "verified" means for each.
 
-Output the **validated capability manifest**: `connector → valid | invalid |
-absent` (`lib/routing.mjs` → `buildManifest`; `valid` maps to
-`available: true`). An `invalid` or `absent` connector is a **recorded gap** —
-declared to the user in the gate summary and to TFA on the first turn ("I don't
-have logs/metrics access") — **never a blocker**. The run always proceeds.
+Four rules that live here because they are not negotiable:
 
-### Part B — requirements (assume first, ask once, at most)
+- **The context lands in the directory you were invoked in** (T2b). Not in a repo
+  chosen by lookup — the directory itself, whether or not it is a git repo. The one
+  refusal is the plugin's own checkout: the documented install flow leaves cwd there
+  and a context written there puts the customer's scope into the plugin repository.
+  If that is where you are, say so and ask which directory is theirs; it costs part
+  of T3's question rather than a failed write after the whole interview.
+
+- **The repo pre-read runs against the CUSTOMER's worktree, never this plugin's**
+  (T3b, after T3 resolves the repos). Our own repo names tools we do not want to
+  suggest as their stack.
+- **GitHub is mandatory**, bounded at 2 re-asks / 3 attempts, each re-ask narrowed
+  by failure class. After the bound: refuse, start no RCA work, and write nothing
+  extra — whatever verified is already on disk, because writes are per-connector.
+- **Persist as you go, never in one batch at the end.** The first `write` fires as
+  soon as T4 passes — the first moment the home repo, the repos, the branches and one
+  verified connector are all known. After that every capability lands through
+  `upsert-connector` or `record-gap` as it resolves. Abandonment then costs the
+  customer nothing and there is no partial state to model. (T8 is a confirmation and
+  a final additive write for corrections, not the first write.)
+
+It ends by writing the context and **falling through into Step 1** — first contact
+never ends the session and never starts RCA work of its own.
+
+## Step 1 — THE GATE (opens once per run, two parts, closes once)
+
+Everything **this run** could possibly need from the user is settled here, in one
+pass — because first contact already settled everything that is stable across runs.
+The gate has two parts; both run before any RCA work starts.
+
+### Part A — capability validation from the persisted context
+
+Part A does not discover. **It replays.** The selected profile already records, per
+capability, what the connector is, how to query it, and the read that proved it —
+so the probe is data the interview wrote, not prose this file carries. That single
+reframing is why there is no probe table here any more.
+
+There was one: six named commands for six named products, and a `via:` field whose
+allowed values were those products. A customer running something not on that list
+was second-class, and no such list can ever be complete. Deciding that a given CLI is this
+team's runtime, or that a given MCP server is their metrics, is a judgement about
+what a tool is FOR — which you make, and which generalises to a stack nobody here
+has heard of.
+
+**Re-run every capability's stored `verifiedBy` read, all of them in ONE batch of
+parallel tool calls.** They are independent; nothing waits on anything else. Then:
+
+- pass → `valid`
+- fail, and the capability is **github** → the run refuses (below)
+- fail, anything else → a **scoped gap**. A per-target failure is not a
+  connector-wide failure: the capability stays `valid` for the targets that passed.
+  Collapsing that into a dead capability is what makes a coordinator degrade to
+  "unavailable" over one bad value.
+
+Build the manifest with `buildManifest(config, discovered)` from the capabilities
+the profile records — `discovered` is `[{capability, via}]`. It also resolves
+`fallbackCapability`, which is how a team whose CI *is* their git forge keeps
+gathering `ci` evidence without declaring a phantom gap to TFA.
+
+A connector-shaped skill under `.claude/skills/` is a **procedure**, not a hint: it
+carries the repo map, branch conventions and query conventions its author wrote
+down, which is the knowledge that makes attribution accurate and that no probe can
+recover. When the profile records `source: {kind: "skill", path}` for a capability,
+**read that file and follow it** — and if it has changed since `verifiedAt`, prefer
+what it now says over the stored `howToQuery`.
+
+Its absence is the normal case and is **never** a warning. The previous version of
+this file emitted "scope probes missing" for every customer without
+BrowserStack-authored skills on disk, which is all of them.
+
+**GitHub is mandatory.** A GitHub capability that fails replay here **refuses the
+run**: culprit-PR attribution is this plugin's primary deliverable and cannot be
+degraded silently. Bound: **one** re-ask — the context already recorded a shape that
+worked once, so a failure here means the repo moved or a credential expired. Name
+which route failed (`gh` or a GitHub MCP server) and how to fix it. Never say
+GitHub is unavailable in general; this plugin needs a **local** route, and a
+customer may well have the dashboard GitHub App connected.
+
+**Every other** capability that comes back invalid or absent is a recorded gap —
+shown in the gate summary, declared to TFA on the first turn ("I don't have
+logs/metrics access") — **never a blocker**; the run proceeds.
+
+**Mid-run is different, and this distinction matters more than either rule.** Once
+the gate has closed, every capability failure — GitHub included — is a gap and never
+a blocker. A coordinator refusing mid-run would sink the batch and break
+partial-first. A coordinator never refuses.
+
+**Before your first `listTestIds` call: for every capability recorded `valid`, you
+must be able to name the read that proved it and what came back.** If you cannot,
+you did not replay it — go back and do that.
+
+### Part B — intake resolution (context first, then assume; ask at most once)
 
 Intake fields: product repo, automation (test) repo, working branch, default
 branch, the PRs in play, and the build id. **Resolve every field by ASSUMPTION
@@ -163,13 +264,23 @@ is the point:
      below.
 - cheap inference (e.g. the automation repo is the cwd if it holds the tests).
 
-**Check the selected connector skill's own intake-defaults section FIRST — before
-falling through to inference, and before ever asking.** A connector skill that
-declares "Intake defaults for the gate (Part B)" (or equivalent) is telling you
-these fields are answerable outright for its product. If the connector's
-intake section doesn't resolve a field for THIS build (e.g. its lane table
-doesn't match the failure signature at all), don't force its default — treat
-the field via the normal path (inference, else a gap) as genuinely non-assumable.
+**Precedence, highest first — and the profile outranks any connector skill:**
+
+1. build metadata from `fetchBuildInsights` (the branch the build actually ran on),
+2. invocation args,
+3. **the selected profile in `.rca-context.json`**,
+4. a connector skill's own intake-defaults section,
+5. inference.
+
+Show the reconciliation whenever (1) or (2) overrides (3). Only a field that none
+of the five supply is a candidate for the gate's single question.
+
+The profile sitting above connector intake-defaults is the whole point: a customer
+answered those questions and a live read proved them. If a connector skill's lane
+table could override that, first contact would prove nothing. And a connector
+skill's intake section that doesn't resolve a field for THIS build — its lane table
+doesn't match the failure signature at all — is not a default to force; treat the
+field as genuinely non-assumable and let it fall through.
 
 **Product-repo corroboration (do NOT skip).** The product repo must plausibly
 be the _system under test for THIS build's failures_ — not merely a repo name
@@ -188,8 +299,11 @@ When corroboration leaves **no** product repo, decide by whether a human can hel
 - **No PRs, interactive session** → the product repo is now **non-assumable AND
   load-bearing** (without it the mandatory culprit-PR hunt is dead), so it earns
   the single consolidated gate question below — ask it; don't silently degrade.
-- **No PRs, headless** → record the gap ("product repo: unknown") and proceed
-  RCA-only; every culprit-PR hunt reports "no culprit PR identified".
+- **No PRs and no corroborated repo** → this case is now nearly unreachable,
+  because first contact recorded and verified the product repos. It survives only
+  for the case where the profile's repos do not plausibly own THIS build's failures,
+  and it is the same single question — not an extra one. Record the answer back into
+  the active profile so it is never asked twice.
 
 Record each assumption in the gate summary (format:
 `templates/gate-summary.md`; worked example: `examples/sample-run.md`)
@@ -208,10 +322,14 @@ attribution)."_ Never a second question.
 this run still needs from the user, across every reason it might be
 non-assumable, in one list — then ask them as ONE question with multiple parts
 if more than one survives.** If you are about to send a second
-`AskUserQuestion` call in the same gate pass, STOP — fold its content into the
+`AskUserQuestion` call **in this gate**, STOP — fold its content into the
 first question instead. There is no second gate question, ever.
-**Headless: skip asking entirely;
-record the gaps.**
+
+**This governs the gate only.** Step 0b's interview has its own budget
+(§ The question budget) and has already finished by the time you reach here. Do not
+read this paragraph as a prohibition on interviewing.
+Record the answer back into the active profile
+(`bin/rca-context.mjs upsert-connector`) so a field asked once is never asked again.
 
 ### Gate close
 
@@ -325,14 +443,18 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    - **Do NOT bulk-fetch file contents.** The `files` lists above tell a
      coordinator exactly which files matter, and the tool cache dedupes the
      ones two coordinators both open.
-4. For each workload: run the connector skill's compulsory kubectl +
-   VictoriaLogs sweep **once**, anchored to the build's own clock — never
-   "now". **Batch all workload sweeps together with repo fetches from step 3.**
+4. For each workload: run the runtime and log sweep for it **once**, through
+   whatever the manifest says serves `infra` and `logs`, anchored to the build's
+   own clock — never "now". **Batch all workload sweeps together with repo fetches from step 3.**
    **PAD the window: `started_at − 2m` .. `finished_at + 10m`.** Label every
    finding with whether it falls inside or outside the strict window so a
    coordinator can weigh it; do NOT silently widen to an arbitrary window.
    Persist via `setLogsEvidence(path, workload,
-{clusterIds, kubectlSweep, victorialogs, gap}, nowMs)`.
+{clusterIds, kubectlSweep, victorialogs, gap}, nowMs)`. Those last two are
+   **grandfathered field names** in the evidence-file schema, not an assumption
+   about your stack: `kubectlSweep` is the runtime sweep and `victorialogs` the log
+   query, whatever tool actually served them. Renaming them would break resume for
+   builds already in flight, so they stay until that schema is versioned.
 
    Two query mechanics that cost real calls when missed:
    - **`direction` defaults to newest-first**, so a limited query always
@@ -615,9 +737,29 @@ query later).
 dispatch prompt so coordinators can invoke `bin/cached-exec.mjs` /
 `bin/cached-mcp.mjs`, and tell them to pass their own `testRunId` as
 `writerId`. The cache lives at `<tmpdir>/bstack-rca/rca-toolcache.<buildId>/`,
-one file per call key, shared by shell and MCP alike. Read
-`node bin/cached-exec.mjs <buildId> --stats` at the end of the run to report
-cache savings.
+one file per call key, shared by shell and MCP alike.
+
+**Tell every coordinator where its scratch goes and that it owns the cleanup**
+(`agents/ai-tfa-coordinator.md` § Scratch goes in your own directory). Pass the
+plugin root so it can call `scratchDirFor(buildId, itsOwnTestRunId)` from
+`lib/state-dir.mjs`: keyed per agent, so parallel coordinators cannot collide, and
+under the state tree rather than in the customer's repo.
+
+Each agent then deletes what **it** created, by name, before finishing. Never a glob
+and never a directory sweep — this plugin does not delete files it did not create
+(`54d5bb0` removed `pruneStateDir` for that reason), so only the agent that wrote a
+path can safely remove it. You cannot do it for them.
+
+Apply both to yourself: your Step 4 pre-fetch staging is the same kind of residue,
+and you have a `writerId` too.
+
+One real run left 28 files and 572 KB in a customer's repo root, several of them
+overwriting each other because parallel agents picked the same short names.
+
+Run `node bin/cached-exec.mjs <buildId> --stats` at the end and **report the
+numbers in the finish message.** In that same run this was skipped, so the cache had
+16 entries and no hit rate anybody could see — a saving nobody can measure is one
+nobody will defend.
 
 **Concurrency is handled by layout, not by locking.** Base
 (`rca-evidence.<buildId>.json`) has exactly one writer — this orchestrator, in
@@ -668,7 +810,9 @@ On startup, run the reaper (`lib/csv-state.mjs` → `reaper`) to reclaim rows
 stranded `in_flight` by a crashed worker (heartbeat older than
 `reaperHeartbeatTtlSec`) back to `pending`, then re-point fan-out at the CSV.
 Live `threadId`/`turnId` resume the prior thread; dead threads re-run from
-pending. Resuming a run does **not** reopen the gate — no new questions.
+pending. Resuming a run does **not** reopen the gate and does **not** re-run first
+contact — no new questions. A resume always loads the existing context; it never
+interviews, even when the profile is not runnable.
 (In-session only — cross-session durability is deferred.)
 
 A `pending-resume` row now means the coordinator's **soft-PENDING drain budget
@@ -679,10 +823,22 @@ thread.
 
 ## Hard rules
 
-- Exactly one gate. At most one consolidated question, at gate close. **After
-  the gate closes, never ask the user anything.**
-- An invalid/absent connector is a recorded gap, never a blocker.
-- Headless + missing build id → end immediately. Headless never asks.
+- On first contact, the ownership split is the FIRST thing the customer reads. The
+  context load that decides it is silent. A greeting that arrives after five tool
+  calls has not happened, however complete its wording.
+- Exactly one gate **per run**. At most one consolidated question, at gate close.
+  **After the gate closes, never ask the user anything.** First contact (Step 0b) is
+  a separate, one-time phase with its own budget — see § The question budget.
+- First contact writes `.rca-context.json` and then **falls through into Step 1**.
+  It never ends the session and never starts RCA work of its own.
+- **GitHub is mandatory at gate time**: unverifiable → refuse the run, name which
+  route failed, start no RCA work. Every other connector — and GitHub itself once
+  the gate has closed — is a recorded gap, never a blocker.
+- A `parse-error` on the context file refuses and **writes nothing**. It is never
+  treated as "no context": that would overwrite the team's file.
+- Never reconstruct a stored `howToQuery` verbatim into a string passed to a
+  shell-invoking wrapper such as `bin/cached-exec.mjs`. It tells you WHICH call to
+  make; you re-author and re-quote it at call time from the structured fields.
 - Never call `tfaRcaTurn` from this skill — always via the `ai-tfa-coordinator` —
   **except Step 4b's turn-1 pre-dispatch**, which is a deliberate, narrow carve-out
   (one direct call per cluster representative, concurrent with Step 4, never a

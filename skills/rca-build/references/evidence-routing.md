@@ -7,9 +7,9 @@ submits on the next turn.
 
 The core contract: **TFA owns logs; the client agent owns everything else.** The
 coordinator never seeds logs and never fulfills a `test_logs` ask. Every other
-`evidenceType` routes to a capability that is gathered via **whatever skill/tool
-the client actually has** for it (discovered **and validated** once into the
-capability manifest — see `SKILL.md` § Gate Part A).
+`evidenceType` routes to a capability gathered via **whatever the customer actually
+has** for it — recorded in `.rca-context.json` by first contact and re-validated
+once into the capability manifest (see `SKILL.md` § Gate Part A).
 
 **Contents:** [How asks are processed](#how-a-turns-asks-are-processed) ·
 [Routing table](#routing-table-capability-not-tool) ·
@@ -55,10 +55,10 @@ An ask that cannot be fulfilled is **never silently dropped** — it becomes a
 | `test_logs` | — (TFA, skip) | never gathered; TFA self-serves from its own log access |
 | `product_code` | `github` | the client's GitHub capability — **GitHub MCP if present, else `gh`** (see `references/github-evidence.md`) |
 | `deploy` | `github` | deploy timeline via the GitHub capability (releases/tags + deploy record) |
-| `ci` | `github` | CI config + run history via the GitHub capability |
-| `infra` / `k8s` | `infra` | **whatever runtime connector the user has** — k8s/EKS, ECS, docker, Nomad, plain VMs, PM2, … Discovered and probed at the gate, NEVER assumed to be Kubernetes; the manifest records the kind (`via`) |
-| `kibana` | `logs` | whatever log-search skill the client has (kibana or other) |
-| `metrics` | `metrics` | whatever metrics skill the client has |
+| `ci` | `ci` | the customer's CI system. Falls back to the `github` capability when they have no separate one — resolved in `buildManifest`, so `ci` is not declared missing to TFA while the forge serves it |
+| `infra` / `k8s` | `infra` | **whatever runtime the customer recorded** at first contact. The manifest carries its `via`; never infer a runtime from a name you did not read in the context. (`k8s` is an evidenceType KEY — the sender's wire vocabulary, not ours, and not a claim about their stack.) |
+| `kibana` | `logs` | whatever log store the customer recorded. (`kibana` is likewise a wire key, not a requirement.) |
+| `metrics` | `metrics` | whatever metrics backend the customer recorded |
 | `other` | `other` | best-effort by ask text; else a `not-found` block |
 
 The mapping is data in `config/rca.config.json` (`evidenceRouting`), so a
@@ -134,20 +134,29 @@ does not pre-empt that decision.
 
 ## Capability manifest (built once, at the gate)
 
-Gate Part A enumerates **and probe-validates** the client's connectors **once**
-up front into a manifest (`lib/routing.mjs` → `buildManifest`). `valid` maps to
-`available: true`; `invalid`/`absent` map to `available: false` (a recorded
-gap):
+Gate Part A **re-validates** the capabilities `.rca-context.json` recorded — it
+replays each one's stored `verifiedBy` read — **once** up front into a manifest
+(`lib/routing.mjs` → `buildManifest`). `valid` maps to `available: true`;
+`invalid`/`absent` map to `available: false` (a recorded gap):
 
 ```
-{ github: {available: true, via: "gh"}, infra: {available: true, via: "kubectl"}, logs: {available: false}, ... }
+{ github: {available: true, via: "<forge tool>"},
+  ci:     {available: true, via: "<forge tool>", viaFallback: "github"},
+  infra:  {available: true, via: "<runtime tool>"},
+  logs:   {available: false}, ... }
 ```
+
+`via` values come from the customer's context. There is no set of tool names this
+file knows about.
 
 - Every ask routes against this manifest — reproducible, no per-ask discovery.
 - The gate summary **declares the gaps to the user** ("infra + metrics not
   available") and the first turn declares them to TFA so it plans asks around
   what's obtainable.
 - Frozen at gate close. A skill appearing mid-run is not picked up until the next run.
+- A `github` gap is reachable here only when the capability broke **after** the gate
+  closed — the gate itself refuses the run on an unverifiable GitHub. Mid-run it is
+  still a gap and never a refusal: a coordinator that refused would sink the batch.
 
 ## Build-level evidence cache (compute once)
 

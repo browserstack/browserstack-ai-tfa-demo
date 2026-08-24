@@ -44,34 +44,59 @@ whether a name you guessed exists.
 
 ## The evidence hierarchy (ordered)
 
-Work down it. Stop as soon as a capability is bounded; the human is tier 4, not tier 1.
+Work down it. Stop as soon as a capability is bounded; the human is tier 5, not tier 1.
 
 1. **The session's own tool list** — authoritative. If an MCP tool is listed, it
    exists and is reachable; no probe is needed to establish that.
-2. **What the customer's repo says about itself** — CI workflow files, deploy
-   manifests, IaC directories, `Makefile` / package-manifest scripts, and the
-   dashboard or log-store URLs in READMEs and runbooks. A URL in a README is a
-   *name*, not a verified connector.
-3. **Connector-shaped skills** under the customer's `.claude/skills/`, when
+2. **The build's own metadata** — its name, branch, tags, environment label and CI
+   URL, from the insights read at T1. Free, exact, and describing *this* run rather
+   than the customer's setup in general, which is what makes it the strongest bound
+   available: an environment or tenant label here is frequently the literal name of
+   the grouping a runtime, log or metric read has to be scoped to. Read it as a
+   candidate bound and match it against tier 3 before asking a human or listing a
+   control plane. A shared, product-named grouping and a per-run one commonly both
+   exist and both answer to the product's name — only one of them served this build,
+   and only the metadata says which.
+3. **What the customer's repo says about itself** — CI workflow files, deploy
+   manifests, IaC directories, test-selection and environment config, `Makefile` /
+   package-manifest scripts, and the dashboard or log-store URLs in READMEs and
+   runbooks. A URL in a README is a *name*, not a verified connector.
+4. **Connector-shaped skills** under the customer's `.claude/skills/`, when
    present. One additional source, nothing more: **their absence is the normal
    case and is never a warning.**
-4. **The human** — for the residue only, at T3/T5/T6.
-5. **`--help` / `--version` on a name already established by 1–4** — to learn its
+5. **The human** — for the residue only, at T3/T5/T6.
+6. **`--help` / `--version` on a name already established by 1–5** — to learn its
    call shape and its field-projection flag. Never to discover existence.
 
 ## The pre-read budget, as a number
 
-Against the customer's worktree, at T3b, once:
+Against the customer's worktree, at T2c, once:
 
 - **one** glob batch, then **at most 8** read/exec calls;
-- all of them in a **single parallel message**;
-- **no recursion** — you do not glob what a first glob revealed;
+- all of them in a **single parallel message**, plus **one** follow-up batch of the
+  same size when a hit is worth following;
 - **no file read past 200 lines**;
 - **no dependency graph**, no lockfile parse, no per-service walk.
 
-Nine calls total. This is a number because the prose version of the same
-instruction failed twice. Budget exhausted with a capability still unbounded is not
-a failure — it is what T5 and T6 are for.
+Nine calls, and at most nine more once. This is a number because the prose version
+of the same instruction failed twice. Budget exhausted with a capability still
+unbounded is not a failure — it is what T5 and T6 are for.
+
+**Spend it on file reads, not directory listings.** A listing tells you a path
+exists; it never tells you a repo name, a branch, a grouping or a service. A
+pre-read that spends every call on listing, finding and remote-reading has learned
+the shape of the tree and nothing in it, and arrives at T3 with only git remotes to
+offer — which produces a wrong answer the customer must correct rather than an
+absent one they get asked about. **If your calls returned only paths, the pre-read
+has not started.**
+
+**Following a hit is the point.** A glob or search that surfaces a promising
+directory or file name has told you where to read, not what is there — so open
+something in it. This rule used to read *"no recursion — you do not glob what a
+first glob revealed"*, and that is precisely the instruction that stops a pre-read
+one call short of the file holding the answer. The bound is the one follow-up batch
+above: follow a hit that plausibly bounds a capability, and do not then follow what
+*it* reveals.
 
 ## Question mechanics
 
@@ -250,8 +275,9 @@ There is deliberately **no script for this.** Globbing four paths and judging
 whether a skill is about your capability is reading and judgement, which is yours;
 a discovery module would only be a list of places and patterns that goes stale.
 
-The repo pre-read waits for T3b because there is no customer worktree to read yet —
-see § Provenance for why reading the one under cwd is worse than reading nothing.
+The repo pre-read is T2c, one turn later, once § Provenance's one refusal — this
+plugin's own worktree — has been ruled out. Everything else reachable from the
+invocation directory is fair game and is read before any repo question is asked.
 
 ## T2b — resolve the write target
 
@@ -274,24 +300,62 @@ If **no** customer worktree is reachable from here, the local clone path becomes
 additional part of T3. Discovering that at write time means the customer answered
 eight questions for nothing.
 
+## T2c — repo pre-read
+
+No question. One parallel batch, inside the budget above, against every customer
+worktree reachable from the invocation directory — that directory when it is one,
+and the checkouts sitting inside it. **Never this plugin's own worktree** (§
+Provenance).
+
+**This runs before T3, because T3's options are what you read here.** It used to run
+after, on the reasoning that no customer worktree existed yet. That holds only when
+cwd *is* the plugin clone; whenever the customer is invoked in a directory holding
+their checkouts it is false, and the guard for the first situation switched reading
+off in the second — leaving T3 able to offer nothing but git remotes.
+
+What you are looking for is bounds, not inventory: the levels `capabilities.md` says
+each capability needs, and the names in tier 3 of the evidence hierarchy. A suite's
+own test-selection, environment or deploy config frequently names the **product**
+repos and the branch it runs against — which is T3's question, answered without
+asking it. An automation repo's remote is the one thing a git listing does give you,
+and it is the one part of T3 you least need help with.
+
+Record which artifact each name came from: T3, T5 and T6 must be able to cite it,
+and an option you cannot cite is not a candidate (§ Provenance).
+
+Also record `subpaths`: the directories inside the product repo these tests
+actually exercise. If you cannot bound them, write `subpaths: null` explicitly — it
+is how the culprit-PR hunt learns to print *"path overlap is repo-wide; attribution
+may over-match"* instead of over-attributing silently.
+
+**If T3's answer names a tree you did not read** — a repo not checked out here, or a
+clone path supplied at part 4 — that is what the budget's one follow-up batch is
+for. Spend it before T4.
+
 ## T3 — GitHub: repos, branches, and the clone path
 
-One call. Session-inventory and git-remote values become pre-selected options; when
-the inventory is conclusive this degrades to a single confirm, which is still one
-call.
+One call. What T2c read becomes the pre-selected options, and **every option's
+description names the artifact it came from** — that is what makes it checkable, and
+a candidate you cannot cite is not one. When the pre-read was conclusive this
+degrades to a single confirm, which is still one call.
+
+An option whose only provenance is a git remote is the weakest kind, and a question
+built entirely from remotes means the pre-read found nothing — say so in the
+descriptions rather than presenting a directory listing as a finding.
 
 ```json
 {"questions": [
   {"question": "Which repo holds the product code these tests exercise? Culprit-PR attribution searches it.",
    "header": "Product", "multiSelect": true,
-   "options": [{"label": "acme/api", "description": "origin remote of ./api"}]},
+   "options": [{"label": "acme/api", "description": "named in <the file that named it>, under ./web-e2e"},
+               {"label": "acme/api-worker", "description": "named in the same file"}]},
   {"question": "Which repo holds the automation suite that produced this build?",
    "header": "Tests", "multiSelect": true,
-   "options": [{"label": "acme/web-e2e", "description": "origin remote of cwd"}]},
+   "options": [{"label": "acme/web-e2e", "description": "origin remote of cwd; holds the suite this build's name matches"}]},
   {"question": "Which branch do merged PRs land on, and which branch did this build run against?",
    "header": "Branches", "multiSelect": false,
-   "options": [{"label": "main → main", "description": "default branch of acme/api; no build metadata yet"},
-               {"label": "main → release/24.9", "description": "release/24.9 is checked out here"}]},
+   "options": [{"label": "release/24.9 → release/24.9", "description": "named in <the file that named the repos>, beside them"},
+               {"label": "main → main", "description": "default branch of acme/api; nothing read here named another"}]},
   {"question": "Which directory should I set up? The context file lands there, and I did not find one here.",
    "header": "Clone path", "multiSelect": false,
    "options": [{"label": "/Users/me/src/api", "description": "sibling of this plugin clone"}]}
@@ -304,19 +368,6 @@ when part 4 is absent, split them into two parts and ask each plainly.
 
 Every part names its downstream consumer, because a question whose answer nothing
 reads is cut (`capabilities.md` § Two hard rules).
-
-## T3b — repo pre-read
-
-No question. One parallel batch against the **customer's** worktree resolved by T3,
-inside the budget above. What you are looking for is bounds, not inventory: the
-levels `capabilities.md` says each capability needs, and the names in tier 2 of the
-evidence hierarchy. Record which artifact each name came from — T5 and T6 must be
-able to cite it.
-
-Also record `subpaths`: the directories inside the product repo these tests
-actually exercise. If you cannot bound them, write `subpaths: null` explicitly — it
-is how the culprit-PR hunt learns to print *"path overlap is repo-wide; attribution
-may over-match"* instead of over-attributing silently.
 
 ## T4 — verify GitHub immediately
 

@@ -47,6 +47,29 @@ question names its consumer — the routed ask, the manifest field, or the culpr
 hunt that eats it. If you cannot name the consumer, cut the question. Each entry
 below names its consumers under *what nothing downstream reads*.
 
+## Where a bound comes from before you ask
+
+Every entry below states the levels a read needs. It does not say where the answer
+comes from, and the cheapest source is the one easiest to walk past: **the build's
+own metadata.** Its name, branch, tags, environment label and CI URL are already in
+hand from the insights read at T1, and they describe *this* run rather than the
+customer's setup in general.
+
+> **Before asking a human for a level, and before listing a live control plane for
+> it, check whether the build's metadata already names it.** An environment or
+> tenant label on a build is frequently the literal name of the grouping its reads
+> have to be scoped to.
+
+This matters most where a product-named grouping and a per-run one both exist and
+both answer to the product's name. Searching a control plane for the product's name
+finds the shared one; only the metadata says which one served this build. Picking
+the wrong one reads as success — an authorised read returning the wrong workload's
+evidence — which the empty-read rule below cannot catch, because the read was not
+empty.
+
+Getting this from a human instead is worse than slow: a level they supply from
+memory is the same guess with a confirmation attached.
+
 ## The no-match escape
 
 Every table below is a closed list of stack shapes, and a closed list of shapes is

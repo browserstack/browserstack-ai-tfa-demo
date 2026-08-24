@@ -161,8 +161,9 @@ Four rules that live here because they are not negotiable:
   of T3's question rather than a failed write after the whole interview.
 
 - **The repo pre-read runs against the CUSTOMER's worktree, never this plugin's**
-  (T3b, after T3 resolves the repos). Our own repo names tools we do not want to
-  suggest as their stack.
+  (T2c, *before* T3 asks for the repos — its options are what the pre-read found,
+  each cited to the file it came from). Our own repo names tools we do not want to
+  suggest as their stack, and a listing of theirs is not a finding about them.
 - **GitHub is mandatory**, bounded at 2 re-asks / 3 attempts, each re-ask narrowed
   by failure class. After the bound: refuse, start no RCA work, and write nothing
   extra — whatever verified is already on disk, because writes are per-connector.

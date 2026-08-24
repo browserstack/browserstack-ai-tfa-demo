@@ -403,3 +403,90 @@ test("the knowledge surface is inside the no-vendor-name scan", () => {
       `${rel} must be in the vendor scan's target list — it now carries customer-facing prose`);
   }
 });
+
+// ---- the pre-read must precede the question it feeds ------------------------
+//
+// A proving run reached the repo question with only `git remote` values to offer,
+// so the one right answer was absent from the options and the customer had to type
+// it. The answer was in a file the run had already located and never opened: a
+// suite's own test-selection config, naming the product repos and the branch.
+//
+// Two prose rules made that the compliant path. The pre-read ran AFTER the question
+// it exists to inform, justified by "there is no customer worktree to read yet" —
+// true only when cwd is the plugin clone, false whenever the customer is invoked in
+// a directory holding their checkouts. And "no recursion — you do not glob what a
+// first glob revealed" stopped the read one call short of the file. Both are
+// ordering and phrasing, which no other test can notice going missing.
+test("the repo pre-read is ordered before the repo question", () => {
+  // MUTATION: move the pre-read section back after T3 -> fails.
+  const src = readFileSync(join(ROOT, "skills/rca-build/references/interview.md"), "utf8");
+
+  const preread = src.search(/^##\s+\S+\s+—\s+repo pre-read/mu);
+  const question = src.search(/^##\s+\S+\s+—\s+GitHub: repos/mu);
+  assert.ok(preread > 0, "interview.md must have a repo pre-read section");
+  assert.ok(question > 0, "interview.md must have a GitHub repos/branches question");
+  assert.ok(
+    preread < question,
+    "the pre-read must come BEFORE the repo question — its options are what the " +
+      "pre-read found. Ordered after, the question can only offer git remotes",
+  );
+
+  // Whitespace-normalised: a reflow must not un-state a rule.
+  const flat = src.replace(/\s+/gu, " ");
+
+  // The rule that stopped the read one call short. Its absence is the assertion:
+  // it is re-addable in one edit and looked reasonable for two milestones.
+  //
+  // Matched as the BUDGET BULLET, not as the words: the replacement prose quotes the
+  // deleted rule verbatim as its rationale, which is how this repo records what it
+  // removed (cf. the discoveryHints guard in config.test.mjs). A guard that cannot
+  // tell a citation from an instruction would forbid explaining the deletion.
+  assert.doesNotMatch(
+    flat, /- \*\*no recursion\*\*/iu,
+    "the no-recursion rule stopped the pre-read at the directory holding the answer",
+  );
+  assert.match(
+    flat, /Following a hit is the point/iu,
+    "and the budget must say so positively, or the omission reads as an oversight",
+  );
+
+  // A budget spent entirely on listings learns the shape of the tree and nothing in
+  // it. Every pre-read call in the proving run was `ls`, `find` or `git remote`.
+  assert.match(
+    flat, /file reads, not directory listings/iu,
+    "the budget must say what to spend the calls ON, not only how many there are",
+  );
+});
+
+test("the build's own metadata is named as a bound, not just as context", () => {
+  // MUTATION: drop the tier from the hierarchy, or the section from capabilities.md
+  // -> fails. The proving run held `ENV:<name>` from the build insights while it
+  // searched a live control plane for the product's name, found the shared grouping
+  // instead of the per-run one, and asked the customer to confirm it. Both exist and
+  // both answer to the product's name; only the metadata says which one ran.
+  // Blockquote markers are stripped BEFORE collapsing whitespace. The rule this
+  // guards is stated inside a `>` block, and `\s+ -> " "` alone leaves the wrapped
+  // marker mid-sentence ("for > it, check"), so the match silently never fires —
+  // the same class as the line-wrap bug the excerpt guard above had.
+  const flat = (rel) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+  const interview = flat("skills/rca-build/references/interview.md");
+  const capabilities = flat("skills/rca-build/references/capabilities.md");
+
+  assert.match(
+    interview, /\*\*The build's own metadata\*\*/u,
+    "the evidence hierarchy must carry the build's metadata as its own tier — it is " +
+      "free, exact, and describes THIS run rather than the setup in general",
+  );
+  assert.match(
+    capabilities, /before listing a live control plane for it, check whether the build's metadata already names it/iu,
+    "capabilities.md states the levels a read needs; it must also say to check the " +
+      "metadata before asking a human or probing for one",
+  );
+  // The failure mode is the reason this is a rule: a wrong-but-authorised read.
+  assert.match(
+    capabilities, /reads as success/iu,
+    "and must say why it matters — the wrong grouping returns evidence, not an error, " +
+      "so the empty-read rule cannot catch it",
+  );
+});

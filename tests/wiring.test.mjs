@@ -327,3 +327,34 @@ test("the greeting is instructed as the first output, over a silent context load
       "was satisfied literally by greeting after five tool calls",
   );
 });
+
+// ---- agents clean up the scratch they create --------------------------------
+//
+// Written because one run left 28 files in a customer's repo root: four `.java`
+// files and 572 KB: fetched sources, saved diffs, raw API responses, redirected
+// stderr, a drafted message. Several coordinators had independently chosen the same
+// short names, so they were overwriting each other as well as littering.
+//
+// The fix cannot be a cleanup sweep. 54d5bb0 removed `pruneStateDir` because the
+// plugin runs on a user's machine and must not delete their data, and `rm *.log` in
+// a customer's repo eats theirs too. So the rule is per-agent and by name: you
+// delete what YOU created, which only you know. That makes it judgement rather than
+// a script — and judgement in prose is exactly what needs a guard, because nothing
+// else can notice when it stops happening.
+test("agents get a scratch directory of their own and delete what they create", () => {
+  // MUTATION: drop the section from the coordinator, or the pointer from SKILL.md.
+  const coordinator = readFileSync(join(ROOT, "agents/ai-tfa-coordinator.md"), "utf8");
+  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+
+  assert.match(coordinator, /Scratch goes in your own directory/,
+    "the coordinator must be given a directory of its own — parallel agents sharing a " +
+      "cwd pick the same short names and overwrite each other, not just litter");
+  assert.match(coordinator, /scratchDirFor/,
+    "and be pointed at the helper, so the isolation is structural rather than remembered");
+  assert.match(coordinator, /delete it before you finish|delete what \*?it\*? created|by name/i,
+    "and it must be scoped to what it created, by name");
+  assert.match(coordinator, /never deletes a file it did not create/i,
+    "with the no-glob guarantee stated, or a 'cleanup' step becomes a sweep over user data");
+  assert.match(skill, /scratchDirFor/,
+    "the orchestrator must pass the helper down in its dispatch, and apply it to itself");
+});

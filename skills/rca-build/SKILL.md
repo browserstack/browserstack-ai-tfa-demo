@@ -737,9 +737,29 @@ query later).
 dispatch prompt so coordinators can invoke `bin/cached-exec.mjs` /
 `bin/cached-mcp.mjs`, and tell them to pass their own `testRunId` as
 `writerId`. The cache lives at `<tmpdir>/bstack-rca/rca-toolcache.<buildId>/`,
-one file per call key, shared by shell and MCP alike. Read
-`node bin/cached-exec.mjs <buildId> --stats` at the end of the run to report
-cache savings.
+one file per call key, shared by shell and MCP alike.
+
+**Tell every coordinator where its scratch goes and that it owns the cleanup**
+(`agents/ai-tfa-coordinator.md` § Scratch goes in your own directory). Pass the
+plugin root so it can call `scratchDirFor(buildId, itsOwnTestRunId)` from
+`lib/state-dir.mjs`: keyed per agent, so parallel coordinators cannot collide, and
+under the state tree rather than in the customer's repo.
+
+Each agent then deletes what **it** created, by name, before finishing. Never a glob
+and never a directory sweep — this plugin does not delete files it did not create
+(`54d5bb0` removed `pruneStateDir` for that reason), so only the agent that wrote a
+path can safely remove it. You cannot do it for them.
+
+Apply both to yourself: your Step 4 pre-fetch staging is the same kind of residue,
+and you have a `writerId` too.
+
+One real run left 28 files and 572 KB in a customer's repo root, several of them
+overwriting each other because parallel agents picked the same short names.
+
+Run `node bin/cached-exec.mjs <buildId> --stats` at the end and **report the
+numbers in the finish message.** In that same run this was skipped, so the cache had
+16 entries and no hit rate anybody could see — a saving nobody can measure is one
+nobody will defend.
 
 **Concurrency is handled by layout, not by locking.** Base
 (`rca-evidence.<buildId>.json`) has exactly one writer — this orchestrator, in

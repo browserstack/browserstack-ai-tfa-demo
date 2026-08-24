@@ -76,6 +76,19 @@ csv-state.RESUMABLE  "pending-resume" — a SOFT terminal: claim released, row s
 routing.TEST_LOGS    the ask type TFA owns; never gather it, always skip
 ```
 
+**Scratch — `lib/state-dir.mjs`**
+
+```
+scratchDirFor(buildId, writerId, stateDir="") → an existing 0700 directory
+    Yours alone, keyed on writerId, under the state tree beside the CSV and the
+    tool cache. Never the invocation directory — that is the customer's, and every
+    agent in a run shares it, so short filenames collide and the loser's work is
+    gone. Prefer holding a file in context over writing it at all; the tool cache
+    already dedupes the fetch. Whatever you do write, delete by name before you
+    finish — the plugin never removes a file it did not create.
+hardenStateDir(dir) → {dirs, files, skipped}    tightens to owner-only; never deletes
+```
+
 **Config — `config/rca.config.json`**: `concurrency`, `turnCap`, `softPendingDrain`,
 `reaperHeartbeatTtlSec`, `paths.stateDir`, `evidenceRouting`. Read it once at the
 gate and pass the values down; a coordinator should never need to open it.

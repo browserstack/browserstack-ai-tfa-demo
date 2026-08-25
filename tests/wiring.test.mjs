@@ -766,3 +766,37 @@ test("the gate reviews the persisted setup and can change it", () => {
     );
   }
 });
+
+// ---- the gate's stated budget and its never-ask prose must agree --------------
+//
+// The existing ledger guard checks that a never-ask rule POINTS AT the budget. That is
+// not the same as agreeing with it, and the difference shipped: Part C allows two
+// correction passes while two files still said "There is no second gate question,
+// ever." Both pointed at the budget, so the ledger guard was satisfied — and an agent
+// meeting an absolute rule and a table that permits three follows the absolute one.
+// This repo's history is explicit about that: 164962f added 52 lines enforcing a rule
+// and 395960c added 82 more because the same rule lost to a louder one.
+test("no file forbids a second gate question while the budget permits three", () => {
+  // MUTATION: restore "no second gate question, ever" in either file -> fails.
+  const files = [
+    "skills/rca-build/SKILL.md",
+    "skills/rca-build/templates/gate-summary.md",
+    "skills/rca-build/references/interview.md",
+    "agents/ai-tfa-coordinator.md",
+  ];
+  for (const rel of files) {
+    const flat = readFileSync(join(ROOT, rel), "utf8").replace(/\s+/gu, " ");
+    assert.doesNotMatch(
+      flat, /no second gate question, ever/iu,
+      `${rel} states an absolute the budget contradicts; an agent follows the absolute`,
+    );
+  }
+
+  // And the distinction that makes both true has to be stated, or "pass" reads as a
+  // licence to ask anything on the second one.
+  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8").replace(/\s+/gu, " ");
+  assert.match(skill, /A pass is not a question/iu,
+    "re-asking the SAME question after acting on it is a pass; asking something new is not");
+  assert.match(skill, /never a second question in a pass/iu,
+    "the fold-it-in rule still has to bind inside every pass, including the later ones");
+});

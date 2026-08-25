@@ -1712,3 +1712,52 @@ test("select reports every profile on file, not only the ones that matched", () 
   assert.deepEqual(r.json.labels.sort(), ["staging", "web"], "every profile, so the review can offer them");
   assert.deepEqual(r.json.alsoMatched, [], "and staging did NOT match this build — the two fields differ");
 });
+
+test("a hand-authored knowledge entry missing its path is refused on READ", () => {
+  // Not the same path as the test above, and a mutation proved it: `recordKnowledge`
+  // guards its own arguments and returns `no-artifactPath`, so removing `path` from
+  // checkKnowledge's required set left every test passing. That guard protects the API;
+  // `checkKnowledge` protects the OTHER entry point — a document a human edited, or a
+  // teammate's commit, arriving through readRcaContext. Only this exercises it.
+  const doc = validContext({
+    profiles: {
+      "prod-web": profileFixture({
+        knowledge: [{ artifact: "their runbook", part: "## How the services relate" }],
+      }),
+    },
+  });
+  const r = validateContext(doc);
+  assert.equal(r.ok, false, "an entry with no path cannot be re-read, so it cannot be trusted");
+  assert.match(JSON.stringify(r.problems), /knowledge\[0\]\.path/);
+
+  // And the same for the other two, since all three are what makes an entry findable.
+  for (const missing of ["artifact", "part"]) {
+    const entry = { artifact: "a", path: "p", part: "t" };
+    delete entry[missing];
+    const bad = validateContext(
+      validContext({ profiles: { "prod-web": profileFixture({ knowledge: [entry] }) } }),
+    );
+    assert.equal(bad.ok, false, `${missing} must be required on read too`);
+    assert.match(JSON.stringify(bad.problems), new RegExp(`knowledge\\[0\\]\\.${missing}`, "u"));
+  }
+});
+
+test("two artifacts sharing a part NAME both persist", () => {
+  // The other half of the (artifact, part) key, and a mutation proved it was untested:
+  // weakening the match to `part` alone left every test passing. Two artifacts with a
+  // section called "## Overview" is ordinary, not a corner case — and under the weaker
+  // key the second silently REPLACES the first, so a run loses knowledge it recorded
+  // and nothing says so.
+  workspace();
+  writeRcaContext({ context: validContext(), from: productRepo });
+  const common = { part: "## Overview", profile: "prod-web", from: productRepo };
+  recordKnowledge({ ...common, artifact: "their runbook", artifactPath: "docs/runbook.md" });
+  recordKnowledge({ ...common, artifact: "their triage skill", artifactPath: ".claude/skills/x/SKILL.md" });
+
+  const k = readRcaContext({ from: productRepo }).context.profiles["prod-web"].knowledge;
+  assert.equal(k.length, 2, "same part name, different artifact — both are real and both must persist");
+  assert.deepEqual(
+    k.map((e) => e.artifact).sort(),
+    ["their runbook", "their triage skill"],
+  );
+});

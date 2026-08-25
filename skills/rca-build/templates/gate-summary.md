@@ -167,8 +167,10 @@ In practice: the build id; the product repo when the profile's repos cannot be
 corroborated against this build's failures and no PRs were supplied; and the
 profile itself when the build name matched zero or more than one `buildMatch`.
 
-If more than one survives, they are parts of ONE question. There is no second gate
-question — see SKILL.md § The question budget.
+If more than one survives, they are parts of ONE question — never a second call in the
+same pass. § The review's correction passes reprint and re-ask **that same question**
+after applying a change, at most twice; asking something *new* on a later pass is the
+thing that is forbidden. See SKILL.md § The question budget for the arithmetic.
 
 **A runnable but not provisioned profile spends the question differently.** If
 GitHub is verified but some capabilities have neither a connector nor a recorded

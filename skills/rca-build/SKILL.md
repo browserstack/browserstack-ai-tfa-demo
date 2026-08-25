@@ -370,8 +370,15 @@ attribution)."_ Never a second question.
 this run still needs from the user, across every reason it might be
 non-assumable, in one list — then ask them as ONE question with multiple parts
 if more than one survives.** If you are about to send a second
-`AskUserQuestion` call **in this gate**, STOP — fold its content into the
-first question instead. There is no second gate question, ever.
+`AskUserQuestion` call **within one pass**, STOP — fold its content into the
+first question instead. There is never a second question in a pass.
+
+**A pass is not a question.** Part C may reprint and re-ask **the same** question after
+applying a change the customer asked for, at most twice (§ The question budget). That
+is one question answered, acted on, and shown back — not a second question. What is
+forbidden is asking for something *new* that the first call should have carried: that
+is the defect the fold-it-in rule above exists for, and it is forbidden in every pass,
+including the second and third.
 
 **This governs the gate only.** Step 0b's interview has its own budget
 (§ The question budget) and has already finished by the time you reach here. Do not

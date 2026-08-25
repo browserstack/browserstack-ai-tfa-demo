@@ -143,7 +143,23 @@ refusal naming what it would otherwise have had to guess. Four outcomes:
 | runnable **and** provisioned | GitHub verified, every capability answered | skip to Step 1 |
 | runnable, **not** provisioned | GitHub verified but setup was abandoned partway | Step 1, and the gate's single question offers to finish — see `templates/gate-summary.md` |
 | no context, or not runnable | never set up here, or GitHub never verified | **Step 0b** |
+| `no-matching-profile` | a setup exists, and none of its profiles claims a build with this name | **Step 0b, in adopt-or-extend mode** (below). Not a dead end, and **never** re-run with `--profile` to get past it |
+| `no-matching-project` | same, for the project — the coarse bound disagrees | same as above |
 | `parse-error` | the file exists and is unreadable (a hand-resolved merge conflict is the common cause) | print the path and stop. **Write nothing.** Never treat this as "no context" — that would overwrite the team's file and throw away every answer already given |
+
+**A refusal is a routing decision, not a failure.** `no-matching-profile` means the
+file describes some builds and not this one — which is a *question for the customer*,
+and the interview is where questions live. Print nothing raw, go to Step 0b, and let
+them choose (see § Step 0b, adopt-or-extend).
+
+**Never launder a refusal with `--profile`.** Re-running `select --profile <label>`
+after it refused overrides the exact check that just fired, and it is the agent
+deciding what only the customer can. `--profile` carries a choice a **human just
+made**; it is never how you get past a no. A live run did this — refused, re-ran with
+`--profile`, replayed five connectors green, and reported the setup as valid for a
+suite the profile does not name. `matchedBy: "requested"` in the output is the tell,
+and `overriddenBuildMatch` names the patterns that were ignored: if either appears
+without a human answer behind it, stop and ask.
 
 **No build id?** It becomes the interview's first question at Step 0b (T1), or the
 gate's single consolidated question on a repeat run. It is the one genuinely
@@ -183,6 +199,29 @@ order (T0–T8), the exact question shapes, the pre-read budget, the
 procedure-authoring template and the refusal wording.
 `<pluginRoot>/skills/rca-build/references/capabilities.md` owns what to ask per
 capability and what "verified" means for each.
+
+**Adopt-or-extend mode** — entered from a `no-matching-profile` or
+`no-matching-project` refusal, not from an empty file. A verified setup already exists;
+what is missing is whether it covers *this* build. So the interview does not start over:
+
+- **T0 says what was found**, naming the profile, what it binds, and that this build's
+  name is not in it. Then **one** question, whose options are the three real answers:
+  a **new profile** for this build; **add this build's pattern** to the existing one; or
+  **use the existing profile for this run only**, changing nothing on disk.
+- **Connectors are inherited, never re-authored.** A new profile in the same
+  environment reuses the verified `ci`, `infra`, `logs` and `metrics` procedures —
+  copy them and **re-verify**, exactly as Gate Part A replays them. Asking a customer
+  again for a log store, a cluster or a metrics surface they already named is the
+  failure this mode exists to avoid.
+- **Ask only what genuinely differs.** For a sibling suite that is usually the repos,
+  the subpaths and the base branches — nothing else. T2/T2c still run, because which
+  repos a *different* suite exercises is a question the pre-read can often answer.
+- **Extending is a write like any other**: read, amend `buildMatch` (or add the
+  profile), `write`. The writer refuses to drop a profile or downgrade a verified
+  connector (`code: "would-regress"`), so adding a sibling profile cannot cost the
+  existing one.
+- **"This run only" writes nothing** and must say so on screen, or the customer will
+  reasonably expect the next run to remember.
 
 Six rules that live here because they are not negotiable:
 

@@ -158,11 +158,16 @@ isRunnable/isProvisioned take the sequence, so adding a capability to config
     changes both without touching this module.
 
 selectProfile({context, buildName, projectName, requested, todayISO, staleAfterDays})
-    → {ok:true, label, profile, labels[], matchedBy, alsoMatched[], projectUnchecked, stale[], ages{}}
+    → {ok:true, label, profile, labels[], matchedBy, alsoMatched[], overriddenBuildMatch,
+       projectUnchecked, stale[], ages{}}
     | {ok:false, code, message, labels[]}
     `todayISO` is injected — never read the clock in here. `matchedBy` says which
     rule won; `alsoMatched` is what else claimed this build and MUST be printed, or
     a bad `buildMatch` mis-routes every night unnoticed.
+    `overriddenBuildMatch` is the patterns that were IGNORED: non-null only when
+    `requested` was used against a build the profile does not claim. The gate prints it
+    loudly — no automatic path produces that state, so it means a human chose it or an
+    agent laundered a refusal.
     `labels` is EVERY profile in the file, not just the matches — the gate offers
     "use a different profile" and an option it cannot name is not an option.
     `projectName` FILTERS on `projectMatch` before build names are scored — project

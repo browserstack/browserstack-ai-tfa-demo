@@ -257,6 +257,7 @@ if (command === "select") {
       labels: selected.labels,
       matchedBy: selected.matchedBy,
       alsoMatched: selected.alsoMatched,
+      overriddenBuildMatch: selected.overriddenBuildMatch,
       projectUnchecked: selected.projectUnchecked,
       // Two predicates, two consumers. `runnable` gated the selection above and is
       // restated for the digest; `provisioned` decides only whether the gate

@@ -844,3 +844,43 @@ test("a stored call may not pin a per-build identifier", () => {
     "and ci — where a run number is the obvious thing to pin — must say it too",
   );
 });
+
+// ---- a refusal routes into the interview, and is never laundered -------------
+//
+// `no-matching-profile` was a dead end: correct as a code outcome, useless as a
+// product one. A live run hit it, re-ran `select --profile <label>` to override the
+// check that had just fired, replayed five connectors green, and reported the setup as
+// valid for a suite the profile does not name. The customer caught it, not the plugin.
+//
+// The refusal is a question for the customer — new profile, extend the existing one, or
+// use it once — so it belongs in the interview, which is where questions live.
+test("a no-matching refusal enters the interview instead of stopping", () => {
+  // MUTATION: drop the routing row, the launder rule, or the mode -> fails.
+  const flat = (rel) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+  const skill = flat("skills/rca-build/SKILL.md");
+  const interview = flat("skills/rca-build/references/interview.md");
+  const template = flat("skills/rca-build/templates/gate-summary.md");
+
+  assert.match(skill, /no-matching-profile/u, "Step 0's outcome table must route this code");
+  assert.match(skill, /adopt-or-extend/iu, "and name the mode the interview enters");
+  assert.match(skill, /A refusal is a routing decision, not a failure/iu,
+    "or an agent prints the refusal and stops, which helps nobody");
+
+  // The laundering rule, and the signal that betrays it.
+  assert.match(skill, /Never launder a refusal with `--profile`/u,
+    "re-running with an explicit label overrides the check that just fired");
+  assert.match(skill, /overriddenBuildMatch/u, "and the field that makes it visible must be cited");
+  assert.match(template, /OVERRIDE/u, "the gate has to print it where it cannot be read past");
+
+  // The mode's whole point is not re-asking what is already verified.
+  assert.match(interview, /Connectors are inherited, never re-authored|adopt-or-extend/iu,
+    "the interview needs the mode's entry turn");
+  assert.match(skill, /Connectors are inherited, never re-authored/iu,
+    "a sibling suite in the same environment must not re-interview for the same connectors");
+  // Anchored to the OPTION, not to the phrase: "writes nothing" also occurs in the
+  // GitHub-refusal rule further down, so the loose form passes even with this rule
+  // deleted. A mutation caught that — the guard was nearly vacuous.
+  assert.match(skill, /"This run only" writes nothing/u,
+    "the run-only option must say it persists nothing, or the next run surprises them");
+});

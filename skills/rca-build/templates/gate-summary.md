@@ -105,6 +105,8 @@ belongs in the warnings line where it is actionable, not as a blank row.
 SETUP ON FILE — review before I start
   context: <abs path>/.rca-context.json
   profile: <label>          matched <pattern> (<matchedBy>)      approved <date>
+  [!! OVERRIDE: <label> binds <overriddenBuildMatch> and does NOT claim this build —
+      running on an explicit --profile. Confirm this is what you asked for.]
   others on file: <label>, <label>            [project unchecked — insights unavailable]
 
   binds builds: <buildMatch>
@@ -122,6 +124,13 @@ SETUP ON FILE — review before I start
   knowledge: <artifact> — <part>
   warnings:  <one line each, including "no subpaths — attribution runs repo-wide">
 ```
+
+**An override gets its own line, and it is loud.** `overriddenBuildMatch` is non-null
+only when an explicit `--profile` was used against a build the profile does not claim —
+a state no automatic path can produce. A live run reached it by re-running `select
+--profile` to get past a refusal, then replayed five connectors green and called the
+setup valid for a suite the profile does not name. On this screen that must be
+impossible to read past.
 
 **`matchedBy` is on the first line for a reason.** `default-profile` means nothing
 matched this build and the file may not describe it at all — the single most useful

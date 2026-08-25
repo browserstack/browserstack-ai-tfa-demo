@@ -194,6 +194,38 @@ in this file:
 node <pluginRoot>/bin/rca-context.mjs capabilities
 ```
 
+### T0 in adopt-or-extend mode
+
+Entered when `select` refused with `no-matching-profile` or `no-matching-project`
+(`SKILL.md` § Step 0b). A verified setup is already on disk and the only open question
+is whether it covers this build, so **do not give the first-contact greeting** — it
+would tell someone who has already done the setup that BrowserStack needs to learn
+where their half lives.
+
+Say instead, in one short message: what is on file, what it binds, that this build's
+name is not in it, and that their connectors look reusable. Then one call:
+
+```json
+{"questions": [{
+  "question": "<label> is set up and verified, but it binds <patterns> — this build is <name>. How should I handle it?",
+  "header": "Profile", "multiSelect": false,
+  "options": [
+    {"label": "New profile for this suite", "description": "reuses <label>'s verified connectors; I ask only what differs — repos, subpaths, branches"},
+    {"label": "Add this build to <label>", "description": "one pattern added; every later run of this suite resolves with no question"},
+    {"label": "Use <label> for this run only", "description": "nothing is written; the next run asks again"}
+  ]
+}]}
+```
+
+**Which one is right is theirs to decide, and the difference is real.** A sibling suite
+in the same environment often exercises different repos and different subpaths, so
+adding a pattern to a profile whose repos are wrong buys a clean resolution and a wrong
+attribution. Say that in the option descriptions rather than steering.
+
+Then continue at **T2** — the artifact pass and the pre-read still run, because which
+repos a *different* suite exercises is exactly what reading can answer. Skip T1 and T1b:
+the build id came from the invocation and the insights were read at Step 0 to select.
+
 ## T1 — build id
 
 Skip entirely if the invocation args already carry one.

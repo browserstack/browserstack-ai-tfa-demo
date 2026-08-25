@@ -1799,3 +1799,33 @@ test("two artifacts sharing a part NAME both persist", () => {
     ["their runbook", "their triage skill"],
   );
 });
+
+test("an explicit profile against a build it does not claim reports the override", () => {
+  // MUTATION: drop the overriddenBuildMatch computation -> fails.
+  // A live run met `no-matching-profile`, re-ran with `--profile` to get past it,
+  // replayed five connectors green and reported the setup valid for a suite the profile
+  // does not name. `matchedBy: "requested"` was in that output and read as ordinary, so
+  // the override needs a field of its own that the gate prints loudly.
+  workspace();
+  const context = validContext({
+    profiles: { lane: profileFixture({ buildMatch: ["ApiLaneSuite-*"] }) },
+    defaultProfile: "lane",
+  });
+  writeRcaContext({ context, from: productRepo });
+
+  const forced = cli("select", "--from", productRepo, "--profile", "lane",
+    "--build-name", "PipelineSuite-rengg", "--today", "2026-08-25");
+  assert.equal(forced.status, 0, "an explicit label still wins — that is deliberate");
+  assert.equal(forced.json.matchedBy, "requested");
+  assert.deepEqual(forced.json.overriddenBuildMatch, ["ApiLaneSuite-*"],
+    "and the patterns it ignored are named, so the gate can say what was overridden");
+
+  // The same explicit label on a build it DOES claim is not an override.
+  const fine = cli("select", "--from", productRepo, "--profile", "lane",
+    "--build-name", "ApiLaneSuite-42", "--today", "2026-08-25");
+  assert.equal(fine.json.overriddenBuildMatch, null, "no override, no warning");
+
+  // And no build name at all cannot be an override — there is nothing to contradict.
+  const bare = cli("select", "--from", productRepo, "--profile", "lane", "--today", "2026-08-25");
+  assert.equal(bare.json.overriddenBuildMatch, null);
+});

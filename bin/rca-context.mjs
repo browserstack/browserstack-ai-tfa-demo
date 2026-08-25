@@ -254,6 +254,7 @@ if (command === "select") {
       trust: read.trust,
       homeRepo: read.context.homeRepo,
       label: selected.label,
+      labels: selected.labels,
       matchedBy: selected.matchedBy,
       alsoMatched: selected.alsoMatched,
       projectUnchecked: selected.projectUnchecked,

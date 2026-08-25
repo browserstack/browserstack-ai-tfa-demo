@@ -1688,3 +1688,27 @@ test("every flag the CLI documents is accepted by the verb it documents", () => 
     }
   }
 });
+
+test("select reports every profile on file, not only the ones that matched", () => {
+  // MUTATION: stop returning `labels` -> fails.
+  // The gate's review offers "use a different profile", and an option it cannot name is
+  // not an option. `alsoMatched` cannot serve: it holds only profiles whose buildMatch
+  // ALSO claimed this build, which is the narrower "narrow your patterns" signal — a
+  // profile for a different environment is exactly what the customer wants offered and
+  // exactly what alsoMatched excludes.
+  workspace();
+  const context = validContext({
+    profiles: {
+      web: profileFixture({ buildMatch: ["Nightly*"] }),
+      staging: profileFixture({ buildMatch: ["Staging*"] }),
+    },
+    defaultProfile: "web",
+  });
+  writeRcaContext({ context, from: productRepo });
+
+  const r = cli("select", "--from", productRepo, "--build-name", "Nightly Regression", "--today", "2026-08-20");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.json.label, "web");
+  assert.deepEqual(r.json.labels.sort(), ["staging", "web"], "every profile, so the review can offer them");
+  assert.deepEqual(r.json.alsoMatched, [], "and staging did NOT match this build — the two fields differ");
+});

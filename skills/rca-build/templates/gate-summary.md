@@ -1,11 +1,18 @@
 # Template — THE gate (printed once, when the gate closes)
 
-One terse screen before autonomous execution starts. After it prints, the run never
-asks the user anything.
+The screens printed before autonomous execution starts. After the gate screen prints,
+the run never asks the user anything.
 
-When first contact ran this session, it printed its own confirm-and-write digest
-just before this one (`references/interview.md`). On a repeat run this is the only
-user-visible checkpoint.
+Which screens appear depends on which lifecycle this run is in, and the two never both
+appear:
+
+- **First contact ran this session** — `references/interview.md`'s T8 digest already
+  showed the setup and took its approval, so § The review is skipped and only § The
+  screen prints. Confirming the same thing twice in one session reads as not having
+  listened the first time.
+- **Repeat run** — § The review prints first, showing everything a previous run
+  persisted and offering to change it, then § The screen. A setup approved weeks ago by
+  someone who may not be the person here now is worth one look.
 
 ## Tags
 
@@ -83,6 +90,75 @@ The `via` column names **whatever the profile records** for that capability. The
 is no fixed set of runtimes or log stores to choose from. This template used to
 enumerate several by name, which taught a default in one of the few files an agent
 reads at gate time — outliving every deletion made elsewhere.
+
+## The review (repeat runs only — SKILL.md § Part C)
+
+Printed **before** the gate screen below, and only when first contact did not run this
+session. Its job is that every value the run will act on is visible and correctable —
+so it prints the profile, not a précis of it.
+
+**Print what is there, not this shape.** A field the profile does not carry is omitted
+rather than shown empty: `subpaths` absent means attribution runs repo-wide, and that
+belongs in the warnings line where it is actionable, not as a blank row.
+
+```
+SETUP ON FILE — review before I start
+  context: <abs path>/.rca-context.json
+  profile: <label>          matched <pattern> (<matchedBy>)      approved <date>
+  others on file: <label>, <label>            [project unchecked — insights unavailable]
+
+  binds builds: <buildMatch>
+  binds project: <projectMatch>
+  product repo(s):    <org/repo>, <org/repo>
+  automation repo(s): <org/repo>
+  subpaths:           <path>, <path>
+  base branch:        <branch>          build ran on: <branch>
+
+  github    <via>   <what proved it>              verified <date> (<N> days ago)
+  logs      <via>   <what proved it>              verified <date> — STALE
+  infra     <via>   <what proved it>              verified <date>
+  metrics   gap     <class> — declared to the BrowserStack agent as unavailable
+
+  knowledge: <artifact> — <part>
+  warnings:  <one line each, including "no subpaths — attribution runs repo-wide">
+```
+
+**`matchedBy` is on the first line for a reason.** `default-profile` means nothing
+matched this build and the file may not describe it at all — the single most useful
+thing on this screen, and invisible if only the label is printed.
+
+**Say how old each verification is, not just its date.** "verified 2026-06-02" reads as
+fine; "verified 2026-06-02 (83 days ago)" is what makes someone look. Staleness never
+blocks (`context.staleAfterDays` only relabels), so the number is the whole signal.
+
+### The review question
+
+One call. At least two options — a one-option part is refused and the whole call is
+lost, so options that do not apply are omitted rather than padded:
+
+```json
+{"questions": [{
+  "question": "This is the setup on file. Start the run with it, or change something?",
+  "header": "Setup", "multiSelect": false,
+  "options": [
+    {"label": "Looks right — start", "description": "<N> capabilities verified, <M> gaps"},
+    {"label": "Use profile <other-label>", "description": "also on file; binds <its buildMatch>"},
+    {"label": "Change something", "description": "say which field and what it should be — repos, branches, a new profile"},
+    {"label": "Finish setup", "description": "<capability>, <capability> have neither a connector nor a gap"}
+  ]
+}]}
+```
+
+Only the first option is always present. Drop `Use profile` when the file holds one,
+`Finish setup` when the profile is provisioned, and — past the second pass —
+`Change something`, which is what makes the loop terminate. With `Change something`
+dropped and nothing else to offer, there is no question: say the setup is unchanged
+and close.
+
+**"Change something" is free-form on purpose.** The customer says what is wrong in
+their own words — a branch, another repo, a whole new environment — and a menu of
+fields could not cover "add a profile for staging" without becoming the interview
+again. Apply it, persist it, re-verify what the change invalidated, print again.
 
 ## The one question
 

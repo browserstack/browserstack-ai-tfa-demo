@@ -636,17 +636,26 @@ test("the gate prints what selection matched on, not only what it chose", () => 
 // This parses the examples rather than trusting the prose, because the examples are
 // what gets copied.
 test("no documented question shape has a part with fewer than two options", () => {
-  // MUTATION: drop an option from any example in interview.md -> fails.
-  const src = readFileSync(join(ROOT, "skills/rca-build/references/interview.md"), "utf8");
-
+  // MUTATION: drop an option from any example in either file -> fails.
+  // BOTH files: the template carries the gate review's question and is copied just as
+  // directly as the interview's. Auditing only one of them is how the next one-option
+  // part ships.
+  const files = [
+    "skills/rca-build/references/interview.md",
+    "skills/rca-build/templates/gate-summary.md",
+  ];
   const offenders = [];
-  for (const block of src.matchAll(/```json\n([\s\S]*?)\n```/gu)) {
-    const line = src.slice(0, block.index).split("\n").length;
-    for (const opts of block[1].matchAll(/"options":\s*\[([\s\S]*?)\]\}/gu)) {
-      const n = (opts[1].match(/\{\s*"label"/gu) ?? []).length;
-      if (n < 2) offenders.push(`interview.md:${line} (${n} option${n === 1 ? "" : "s"})`);
+  for (const rel of files) {
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    for (const block of src.matchAll(/```json\n([\s\S]*?)\n```/gu)) {
+      const line = src.slice(0, block.index).split("\n").length;
+      for (const opts of block[1].matchAll(/"options":\s*\[([\s\S]*?)\]\}/gu)) {
+        const n = (opts[1].match(/\{\s*"label"/gu) ?? []).length;
+        if (n < 2) offenders.push(`${rel}:${line} (${n} option${n === 1 ? "" : "s"})`);
+      }
     }
   }
+  const src = readFileSync(join(ROOT, files[0]), "utf8");
   assert.deepEqual(
     offenders, [],
     "a part with <2 options is rejected by the tool and the whole call fails, losing " +
@@ -707,4 +716,53 @@ test("the artifact pass has to account for what it opened", () => {
     flat, /Omit the block entirely when nothing was recorded/iu,
     "that rule is what made the two cases print the same screen",
   );
+});
+
+// ---- a repeat run can see and correct what a previous run persisted ---------
+//
+// The gate printed a summary and spent its one question on whichever field was
+// non-assumable. Everything else a previous run persisted — repos, branches,
+// subpaths, which profile was chosen and why — was applied without ever being shown,
+// on a setup that may have been approved weeks ago by someone else.
+//
+// No new code carries this. `writeRcaContext` already refuses to drop a profile, drop
+// a connector, or downgrade a verified one, so read-amend-write is the safe additive
+// path for correcting a field, adding a repo, and adding a whole profile alike. A
+// per-field verb was written for this and deleted: it duplicated a protection that
+// lives in the writer and could not create a profile, which is one of the things the
+// review has to allow.
+test("the gate reviews the persisted setup and can change it", () => {
+  // MUTATION: drop Part C, the bound, or the skip-on-first-contact rule -> fails.
+  const flat = (rel) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+  const skill = flat("skills/rca-build/SKILL.md");
+  const template = flat("skills/rca-build/templates/gate-summary.md");
+
+  assert.match(skill, /Part C — review and confirm/u, "the gate needs a review part");
+  assert.match(skill, /Skip entirely when first contact ran this session/iu,
+    "and it must NOT fire right after T8 already took the same approval");
+  assert.match(skill, /Bounded at two further passes/iu,
+    "a correction loop with no bound is the interview again, at every run");
+
+  // Persistence has to be named, or a correction is re-typed on every run — which is
+  // what happened when this pointed at `upsert-connector`, a call that cannot write
+  // `profile.repos`.
+  assert.doesNotMatch(
+    skill, /Record the answer back into the active profile \(`bin\/rca-context\.mjs upsert-connector`\)/u,
+    "upsert-connector cannot write repos; naming it there made the answer non-persistent",
+  );
+  assert.match(skill, /would-regress/u,
+    "and the writer's additive refusal must be cited, or the agent will not trust a plain write");
+
+  // A change that invalidates a verification must not carry the old proof forward.
+  assert.match(skill, /A change to scope invalidates what was verified against the old scope/iu,
+    "a just-corrected branch has never been proved reachable");
+
+  // The review is only real if the values are on screen.
+  for (const field of ["matchedBy", "others on file", "subpaths", "knowledge"]) {
+    assert.match(
+      template, new RegExp(field.replace(/ /gu, " "), "iu"),
+      `the review screen must show ${field} — a value not on screen cannot be corrected`,
+    );
+  }
 });

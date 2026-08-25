@@ -45,7 +45,7 @@ or it does not.
 | Phase | Precondition | `AskUserQuestion` budget |
 |---|---|---|
 | FIRST CONTACT (Step 0b) | no context file, or the selected profile has no verified GitHub connector | **8**, plus at most 2 further T8 passes = **10** hard |
-| THE GATE (Step 1) | a runnable profile exists | at most **1**, consolidated, at gate close |
+| THE GATE (Step 1) | a runnable profile exists | **1**, consolidated, plus at most 2 review passes = **3** hard |
 | AFTER GATE CLOSE (Steps 2–6, Resume) | always | **0. Forever. No exception.** |
 
 Before any `AskUserQuestion` call, state which row you are in **by naming the
@@ -68,6 +68,18 @@ by construction, not competing with it.
 T1 and T3 are `≤1` because either can cost **nothing**: a build id supplied in the
 args needs no question, and a part the pre-read settled is stated rather than asked.
 Coming in under the ceiling is the goal, not a shortfall.
+
+**The gate's 3 is the same shape as first contact's 10** — one question plus a bounded
+correction loop — and for the same reason: a screen the customer can read but not
+correct is a screen they learn to ignore. Part C shows the whole persisted setup and
+takes a change to it, so it needs a pass to show the result. The bound is two, the
+third screen drops the change option, and the loop ends by construction. A repeat run
+that is simply right still costs exactly one question, which is the common case and
+the promise.
+
+The gate's question is spent on Part C's review whenever there is a persisted setup to
+review, and on Part B's non-assumable field otherwise. It is never both: Part B folds
+its field into Part C's call as an extra part.
 
 `AskUserQuestion` renders at most **4 parts per call and 4 options per part**, and
 requires **at least 2 options per part** — a one-option part is rejected and the whole
@@ -210,11 +222,13 @@ Six rules that live here because they are not negotiable:
 It ends by writing the context and **falling through into Step 1** — first contact
 never ends the session and never starts RCA work of its own.
 
-## Step 1 — THE GATE (opens once per run, two parts, closes once)
+## Step 1 — THE GATE (opens once per run, three parts, closes once)
 
 Everything **this run** could possibly need from the user is settled here, in one
 pass — because first contact already settled everything that is stable across runs.
-The gate has two parts; both run before any RCA work starts.
+The gate has three parts; all run before any RCA work starts. Part C is the repeat
+run's review of what a previous run persisted, and it is skipped when first contact
+just did that job.
 
 ### Part A — capability validation from the persisted context
 
@@ -362,8 +376,52 @@ first question instead. There is no second gate question, ever.
 **This governs the gate only.** Step 0b's interview has its own budget
 (§ The question budget) and has already finished by the time you reach here. Do not
 read this paragraph as a prohibition on interviewing.
-Record the answer back into the active profile
-(`bin/rca-context.mjs upsert-connector`) so a field asked once is never asked again.
+Record the answer back into the active profile so a field asked once is never asked
+again. A repo, a branch or a subpath is **not** a connector — `upsert-connector` cannot
+write `profile.repos`, and this used to say it could, which is why an answered product
+repo was re-typed on every run. Persist it the way Part C does: read, amend that field,
+`write`.
+
+### Part C — review and confirm (repeat runs only)
+
+**Skip entirely when first contact ran this session.** T8 already showed this and the
+customer already approved it; a second confirmation of the same screen reads as not
+having listened. This part exists for the *repeat* run, where the setup was approved
+weeks ago by someone who may not be the person sitting here now.
+
+Print the **whole** setup — not a summary of it. Layout and the exact question shape:
+`templates/gate-summary.md` § The review. Every value the run will act on appears:
+the profile and **how it was matched**, the other profiles available, repos by role,
+subpaths, branches, both match patterns, every connector with what proved it and how
+long ago, gaps, warnings, and applied knowledge. A value that is not on screen cannot
+be corrected, and the whole point of this part is that it can be.
+
+Then **one** consolidated question. Always at least two real options — a one-option
+part is refused by the tool and the entire call is lost (§ The question budget):
+
+- proceed;
+- use a different profile, when the file holds one (`select --profile <label>`
+  re-selects and re-checks runnable);
+- change a value — the free-form field carries *what* to change, including adding a
+  repo or a whole new profile;
+- finish setup, when the profile is runnable but not provisioned.
+
+**A change is applied, persisted, and re-verified before the gate closes.** Persist by
+reading the document, amending that field, and `write` — the writer refuses to drop a
+profile, drop a connector, or downgrade a verified one (`code: "would-regress"`), so an
+amend cannot cost a teammate their setup. That refusal lives in the writer, which is
+why there is no per-field verb: one safe additive write covers correcting a branch,
+adding a repo, and adding a profile, and a narrower verb would cover only the first two.
+
+**A change to scope invalidates what was verified against the old scope.** Re-run the
+affected capability's read before closing — a base branch the customer just corrected
+has never been proved reachable, and carrying the old `verifiedBy` forward would state
+that it was.
+
+**Bounded at two further passes.** Print, ask, apply, print again — and on the third
+screen the change option is gone, so the loop terminates by construction rather than by
+judgement. A customer who wants more re-runs `/rca-build`, which now starts from the
+corrected file.
 
 ### Gate close
 

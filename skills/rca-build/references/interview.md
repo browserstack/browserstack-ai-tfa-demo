@@ -660,6 +660,22 @@ intended to run.
 - Substitute `${ENV_VAR_NAME}` in `args`, `scope` and `note` per § Credentials.
 - **What you record is which call to make, not a command to run.** The plugin never
   executes `howToQuery` — `context-file.md` § `howToQuery` is documentation.
+- **Never pin a per-build identifier into `args`.** The context file outlives this
+  build; a run number, a build id, a time window or a commit sha baked into the call is
+  wrong for every later build and — this is the part that bites — **replaying it still
+  succeeds.** A live run stored a CI call ending `/351/api/json`, and the gate's replay
+  returned HTTP 200 on every later build, so the capability read as verified while
+  pointing at another build's run. That is the `checkBy: "<tool> --version"` defect one
+  level up: the probe passes and proves nothing about the thing being asked.
+
+  Record the **mapping** in `scope` — which field of the build's metadata names the run
+  — and leave a `<placeholder>` in `args` where the resolved value goes, the same way
+  `${ENV_VAR_NAME}` stands in for a credential. Then the value comes from T1b's insights
+  at use time, which is where it is actually known.
+- **`verifiedBy.note` describes the verification, not the build.** "run 351 answered on
+  2026-08-25" is a note. "run 351 is the authoritative window for the build" is a
+  per-build fact in a cross-build file, and it will be read as true by every run that
+  inherits it.
 
 ## T7 — profile label and build binding
 

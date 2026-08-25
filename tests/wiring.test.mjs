@@ -800,3 +800,47 @@ test("no file forbids a second gate question while the budget permits three", ()
   assert.match(skill, /never a second question in a pass/iu,
     "the fold-it-in rule still has to bind inside every pass, including the later ones");
 });
+
+// ---- one profile is not a match ---------------------------------------------
+test("the selection rules do not license adopting a non-matching sole profile", () => {
+  // MUTATION: restore "one profile in the file: use it" -> fails.
+  // A live run took a profile bound to `ObservabilityApiLaneSuite-*`, applied it to a
+  // build named `ObservabilityPipelineSuite-…`, and reported "runnable and provisioned".
+  // The code allowed it and context-file.md documented it, one line above a refusal
+  // arguing the opposite.
+  const flat = readFileSync(join(ROOT, "skills/rca-build/references/context-file.md"), "utf8")
+    .replace(/\s+/gu, " ");
+  assert.match(
+    flat, /neither is "it is the only profile in the file"/u,
+    "the documented rule must say that being the only profile is not a match",
+  );
+  assert.doesNotMatch(
+    flat, /one profile in the file: use it and\s*say so/u,
+    "that is the rule that produced a wrong-context run",
+  );
+});
+
+test("a stored call may not pin a per-build identifier", () => {
+  // MUTATION: drop either statement -> fails.
+  // A live run stored a CI call ending `/351/api/json`. The gate replays stored calls,
+  // so it returned HTTP 200 on every later build and `ci` read as verified while
+  // pointing at another build's run — a probe that passes and proves nothing, which is
+  // the defect class this repo has now hit three times.
+  const flat = (rel) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+  assert.match(
+    flat("skills/rca-build/references/interview.md"),
+    /Never pin a per-build identifier into `args`/u,
+    "the authoring rules must forbid it where connectors are authored",
+  );
+  assert.match(
+    flat("skills/rca-build/references/interview.md"),
+    /`verifiedBy\.note` describes the verification, not the build/u,
+    "and a per-build fact must not be stored as a cross-build note",
+  );
+  assert.match(
+    flat("skills/rca-build/references/capabilities.md"),
+    /Store the mapping, never the resolved run/u,
+    "and ci — where a run number is the obvious thing to pin — must say it too",
+  );
+});

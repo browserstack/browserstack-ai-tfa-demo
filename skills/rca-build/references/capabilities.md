@@ -157,6 +157,11 @@ vocabulary and omit any level they lack — never map them onto the nearest row.
 that maps it to a build. A run listing with no mapping field is not verification: it
 proves the pipeline exists and leaves every subsequent `ci` ask unanswerable.
 
+**Store the mapping, never the resolved run.** A run number pinned into the stored call
+keeps answering long after it stops being this build's run, so the gate's replay returns
+success while the evidence belongs to another build — see `interview.md` § Authoring a
+procedure for why a passing probe is the dangerous shape here.
+
 Many teams have no separate CI system, and that is a correct answer — neither a
 connector nor a gap. `<pluginRoot>/config/rca.config.json` routes a `ci` ask to the
 `github` capability as `fallbackCapability`, resolved once in `buildManifest`, so

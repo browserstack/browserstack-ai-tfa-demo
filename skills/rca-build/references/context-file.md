@@ -337,10 +337,17 @@ hit wins:
    fixed instead of quietly mis-routing every night. **An exact tie refuses**,
    naming both labels. Never alphabetical, never first-key-in-file: JSON key order
    is a hidden ordering a reformat silently changes.
-5. **Zero candidates with a known build name** → one profile in the file: use it and
-   say so (`matchedBy: "sole-profile"`); more than one: **refuse**.
-   `defaultProfile` is deliberately not consulted — a name matching nothing means
-   the file does not describe this build.
+5. **Zero candidates with a known build name** → **refuse**, unless exactly one
+   profile declares no `buildMatch` at all, which has no opinion and is used
+   (`matchedBy: "sole-profile"`). `defaultProfile` is deliberately not consulted, and
+   neither is "it is the only profile in the file": a name matching nothing means the
+   file does not describe this build.
+
+   This used to adopt the sole profile whatever it declared, and the refusal one line
+   down already argued against it. A live run took a profile bound to one suite, applied
+   it to a differently-named suite's build, and reported the setup as valid — the other
+   suite's four product repos and base branches included. A narrow pattern is a
+   deliberate statement; a customer who meant every build writes `*`.
 6. **Build name genuinely unknown** → `defaultProfile`
    (`matchedBy: "default-profile"`), printed loudly. Its only job.
 7. The selected profile must then be **runnable**. If it is not, **refuse — never

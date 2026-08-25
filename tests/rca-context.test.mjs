@@ -420,11 +420,49 @@ test("a build name matching NOTHING refuses rather than falling back to defaultP
   assert.match(r.message, /defaultProfile is deliberately NOT used/);
 });
 
-test("a build name matching nothing with exactly ONE profile uses it and says so", () => {
-  // MUTATION: drop the `labels.length === 1` branch → refuses, and this fails.
+test("ONE profile that DECLARES a pattern and does not match it still refuses", () => {
+  // MUTATION: adopt the sole profile regardless of what it declares -> fails.
+  //
+  // This test previously asserted the opposite, and a live run showed why that was
+  // wrong: a profile bound to `ObservabilityApiLaneSuite-*` was applied to a build named
+  // `ObservabilityPipelineSuite-…` and the run reported "runnable and provisioned".
+  // Different suite, different failures, and the profile's four product repos and base
+  // branches attributed to it — the wrong-context run, with no refusal anywhere.
+  //
+  // A narrow pattern is a deliberate statement. A customer who meant "every build"
+  // writes `*`. Being the only profile in the file is not a match.
   const r = selectProfile({ context: validContext(), buildName: "something-nobody-bound", todayISO: "2026-08-20" });
+  assert.equal(r.ok, false, "the file declares which builds are its own, and this is not one");
+  assert.equal(r.code, "no-matching-profile");
+  assert.match(r.message, /nightly web regression\*/, "name the pattern that did not match, so it can be fixed");
+  assert.match(r.message, /neither is "it is the only profile"/, "and say why one profile is not a match");
+});
+
+test("ONE profile that declares NO pattern has no opinion and is used", () => {
+  // MUTATION: drop the `silent` filter (refuse whenever nothing matched) -> fails.
+  // The no-opinion rule, identical to projectMatch's: a profile that never said which
+  // builds are its own cannot be contradicted. Every context written before buildMatch
+  // was set is this shape, and refusing them all would break first-contact output that
+  // was correct when it was written.
+  const noPattern = validContext({ profiles: { only: profileFixture({ buildMatch: undefined }) }, defaultProfile: "only" });
+  const r = selectProfile({ context: noPattern, buildName: "something-nobody-bound", todayISO: "2026-08-20" });
   assert.equal(r.ok, true, r.message);
+  assert.equal(r.label, "only");
   assert.equal(r.matchedBy, "sole-profile", "the caller has to be able to print WHY this profile was used");
+});
+
+test("several profiles that all declare NO pattern refuse rather than guess", () => {
+  // MUTATION: use silent[0] instead of requiring exactly one -> fails. JSON key order
+  // is not a decision anybody made, which is the same reason an exact specificity tie
+  // refuses.
+  const ctx = validContext({
+    profiles: { a: profileFixture({ buildMatch: undefined }), b: profileFixture({ buildMatch: undefined }) },
+    defaultProfile: "a",
+  });
+  const r = selectProfile({ context: ctx, buildName: "unbound", todayISO: "2026-08-20" });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "no-matching-profile");
+  assert.match(r.message, /declare no buildMatch/);
 });
 
 test("no build name at all falls back to defaultProfile — its only job", () => {

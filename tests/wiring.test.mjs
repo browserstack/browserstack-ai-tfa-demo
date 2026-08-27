@@ -884,3 +884,29 @@ test("a no-matching refusal enters the interview instead of stopping", () => {
   assert.match(skill, /"This run only" writes nothing/u,
     "the run-only option must say it persists nothing, or the next run surprises them");
 });
+
+// ---- a PR-hunting excerpt has three possible homes, not one -----------------
+//
+// Culprit-PR attribution is the run's deliverable, so it is what a customer's artifacts
+// most often describe — and the artifact pass had no rule for it. "Candidate PRs come
+// from <somewhere>" reads as machinery and gets dropped; a genuine exclusion rule reads
+// as machinery too and gets dropped with it. One customer file already carried a
+// "frontend-only PR filter" that IS knowledge, and a sourcing procedure that is not.
+test("PR-hunting excerpts are routed by kind, not all treated as knowledge", () => {
+  // MUTATION: drop any of the three destinations -> fails.
+  const flat = readFileSync(join(ROOT, "skills/rca-build/references/interview.md"), "utf8")
+    .replace(/\s+/gu, " ");
+
+  assert.match(flat, /How to REACH the PRs/u,
+    "a route is a connector — filed as knowledge it becomes prose that changes nothing");
+  assert.match(flat, /Which PRs COUNT as candidates/u,
+    "an exclusion or ranking is judgement, and judgement is what knowledge is for");
+  // Bold markers survive whitespace-normalisation, so the phrase is matched in pieces
+  // rather than as one span. Asserting the un-emphasised sentence is how this failed.
+  assert.match(flat, /A replacement definition of the candidate window\*\* is machinery and is refused/u,
+    "two definitions of 'candidate PR' produce two answers and one dashboard");
+
+  // The honest cost of a non-CLI route, stated where it is decided rather than found.
+  assert.match(flat, /the shared pre-fetch is bypassed/u,
+    "prefetch-prs.mjs speaks the forge CLI only; a connector on another route pays per coordinator");
+});

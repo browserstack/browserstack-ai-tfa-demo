@@ -338,6 +338,33 @@ product. Judge those the same way and use only the parts that apply:
   read it, and which part. Omit `--capability` when the knowledge is about the product
   as a whole.
 
+**PR-hunting excerpts split three ways, and only one of the three is knowledge.** This
+is worth stating because culprit-PR attribution is the run's deliverable, so it is the
+subject a customer's artifacts most often cover — and the three cases have different
+homes:
+
+- **How to REACH the PRs** — the repo set, the base branches, the call shape, an
+  alternate route such as a forge MCP server instead of a CLI — is a **connector**, not
+  knowledge. It goes in `connectors.github` (`scope` / `howToQuery`) with
+  `source: {kind: "skill", path}`, and it gets a live read before it counts. Filing it
+  as knowledge would hand a coordinator a call shape as prose and change nothing about
+  what actually runs.
+- **Which PRs COUNT as candidates** — an exclusion, a ranking, a surface-to-code
+  mapping, a "this class of change never causes that class of failure" rule — is
+  judgement, and it **is** knowledge. Record it with `--capability github`.
+- **A replacement definition of the candidate window** is machinery and is refused. The
+  window is `<pluginRoot>/skills/rca-build/references/github-evidence.md`'s: merged in
+  `(baselineRef, build commit]` and touching the failing path. An artifact that narrows
+  or ranks inside that window is additive; one that says candidates come from somewhere
+  else entirely replaces it, and two definitions of "candidate PR" produce two answers
+  where only one reaches the dashboard.
+
+**State the cost when a recorded route is not the CLI.** `<pluginRoot>/bin/prefetch-prs.mjs`
+fetches the PR window once for every coordinator to share, and it speaks the forge CLI
+only. A connector recorded on another route is honoured — you make the call yourself
+from `howToQuery` — but the shared pre-fetch is bypassed, so each coordinator pays for
+its own read. Say so at T8 rather than leaving someone to find it in a slow run.
+
 **Account for every artifact you opened.** For each one: the parts recorded, or one
 line saying nothing applied and why. This is a rule because the pass has no other
 outcome — reading is silent, judging is silent, and "I looked and took nothing" is

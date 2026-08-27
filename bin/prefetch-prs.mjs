@@ -8,7 +8,7 @@
 //   node bin/prefetch-prs.mjs <buildId> <org/repo> <branch> <fromISO> <toISO>
 //
 // Runs the FIRST PR-list call WITH `files` (per SKILL.md Step 4), writes
-// `prsInWindow: [{pr, title, mergedAt, url, files:[…]}]` + `prsSearched: true`
+// `prsInWindow: [{pr, title, author, mergedAt, url, files:[…]}]` + `prsSearched: true`
 // via setCodeEvidence — merging, so an existing `deployState` is preserved.
 // Emits a one-line summary. Uses the GitHub CLI (`gh`); a different GitHub
 // capability should pre-fetch through its own connector and write the same shape.
@@ -19,12 +19,19 @@ import {
 } from "../lib/evidence-file.mjs";
 
 /** Pure: map `gh pr list --json …,files` output to canonical prsInWindow rows.
- * Exported for tests — no I/O, no network. */
+ * Exported for tests — no I/O, no network.
+ *
+ * `author` is projected because `tfaRcaTurn`'s `prDetails` REQUIRES it per PR, and this
+ * is the only place PRs are fetched once for every coordinator to share. Without it each
+ * coordinator pays a `gh pr view` per suspect just to fill one field — which is exactly
+ * the per-coordinator re-fetching this pre-fetch exists to remove. `gh` returns it as
+ * `{login}`, so it is flattened here rather than at each of the readers. */
 export function normalizePrs(raw) {
   const list = Array.isArray(raw) ? raw : [];
   return list.map((pr) => ({
     pr: pr.number ?? pr.pr ?? null,
     title: pr.title ?? "",
+    author: typeof pr.author === "string" ? pr.author : (pr.author?.login ?? null),
     mergedAt: pr.mergedAt ?? null,
     url: pr.url ?? null,
     files: Array.isArray(pr.files)
@@ -49,7 +56,7 @@ if (isMain) {
       [
         "pr", "list", "-R", repo, "--state", "merged", "--base", branch,
         "--search", `merged:${from}..${to}`,
-        "--json", "number,title,mergedAt,url,files",
+        "--json", "number,title,author,mergedAt,url,files",
         "--limit", "100",
       ],
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },

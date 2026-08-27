@@ -910,3 +910,73 @@ test("PR-hunting excerpts are routed by kind, not all treated as knowledge", () 
   assert.match(flat, /the shared pre-fetch is bypassed/u,
     "prefetch-prs.mjs speaks the forge CLI only; a connector on another route pays per coordinator");
 });
+
+// ---- culprit PRs travel structured, and the prose channel is GONE -----------
+//
+// `tfaRcaTurn` takes `prDetails`: one object per suspect PR, six required fields
+// (repo, number, title, author, link, tag: latent|regression). The word appeared
+// nowhere in this repo — not in the coordinator, not in the skill, not in code — while
+// the coordinator's culprit-PR mandate said "Feed the PR link(s) to TFA in the turn
+// message". A sampled run sent `prDetails` zero times across sixteen coordinators. They
+// were not ignoring an instruction; they were following one.
+//
+// `related_prs` is optional in the RCA the BrowserStack agent synthesises, so a PR that
+// arrives as prose is the one that gets dropped.
+test("the coordinator sends culprit PRs in prDetails, not in the message", () => {
+  const raw = readFileSync(join(ROOT, "agents/ai-tfa-coordinator.md"), "utf8");
+  const flat = raw.replace(/\s+/gu, " ");
+
+  // MUTATION: remove the prDetails contract -> fails.
+  assert.match(flat, /prDetails/u, "the structured channel must be named where PRs are decided");
+  for (const field of ["repo", "number", "title", "author", "link", "tag"]) {
+    assert.match(
+      flat, new RegExp(`\\b${field}\\b`, "u"),
+      `prDetails requires ${field} per entry, so the contract has to name it`,
+    );
+  }
+  assert.match(flat, /regression.{0,20}latent|latent.{0,20}regression/u,
+    "tag is an enum of exactly two values; naming them is what stops a third being invented");
+
+  // THE property, and the one this repo has failed twice: the old channel is REPLACED,
+  // not supplemented. A structured contract sitting beside "put the links in the
+  // message" leaves two channels, and the prose one is the older and more emphatic —
+  // which is how 164962f and 395960c both happened.
+  // MUTATION: restore the prose instruction alongside the contract -> fails.
+  assert.doesNotMatch(
+    flat, /Feed the PR link\(s\) to TFA in the turn message/u,
+    "the prose instruction must be gone, not kept next to prDetails",
+  );
+  assert.match(flat, /the message is never the channel/u,
+    "and saying so explicitly is what keeps a helpful-looking prose line from creeping back");
+
+  // Fabricating a field to satisfy a required shape is worse than omitting the PR.
+  assert.match(flat, /Do not fabricate a field to satisfy the shape/u,
+    "six required fields plus an unclassifiable suspect is where a guessed enum comes from");
+});
+
+test("the suspect packet carries every field prDetails requires", () => {
+  // MUTATION: drop repo or tag from the template -> fails. The packet is the source the
+  // hand-off maps from; a field missing here has to be re-derived from a permalink by
+  // every reader, which is what `repo` was before this.
+  const packet = readFileSync(join(ROOT, "skills/rca-build/templates/suspect-packet.md"), "utf8");
+  for (const field of ["repo:", "pr:", "author:", "tag:", "link:"]) {
+    assert.match(packet, new RegExp(`^\\s*${field.replace(":", ":")}`, "mu"),
+      `the packet must carry ${field} — prDetails requires it and cannot be filled without it`);
+  }
+  assert.match(packet, /identity is\s+`?repo \+ number`?|repo \+ number/u,
+    "a number alone is ambiguous across a profile's several product repos");
+  assert.match(packet, /different axis from `verdict`/u,
+    "tag is what kind of fault it is; verdict is whether it survived falsification");
+
+  // A worked example is the strongest teaching signal in the skill, so it has to show
+  // the fields rather than teach the old shape by omission.
+  // Counted, not spot-checked: `/^\s*repo: /` passes when ANY block has it, so dropping
+  // it from just the supported block — the only one that feeds prDetails — would sail
+  // through. A mutation proved that; the assertion was nearly vacuous.
+  const example = readFileSync(join(ROOT, "skills/rca-build/examples/sample-run.md"), "utf8");
+  const blocks = (example.match(/^SUSPECT:$/gmu) ?? []).length;
+  const repos = (example.match(/^\s+repo: /gmu) ?? []).length;
+  assert.ok(blocks >= 2, `the example must show a supported AND a ruled-out suspect (found ${blocks})`);
+  assert.equal(repos, blocks, `every SUSPECT block needs repo — ${repos} of ${blocks} have it`);
+  assert.match(example, /^\s*tag: /mu, "and the supported suspect must show tag");
+});

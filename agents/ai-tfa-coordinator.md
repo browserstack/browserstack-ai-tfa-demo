@@ -285,8 +285,34 @@ connector is the deliverable:
 - **Hunt the culprit PR**: deploy timeline vs the last-pass window, changed
   paths vs the failure signature (`<pluginRoot>/skills/rca-build/references/github-evidence.md`), run the
   falsification protocol on each candidate.
-- **Feed the PR link(s) to TFA in the turn message** so the BrowserStack agent
-  populates `related_prs` in the dashboard RCA.
+- **Send every supported suspect in `tfaRcaTurn`'s `prDetails`, not in the message.**
+  That parameter exists for exactly this and takes one object per PR, all six fields
+  required:
+
+  ```
+  prDetails: [{ repo: "<owner/name>", number: <n>, title: "<PR title>",
+                author: "<login>", link: "https://github.com/<repo>/pull/<n>",
+                tag: "regression" | "latent" }]
+  ```
+
+  Map it straight from the suspect packet
+  (`<pluginRoot>/skills/rca-build/templates/suspect-packet.md`), which carries all six:
+  `repo`→`repo`, `pr`→`number`, `title`→`title`, `author`→`author`, `link`→`link`,
+  `tag`→`tag`. Only `verdict: supported` suspects go in; ruled-out ones stay in the
+  message as disconfirming evidence.
+
+  **A PR named only in the prose message is a PR that may not be recorded.** This
+  instruction used to read "feed the PR link(s) to TFA in the turn message", and it was
+  followed: across a sampled run of sixteen coordinators, `prDetails` was sent zero
+  times and every PR appeared as prose inside `message`. `related_prs` is an optional
+  field in the RCA the BrowserStack agent synthesises, and an optional field whose data
+  arrived as prose is the one that gets dropped. Naming a PR in the message as well is
+  fine and often useful — but the message is never the channel.
+
+  **Do not fabricate a field to satisfy the shape.** No `author` for a suspect, or no
+  basis to classify `tag`? Say that in the message and leave that PR out of `prDetails`
+  rather than sending a guess — see the packet's § tag for the honest default and when
+  it applies.
 - **An application-bug RCA with no GitHub PR link is INCOMPLETE.** Keep digging
   on subsequent turns until the turn cap. If still none, the turn message must
   explicitly state `no culprit PR identified after <what was searched: window,
@@ -399,7 +425,10 @@ RCA_OUTPUT_START
 <RESOLVED → glimpse.failure_type verbatim · else "not available">
 
 ## related_prs
-- <each PR in glimpse.related_prs; "none" if empty — for PRODUCT_BUG, "none" only after the mandated hunt + explicit statement>
+- <one line per PR sent in prDetails: `<repo>#<number>  <tag>  <author>  <title>` — the
+  six fields, so the orchestrator can put them on the CSV row without re-deriving them
+  from a permalink; "none" if empty — for PRODUCT_BUG, "none" only after the mandated
+  hunt + explicit statement>
 
 ## view_rca
 <viewRca link from the RESOLVED turn (Test Observability UI) · "not available" if none>

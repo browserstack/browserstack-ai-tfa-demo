@@ -40,15 +40,18 @@ suspect window. One PR touches the failing path; falsification below.
 LINK: https://github.com/acme/obs-api/pull/7421
 
 SUSPECT:
+  repo: acme/obs-api
   pr: #7421
   files: src/validators/build.ts
   hunks: `- allowEmpty: true` → `+ allowEmpty: false` (validator schema)
   author: jdoe
   merged_at: 2026-07-01T09:14Z   vs   last_green: 2026-07-01T02:10Z   vs   started_at: 2026-07-01T21:40Z
   verdict: supported
+  tag: regression (the payload validated before this hunk and stops after it)
   link: https://github.com/acme/obs-api/pull/7421
 
 SUSPECT:
+  repo: acme/obs-api
   pr: #7418
   files: src/routes/builds.ts
   hunks: logging middleware reorder only
@@ -56,6 +59,7 @@ SUSPECT:
   merged_at: 2026-06-30T18:02Z   vs   last_green: 2026-07-01T02:10Z   vs   started_at: 2026-07-01T21:40Z
   verdict: ruled-out (shipped-after check passed but no-path-overlap — hunks never touch the validator)
   link: https://github.com/acme/obs-api/pull/7418
+  (no tag — only a supported verdict carries one)
 
 ASK: Full run logs for test 39
 TYPE: test_logs

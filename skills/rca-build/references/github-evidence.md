@@ -137,6 +137,14 @@ Only `verdict: supported` suspects should end up in TFA's `related_prs`. Ruled-o
 suspects stay in the thread as disconfirming evidence so TFA (and a human) can see
 the elimination, not just the conclusion.
 
+**Supported suspects travel in `tfaRcaTurn`'s `prDetails`, never in the message text.**
+The packet's fields exist to be handed over structured: `repo`, `pr`, `title`, `author`,
+`link` and `tag` map one-to-one onto the six `prDetails` requires. `related_prs` is an
+optional field in the RCA the BrowserStack agent synthesises, so a PR that arrived as
+prose is the one that gets dropped — a sampled run sent `prDetails` zero times across
+sixteen coordinators, because the instruction said to put links in the message.
+`agents/ai-tfa-coordinator.md` § the culprit-PR mandate holds the contract.
+
 ## Digest discipline
 
 Same caps as `references/evidence-routing.md`: prefer a PR **link** over pasting a

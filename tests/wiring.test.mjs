@@ -903,8 +903,17 @@ test("PR-hunting excerpts are routed by kind, not all treated as knowledge", () 
     "an exclusion or ranking is judgement, and judgement is what knowledge is for");
   // Bold markers survive whitespace-normalisation, so the phrase is matched in pieces
   // rather than as one span. Asserting the un-emphasised sentence is how this failed.
-  assert.match(flat, /A replacement definition of the candidate window\*\* is machinery and is refused/u,
-    "two definitions of 'candidate PR' produce two answers and one dashboard");
+  //
+  // The refusal is scoped to ARTIFACTS. It was written blanket, which then forbade the
+  // customer supplying a PR list at invocation — so the rule now turns on who is
+  // speaking, and both halves are asserted: a file still cannot replace the window, and
+  // a human typing a list for this run can.
+  assert.match(flat, /An ARTIFACT that replaces the definition of the candidate window\*\* is machinery and\s*is refused/u,
+    "an artifact must still be refused — it was found on disk and competes silently");
+  assert.match(flat, /What decides this is who is speaking, not what is said/u,
+    "the distinction has to be stated, or the carve-out reads as arbitrary");
+  assert.match(flat, /it does not admit a file, a recalled convention, or an inference/u,
+    "and the carve-out must be bounded, or it becomes 'anything may replace the window'");
 
   // The honest cost of a non-CLI route, stated where it is decided rather than found.
   assert.match(flat, /the shared pre-fetch is bypassed/u,
@@ -979,4 +988,94 @@ test("the suspect packet carries every field prDetails requires", () => {
   assert.ok(blocks >= 2, `the example must show a supported AND a ruled-out suspect (found ${blocks})`);
   assert.equal(repos, blocks, `every SUSPECT block needs repo — ${repos} of ${blocks} have it`);
   assert.match(example, /^\s*tag: /mu, "and the supported suspect must show tag");
+});
+
+// ---- a supplied PR list replaces enumeration, not analysis -------------------
+//
+// `/rca-build <uuid> <pr_list>` hands over the superset of merged PRs — good and bad —
+// and finding the bad ones stays ours. Before this, PR URLs in the invocation only
+// skipped a gate question (`SKILL.md` Part B) and died there: `prefetch-prs.mjs` had no
+// argv for them, the coordinator had no input for them, and `pre_seed` carries only the
+// representative's own result. The window search ran regardless.
+test("a supplied PR list is the candidate set and suppresses discovery", () => {
+  // MUTATION: drop any of these statements -> fails.
+  const flat = (rel) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/^\s*>\s?/gmu, "").replace(/\s+/gu, " ");
+  const skill = flat("skills/rca-build/SKILL.md");
+  const evidence = flat("skills/rca-build/references/github-evidence.md");
+  const coordinator = flat("agents/ai-tfa-coordinator.md");
+  const template = flat("skills/rca-build/templates/gate-summary.md");
+
+  assert.match(skill, /A PR list IS the candidate set/u,
+    "Step 0 must say the list replaces enumeration, not merely pre-answers a question");
+  assert.match(skill, /No window search runs anywhere in that case/u,
+    "Step 4 must suppress the search for EVERY repo, not just the named ones");
+  assert.match(skill, /--prs/u, "and name the argv form that does it");
+
+  // The union, or a supplied PR in an unvalidated repo has no path into prsInWindow.
+  assert.match(skill, /Repo scope with a supplied list is the UNION/u,
+    "the pre-fetch loops repos_validated; a supplied repo outside it would vanish");
+
+  // Hydration is what the list cannot provide, and path-overlap needs it.
+  assert.match(skill, /Hydration still runs/u,
+    "the list gives numbers; falsification needs each PR's files");
+
+  // The three rules that would otherwise contradict this, each carved out.
+  assert.match(skill, /a customer-supplied list, where per-PR is the only shape available/u,
+    "the no-backfill rule forbids exactly the shape a supplied list needs");
+  assert.match(skill, /The cap applies to a SEARCHED window only/u,
+    "capping to ~30 by our relevance would silently drop PRs the customer named");
+
+  // Elimination is the deliverable, and a rule-out still gets reported.
+  assert.match(evidence, /Report every supplied PR, including the ones you rule out, with the reason/u,
+    "dropping a supplied PR silently reads as ignoring the customer");
+  assert.match(evidence, /No survivor across the whole set is a FINDING, not a weak hunt/u,
+    "the superset being exhausted is an answer, not a reason to keep digging");
+
+  // The coordinator definition carries it — the b3c9164 lesson: a briefing alone lost
+  // 16 times out of 16.
+  assert.match(coordinator, /`suppliedPrs`/u, "the agent definition needs the input, not just the briefing");
+  assert.match(coordinator, /the hunt is the elimination, not the search/u, "and what to do with it");
+  assert.match(coordinator, /`suppliedPrs` is the exception/u,
+    "or INCOMPLETE sends it digging to the turn cap through an exhausted enumeration");
+
+  // Both must be carried to siblings too, since pre_seed cannot.
+  assert.match(skill, /Coordinator prompts MUST carry a customer-supplied PR list/u,
+    "a sibling learns intake from the dispatch or from nowhere");
+
+  // The screen, so an empty result for an unnamed repo reads correctly.
+  assert.match(template, /culprit-PR discovery: DISABLED/u, "the gate must say discovery is off");
+  assert.match(template, /have no supplied candidate/u,
+    "and name the repos with none — 'we found nothing' and 'nothing was offered' differ");
+});
+
+test("an explicit invocation value outranks build metadata", () => {
+  // MUTATION: restore metadata above invocation args, or drop the per-run rule -> fails.
+  // The table ranked build metadata first, so a customer pinning a CI run lost to
+  // `ci_build_url` naming a different one — the opposite of what pinning means.
+  const skill = readFileSync(join(ROOT, "skills/rca-build/SKILL.md"), "utf8");
+  const flat = skill.replace(/\s+/gu, " ");
+
+  // Order asserted positionally, not by prose: the list is what an agent follows.
+  const invocation = skill.search(/^1\. \*\*an explicit invocation value\*\*/mu);
+  const metadata = skill.search(/^2\. build metadata from `fetchBuildInsights`/mu);
+  assert.ok(invocation > 0 && metadata > 0, "the precedence list must name both sources");
+  assert.ok(invocation < metadata, "an explicit invocation value outranks derived metadata");
+
+  assert.match(flat, /an invocation value is not an assumption, it is a statement/u,
+    "and why — metadata was ranked first because it beats an ASSUMPTION, which this is not");
+  assert.match(flat, /An override lasts for this run and persists nothing/u,
+    "a pasted one-off must not become the team's committed scope");
+  assert.match(flat, /A credential value is never an override/u,
+    "the one thing an invocation may never carry into the file or the transcript");
+
+  // `given` and `detected` had one shared definition; they now have different precedence,
+  // so the screen could not show which won.
+  const tags = readFileSync(join(ROOT, "skills/rca-build/templates/gate-summary.md"), "utf8");
+  assert.doesNotMatch(
+    tags, /`given` \| supplied in the invocation, or read from build metadata/u,
+    "one tag for two sources with different precedence cannot show which one won",
+  );
+  assert.match(tags, /`given` \| \*\*the customer said so\*\*/u, "given is the customer speaking");
+  assert.match(tags, /build metadata included/u, "and metadata is detected");
 });

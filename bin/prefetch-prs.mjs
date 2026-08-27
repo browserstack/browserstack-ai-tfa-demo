@@ -40,28 +40,110 @@ export function normalizePrs(raw) {
   }));
 }
 
+/** The default per-PR fetch. Separated so `hydrateSuppliedPrs` can be tested for its
+ * skip-one-keep-the-rest behaviour without a network — that behaviour was designed and
+ * then shipped untested, and a mutation that failed the whole run instead survived. */
+function ghViewPr(repo, n) {
+  return JSON.parse(execFileSync(
+    "gh",
+    ["pr", "view", String(n), "-R", repo, "--json", "number,title,author,mergedAt,url,files"],
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  ));
+}
+
+/** Fetch each supplied PR individually. A supplied list is not a search, so there is no
+ * `--search` to project — `gh pr view` is the per-PR call `references/github-evidence.md`
+ * § Ask routing already documents.
+ *
+ * A PR that cannot be fetched is dropped with a warning rather than failing the run: the
+ * customer named several, and losing all of them because one number was mistyped is worse
+ * than proceeding with the rest. The count printed at the end is what reveals the loss. */
+export function hydrateSuppliedPrs(repo, numbers, fetchOne = ghViewPr) {
+  const out = [];
+  for (const n of numbers) {
+    try {
+      out.push(fetchOne(repo, n));
+    } catch (err) {
+      console.error(`[prefetch-prs] ${repo}#${n}: could not fetch — skipped (${String(err.message || err).split("\n")[0].slice(0, 80)})`);
+    }
+  }
+  if (out.length === 0) throw new Error(`none of the ${numbers.length} supplied PR(s) could be fetched from ${repo}`);
+  return out;
+}
+
+/** Pure: the PR numbers in a `--prs` value. Accepts commas, spaces, `#` prefixes and
+ * full PR URLs, because the customer pastes whatever their bot wrote rather than a
+ * normalised list. Exported for tests — no I/O.
+ *
+ * Deliberately NOT a validator of intent: it extracts numbers and nothing else. Deciding
+ * WHICH repo a bare number belongs to is judgement over the profile's repos and stays
+ * with the agent (`SKILL.md` § Step 0). */
+export function parsePrList(value) {
+  if (typeof value !== "string") return [];
+  const seen = new Set();
+  const add = (raw) => {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) seen.add(n);
+  };
+
+  // A bare list — `7900,7892` — is the flag's own form and every number in it is a PR.
+  if (/^[\s,]*\d+(?:[\s,]+\d+)*[\s,]*$/u.test(value)) {
+    for (const m of value.matchAll(/\d+/gu)) add(m[0]);
+    return [...seen];
+  }
+
+  // Anything else is pasted prose, and a bare integer in prose is NOT a PR number. The
+  // real paste this exists for — a regression-bot message — carries a JIRA ticket
+  // (`.../browse/TRAP-4767`) and a timestamp (`[2:55 PM]`) alongside the PR links, and
+  // scraping every integer turned those into `gh pr view 4767`, `2` and `55`: three
+  // unrelated PRs silently added to the candidate set. So in prose only an explicit
+  // marker counts — a `/pull/<n>` URL, or a `#<n>` reference.
+  for (const m of value.matchAll(/\/pull\/(\d+)|#(\d+)\b/gu)) add(m[1] ?? m[2]);
+  return [...seen];
+}
+
 // --- CLI ---
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
-  const [, , buildId, repo, branch, from, to] = process.argv;
-  if (!buildId || !repo || !branch || !from || !to) {
-    console.error("usage: prefetch-prs.mjs <buildId> <org/repo> <branch> <fromISO> <toISO>");
+  const [, , buildId, repo, ...rest] = process.argv;
+  // Two enumeration sources, one writer. `--prs` is the customer's list, supplied at
+  // invocation; the positional form is our own window search. Everything after
+  // enumeration — hydration, the row shape, `prsSearched: true`, the `deployState`
+  // preservation — is identical, which is the point of keeping one binary.
+  const prsFlagAt = rest.indexOf("--prs");
+  const supplied = prsFlagAt === -1 ? null : parsePrList(rest[prsFlagAt + 1] ?? "");
+  const [branch, from, to] = rest;
+
+  const usage = "usage: prefetch-prs.mjs <buildId> <org/repo> <branch> <fromISO> <toISO>\n" +
+                "   or: prefetch-prs.mjs <buildId> <org/repo> --prs <n,n,n>";
+  if (!buildId || !repo) { console.error(usage); process.exit(2); }
+  if (prsFlagAt !== -1) {
+    // An empty list is a caller bug, not an empty window: silently writing
+    // `prsSearched: true` with no PRs would assert "searched, found none" about a search
+    // that never happened — the exact confusion prsSearched exists to prevent.
+    if (supplied.length === 0) {
+      console.error("prefetch-prs: --prs was given but no PR number could be read from it");
+      process.exit(2);
+    }
+  } else if (!branch || !from || !to) {
+    console.error(usage);
     process.exit(2);
   }
 
   let raw;
   try {
-    const out = execFileSync(
-      "gh",
-      [
-        "pr", "list", "-R", repo, "--state", "merged", "--base", branch,
-        "--search", `merged:${from}..${to}`,
-        "--json", "number,title,author,mergedAt,url,files",
-        "--limit", "100",
-      ],
-      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-    );
-    raw = JSON.parse(out || "[]");
+    raw = supplied
+      ? hydrateSuppliedPrs(repo, supplied)
+      : JSON.parse(execFileSync(
+          "gh",
+          [
+            "pr", "list", "-R", repo, "--state", "merged", "--base", branch,
+            "--search", `merged:${from}..${to}`,
+            "--json", "number,title,author,mergedAt,url,files",
+            "--limit", "100",
+          ],
+          { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        ) || "[]");
   } catch (err) {
     // A failed search is a genuine gap, never a blocker — record it so readers
     // know the list was ATTEMPTED (not silently empty) and can fall back to live.
@@ -90,5 +172,8 @@ if (isMain) {
   }, Date.now());
 
   const withFiles = prsInWindow.filter((p) => p.files.length > 0).length;
-  console.log(`[prefetch-prs] ${repo}: ${prsInWindow.length} PR(s) in window, ${withFiles} with files → prsInWindow`);
+  const source = supplied
+    ? `${prsInWindow.length}/${supplied.length} supplied PR(s) hydrated`
+    : `${prsInWindow.length} PR(s) in window`;
+  console.log(`[prefetch-prs] ${repo}: ${source}, ${withFiles} with files → prsInWindow`);
 }

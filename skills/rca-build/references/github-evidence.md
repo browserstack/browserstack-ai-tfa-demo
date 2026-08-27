@@ -68,7 +68,7 @@ genuine input-from-output dependency.
 | Ask intent | Gather exactly |
 |---|---|
 | "Did `<X>` change since the last passing run?" | the diff of `<X>`'s file/function between the **baseline ref** (last-green, or the configured fallback) and the build's commit — not the whole repo diff |
-| "Which PRs are suspect?" | PRs **merged in the window** `(baselineRef, build commit]` that **touch the failing code path** — intersect changed files with the failing file/function |
+| "Which PRs are suspect?" | Candidates are **the merged-PR set for the window** `(baselineRef, build commit]` **or the set the customer supplied at invocation** — then, either way, the ones that **touch the failing code path**: intersect changed files with the failing file/function |
 | "Who/what last changed the failing line?" | `blame` on the specific failing lines (from the test's `file_path` + the error) |
 | "What shipped to the run's env before the failure?" | deploy timeline (`gh` releases/tags + the env's deploy record); compare deploy time vs. the run's `started_at` |
 | "Did CI change?" | the workflow-file diff + recent `gh run` history for the failing job |
@@ -136,6 +136,27 @@ rule-out reason, link) — copy it, don't retype it. A worked example (supported
 Only `verdict: supported` suspects should end up in TFA's `related_prs`. Ruled-out
 suspects stay in the thread as disconfirming evidence so TFA (and a human) can see
 the elimination, not just the conclusion.
+
+## A supplied candidate set
+
+When the invocation carried a PR list it **replaces the enumeration**, not the analysis
+(`SKILL.md` § Step 0, § Step 4). It is the superset of merged PRs — good and bad together
+— so nothing about the work below changes: intersect, falsify, eliminate. Finding the bad
+ones is still the deliverable and still ours.
+
+Three things follow, and they are the whole difference:
+
+- **Never search for more, in any repo.** The set is complete by the customer's statement.
+  A repo their list does not name has no candidates, which the gate warns about; it is not
+  an invitation to go looking.
+- **Report every supplied PR, including the ones you rule out, with the reason.** They
+  asked us to consider it, so dropping it silently reads as ignoring them. `prDetails`
+  cannot carry a rule-out — its `tag` is `latent|regression`, with no third value — so
+  eliminations travel in the turn message, the same place ruled-out suspects already go.
+- **No survivor across the whole set is a FINDING, not a weak hunt.** Say so plainly: no
+  merged PR explains this failure. The `INCOMPLETE` rule that otherwise sends a coordinator
+  digging to the turn cap does not apply, because there is nothing left to enumerate
+  (`agents/ai-tfa-coordinator.md` § the culprit-PR mandate).
 
 **Supported suspects travel in `tfaRcaTurn`'s `prDetails`, never in the message text.**
 The packet's fields exist to be handed over structured: `repo`, `pr`, `title`, `author`,

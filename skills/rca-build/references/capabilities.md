@@ -162,6 +162,12 @@ keeps answering long after it stops being this build's run, so the gate's replay
 success while the evidence belongs to another build — see `interview.md` § Authoring a
 procedure for why a passing probe is the dangerous shape here.
 
+**Two legitimate sources for the run itself, in this order:** a run the customer pinned at
+invocation, then the build's own metadata (`SKILL.md` § Part B, precedence). The pinned one
+wins — a customer naming a run is stating which one to read, and losing that to
+`ci_build_url` is the wrong-run read this rule exists to prevent, arrived at from the other
+direction.
+
 Many teams have no separate CI system, and that is a correct answer — neither a
 connector nor a gap. `<pluginRoot>/config/rca.config.json` routes a `ci` ask to the
 `github` capability as `fallbackCapability`, resolved once in `buildManifest`, so

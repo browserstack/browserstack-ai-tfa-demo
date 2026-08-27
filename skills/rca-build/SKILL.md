@@ -105,9 +105,31 @@ relearn the API is the drift this file exists to prevent.
 ## Step 0 — input, greeting, and context load
 
 Parse the build id from the invocation args. Accepted forms: a bare build id, a
-`build_id=<id>` token, or a build dashboard link (extract the id). Also accept
-any **PR URLs** and **repo hints** (product/automation repo names or paths) the
-user supplies — carry them into Gate Part B as pre-answered intake.
+`build_id=<id>` token, or a build dashboard link (extract the id).
+
+**The args are pasted prose, not flags.** In practice they arrive as a regression-bot
+message — owner, ticket, `PR(s)`, a CI link — so read them with judgement. There is no
+grammar to match and no parser to satisfy.
+
+Two things in them change the run, and both are **explicit statements by the person
+invoking it**, which is what earns them precedence over anything derived:
+
+- **A PR list IS the candidate set.** Not a hint and not just pre-answered intake: the
+  customer's list is the superset of merged PRs, good and bad together, and finding the
+  bad ones is still ours. It replaces *enumeration* — no window search runs, for any repo
+  (§ Step 4). `references/interview.md` § Provenance explains why a human supplying this
+  is admitted where an artifact asserting it is refused.
+
+  **Resolve each to `repo + number`.** A `/pull/<n>` URL is unambiguous. A bare `#<n>`
+  resolves against `profile.repos.product` — say which repo it matched. A number present
+  in more than one product repo is the gate's single consolidated question, because a PR
+  number is unique only within a repo and a profile commonly holds four.
+
+- **Any other value they pin is an override** — a CI run, an environment, a branch, a
+  ticket. It outranks what the run would have derived (§ Part B, precedence).
+
+Carry both into Gate Part B, and print them at the gate as `given` so the customer can
+see what their paste did.
 
 **Then read the build's insights, before selecting anything.** The invocation carries
 a build **id**; profile selection matches on the build **NAME** and the **project**,
@@ -353,14 +375,29 @@ is the point:
 
 **Precedence, highest first — and the profile outranks any connector skill:**
 
-1. build metadata from `fetchBuildInsights` (the branch the build actually ran on),
-2. invocation args,
+1. **an explicit invocation value** — something the customer typed for this run,
+2. build metadata from `fetchBuildInsights` (the branch the build actually ran on),
 3. **the selected profile in `.rca-context.json`**,
 4. a connector skill's own intake-defaults section,
 5. inference.
 
-Show the reconciliation whenever (1) or (2) overrides (3). Only a field that none
-of the five supply is a candidate for the gate's single question.
+**(1) and (2) used to be the other way round, and that made pinning impossible.** Build
+metadata was ranked first because it beats any *assumption* — which is true, and an
+invocation value is not an assumption, it is a statement. Under the old order a customer
+who pinned a CI run lost to `ci_build_url` naming a different one, which is the opposite
+of what pinning means. Only values the customer **actually typed** move; an absent one
+changes nothing, so metadata still beats the profile, connector defaults and inference
+exactly as before.
+
+Show the reconciliation whenever a higher rank overrides a lower one. Only a field that
+none of the five supply is a candidate for the gate's single question.
+
+**An override lasts for this run and persists nothing.** It must not quietly rewrite the
+committed profile — a pasted one-off would become the team's permanent scope, inherited by
+every teammate who never saw the paste. Persisting is Part C's decision and is reached by
+asking. **A credential value is never an override**, or anything else: § Credentials in
+`references/interview.md` forbids one reaching the file or the transcript, and an
+invocation is not an exception to that.
 
 The profile sitting above connector intake-defaults is the whole point: a customer
 answered those questions and a live read proved them. If a connector skill's lane
@@ -555,7 +592,30 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    node bin/prefetch-prs.mjs <buildId> <org/repo> <branch> <fromISO> <toISO>
    ```
 
-   It runs the `--json number,title,mergedAt,url,files --limit 100` search and
+   **When Step 0 carried a PR list, use the supplied form instead — for every repo:**
+
+   ```bash
+   node bin/prefetch-prs.mjs <buildId> <org/repo> --prs <n,n,n>
+   ```
+
+   **No window search runs anywhere in that case.** The customer's list is the candidate
+   set for the whole run, so a repo their list never names simply has no candidates —
+   record that as a warning at the gate (`templates/gate-summary.md`), never as a reason to
+   search it anyway. An empty result for such a repo must read as *nothing was offered for
+   it*, not *we looked and found nothing*.
+
+   **Hydration still runs.** The list gives you numbers; path-overlap is the first
+   falsification test and needs each PR's `files`, so the binary fetches them per PR. That
+   is why this is the same binary and not a prose shortcut: it writes the identical
+   `prsInWindow` + `prsSearched: true`, and `prsSearched` is what stops every downstream
+   reader treating a complete list as "never searched".
+
+   **Repo scope with a supplied list is the UNION** of Gate Part A's `repos_validated`
+   and the repos the supplied PRs name. Without the union a PR in a repo the gate never
+   validated has no path into `prsInWindow` at all — the customer named it and it would
+   vanish.
+
+   It runs the `--json number,title,author,mergedAt,url,files --limit 100` search and
    writes the **canonical `prsInWindow` (with `files`) + `prsSearched: true`** via
    `setCodeEvidence`, preserving any `deployState` already recorded. **Never author
    the github entry by hand** (e.g. a `{prCount5d, topPRs}` blob): readers consume
@@ -571,10 +631,12 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    diff for the handful that survive. Do NOT pre-fetch diffs — those are large
    and only a few PRs ever need one.
 
-   A per-PR `gh pr view --json files` call is legitimate ONLY for a suspect
-   PR discovered later (during a coordinator's own investigation, not in this
-   pre-fetch's window) — never as a backfill for a PR-list call that should
-   have carried `files` the first time.
+   A per-PR `gh pr view --json files` call is legitimate in exactly two cases: a
+   suspect PR discovered later (during a coordinator's own investigation, not in
+   this pre-fetch's window), and **a customer-supplied list, where per-PR is the
+   only shape available** — there is no search to project `files` out of. It is
+   never a backfill for a PR-list call that should have carried `files` the first
+   time.
 
    - **Never let coordinators re-probe connectors.** State plainly in the
      dispatch prompt that the gate validated them.
@@ -643,6 +705,11 @@ leaf (`deployState`, each PR, each log sweep) must already be a digested
 `block` per `evidence-routing.md`'s caps (`SUMMARY≤400`, `SNIPPET≤20/40 lines`,
 link over diff) — never a raw dump. Cap `prsInWindow` to the top ~30 candidates
 by path-overlap relevance, not every PR in the window.
+
+**The cap applies to a SEARCHED window only.** A customer-supplied list is never
+capped: they named those PRs, and dropping some by our relevance ranking answers a
+question they did not ask while looking like a complete result. Digest each one's
+`block` to the same caps — that bounds size without discarding a candidate.
 
 Pass `evidencePathFor(...)`'s path to Step 5's fan-out as `evidenceFilePath` —
 every dispatch (representative and sibling) must be told to read it first.
@@ -843,6 +910,16 @@ excludes, and it is a prompt-following agent. Withhold any part that asserts a v
 confirmation has to stay its own, which Step 5 and the coordinator's Principle 0 already
 require. If a part contradicts a rule of ours, ours applies and the coordinator says so.
 
+**Coordinator prompts MUST carry a customer-supplied PR list, and any override.**
+Whatever Step 0 read out of the invocation goes in every dispatch — representative and
+sibling alike — as `suppliedPrs` plus the pinned values, stated as *the customer named
+these at invocation*. Two reasons it cannot be left implicit: `pre_seed` carries only the
+representative's own result (`lib/signature.mjs`), so a sibling learns intake from nowhere
+else; and the coordinator's `INCOMPLETE` rule sends it digging to the turn cap unless it
+knows the enumeration was supplied and is therefore exhausted. Naming the evidence file
+is not a substitute — a coordinator that reads `prsInWindow` there cannot tell a supplied
+set from a searched one, and the two mean different things about whether to keep looking.
+
 **Coordinator prompts MUST also name the Step 4 evidence file.** Every
 dispatch prompt (representative and sibling alike) includes the absolute
 `evidenceFilePath` from Step 4 with the instruction: _"Read `<path>` (via the
@@ -1008,7 +1085,8 @@ thread.
   cap, else state what was searched and record the gap.
 - Step 4's first `gh pr list` call per repo MUST include `files` in `--json` —
   never split into a plain list followed by a per-PR `gh pr view --json files`
-  backfill loop.
+  backfill loop. A customer-supplied PR list is not that split: there is no list
+  call to carry `files`, so per-PR IS the first call (Step 4).
 - Every reference-doc / `lib/` path handed to a coordinator (in the dispatch
   prompt or in `agents/ai-tfa-coordinator.md`) MUST be `pluginRoot`-qualified
   (`<pluginRoot>/skills/rca-build/references/<file>.md`) — never a bare

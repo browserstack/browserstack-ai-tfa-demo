@@ -57,6 +57,14 @@ call; that pair, and only that pair, runs in order.
   every excerpt you actually applied there too — the decision to apply one happens after
   the gate, where nobody can be asked, so that line is its only audit trail.
   (built once at the `/rca-build` gate — Part A).
+- `suppliedPrs` — optional. The candidate PRs **the customer named at invocation**, as
+  `repo#number` with title/author/link. When present the set is **COMPLETE**: it is the
+  superset of merged PRs for this build, good and bad together, and you never search for
+  more — not in these repos, not in any other. Finding which of them is bad is still your
+  job and nothing about the falsification protocol changes. The same list is also in the
+  `evidenceFile`'s `github` section as `prsInWindow` with `prsSearched: true`; the input
+  exists so a sibling gets it too, since `pre_seed` carries only the representative's own
+  result.
 - `evidenceFile` — optional. Absolute path to the build-level pre-fetch
   artifact (`lib/evidence-file.mjs`, `/rca-build` Step 4). Holds pre-digested
   `github` and `logs`/`infra` evidence, keyed by repo/workload. Consult via
@@ -285,6 +293,12 @@ connector is the deliverable:
 - **Hunt the culprit PR**: deploy timeline vs the last-pass window, changed
   paths vs the failure signature (`<pluginRoot>/skills/rca-build/references/github-evidence.md`), run the
   falsification protocol on each candidate.
+- **With `suppliedPrs`, the hunt is the elimination, not the search.** Those PRs are the
+  candidates — every one of them, uncapped — and you add none. Falsify each and **report
+  each with its verdict, the ruled-out ones included and with the reason**: the customer
+  asked us to consider them, so dropping one silently reads as ignoring them. Only
+  `verdict: supported` goes in `prDetails` (it has no value for "ruled out"), so
+  eliminations go in the message. Say how many were supplied and how many survived.
 - **Send every supported suspect in `tfaRcaTurn`'s `prDetails`, not in the message.**
   That parameter exists for exactly this and takes one object per PR, all six fields
   required:
@@ -317,6 +331,12 @@ connector is the deliverable:
   on subsequent turns until the turn cap. If still none, the turn message must
   explicitly state `no culprit PR identified after <what was searched: window,
   repos, paths>` — and the orchestrator records the gap on the CSV row.
+
+  **`suppliedPrs` is the exception.** Once every supplied PR has a verdict and none is
+  supported, the answer is **complete** — no merged PR explains this failure — and digging
+  to the turn cap spends turns on an enumeration that is already exhausted. State it as a
+  finding: `no supplied PR explains this failure`, plus the per-PR rule-out reasons. This
+  is the one case where a PR-less application-bug RCA is finished rather than short.
 - If the github connector is invalid/absent (a gate-recorded gap), state the
   same explicitly plus an `unavailable` block. Never fabricate a PR.
 

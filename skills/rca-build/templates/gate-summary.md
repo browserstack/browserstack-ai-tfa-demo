@@ -21,8 +21,8 @@ resolved without asking, answered, deliberately skipped, or proven broken:
 
 | Tag | Meaning |
 |---|---|
-| `given` | supplied in the invocation, or read from build metadata |
-| `detected` | resolved without asking — the profile already held it, or a tool answered |
+| `given` | **the customer said so** — supplied in the invocation. Outranks everything below it (`SKILL.md` § Part B, precedence) |
+| `detected` | resolved without asking — the profile already held it, or a tool answered, **build metadata included** |
 | `assumed` | inferred, and the inference is named |
 | `answered` | the human supplied it at this gate |
 | `skipped` | declined. A recorded gap, never re-asked |
@@ -74,7 +74,9 @@ Intake:
   automation repo: <org/repo>             (detected — from the profile)
   working branch:  <branch>               (given — build metadata, overrides profile <other>)
   default branch:  <branch>               (detected)
-  PRs in play:     <#123, #456 | none>    (given | gap)
+  PRs in play:     <repo#n, repo#n | none>  (given | detected | gap)
+  [culprit-PR discovery: DISABLED — the supplied list is the candidate set]
+  [overridden: <field> = <value> (given) — displaces <what it replaced> (<its source>)]
 
 Warnings:
   · <branch> has no merged PRs in the last 30 days — culprit-PR attribution will
@@ -124,6 +126,27 @@ SETUP ON FILE — review before I start
   knowledge: <artifact> — <part>
   warnings:  <one line each, including "no subpaths — attribution runs repo-wide">
 ```
+
+**A supplied PR list turns discovery off, and the screen has to say so.** The customer's
+list is the whole candidate set, so no window search runs for any repo — and a repo their
+list never names has no candidates at all. Warn about those by name:
+
+```
+Warnings:
+  · supplied PRs cover <repo>, <repo>. <repo> and <repo> have no supplied candidate —
+    a failure implicating them reports no culprit rather than searching for one.
+```
+
+Without that line an empty `related_prs` for those repos reads as *we looked and found
+nothing* when the truth is *nothing was offered for them*, and those need different
+reactions from a human.
+
+**Print what an override displaced, not just what won.** An invocation value outranks
+build metadata (`SKILL.md` § Part B), so a run can legitimately read a CI run the insights
+did not name. Show both sides on one line: nobody can reproduce or audit a run whose
+inputs silently differed from the build's own metadata. And say once that an override is
+**for this run only** — it writes nothing to `.rca-context.json`, because a pasted one-off
+must not become the team's persisted scope.
 
 **An override gets its own line, and it is loud.** `overriddenBuildMatch` is non-null
 only when an explicit `--profile` was used against a build the profile does not claim —

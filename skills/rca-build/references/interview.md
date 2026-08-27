@@ -352,12 +352,25 @@ homes:
 - **Which PRs COUNT as candidates** — an exclusion, a ranking, a surface-to-code
   mapping, a "this class of change never causes that class of failure" rule — is
   judgement, and it **is** knowledge. Record it with `--capability github`.
-- **A replacement definition of the candidate window** is machinery and is refused. The
-  window is `<pluginRoot>/skills/rca-build/references/github-evidence.md`'s: merged in
+- **An ARTIFACT that replaces the definition of the candidate window** is machinery and
+  is refused. The window is
+  `<pluginRoot>/skills/rca-build/references/github-evidence.md`'s: merged in
   `(baselineRef, build commit]` and touching the failing path. An artifact that narrows
   or ranks inside that window is additive; one that says candidates come from somewhere
   else entirely replaces it, and two definitions of "candidate PR" produce two answers
   where only one reaches the dashboard.
+
+  **What decides this is who is speaking, not what is said.** An artifact is refused
+  because nobody chose it for this run: it was found on disk, it may predate the code it
+  describes, and it competes silently with a definition the run already has. **The person
+  invoking the run is the opposite of all three** — they are speaking now, about this
+  build, on the record. A PR list supplied at invocation therefore *does* replace the
+  enumeration, it is tagged `given` on the gate screen, and `SKILL.md` § Step 0 and
+  § Step 4 own that path.
+
+  The carve-out is exactly that narrow. It admits a value a human typed for this run; it
+  does not admit a file, a recalled convention, or an inference. Widening it to "anything
+  may replace the window" gives back the two-answers problem this rule exists to stop.
 
 **State the cost when a recorded route is not the CLI.** `<pluginRoot>/bin/prefetch-prs.mjs`
 fetches the PR window once for every coordinator to share, and it speaks the forge CLI

@@ -696,6 +696,13 @@ evidenceType, fn)` to dedupe if two steps need the same `(repo, range)`.
    `pins` must be the **build-time commit shas** from `deployState`, never
    branch names — a local branch may be stale.
 
+   **Pass `resolveLocalRepos`'s return value through unchanged — never hand-author
+   the map.** With no pin for a repo it returns
+   `{usable: false, reason: "no pinned sha for this repo"}` — a refusal, and the
+   thing that stops a coordinator trusting a stale checkout. Hand-writing the entry
+   deletes the refusal, and a coordinator told a clone is usable has no way to
+   learn otherwise. Same rule as the github entry above, and for the same reason.
+
 7. `recomputeCoverage(path, {repos, workloads}, nowMs)` and declare the
    resulting path in the gate summary alongside the capability manifest, so
    a human re-reading the run can find it.

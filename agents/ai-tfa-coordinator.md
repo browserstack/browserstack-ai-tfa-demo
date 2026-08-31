@@ -151,6 +151,19 @@ read-only and has no side effects, so a read is always safe to repeat.
      The `<sha>` MUST be the commit sha from the evidence file's `deployState`
      — a **branch name is refused** (local clones may be stale).
      Check `localRepos` in the evidence file for which repos are local.
+   - **A local clone answers "what does this line say", never "who wrote it".**
+     Before trusting `git blame` or `git log -L` on one, check it is not shallow:
+     `git -C <dir> rev-list --count HEAD` returning `1`, or a `.git/shallow` file,
+     means every line of every file blames to the tip commit — the answer is fixed
+     before you ask, and the tip is only wherever the checkout happens to sit.
+     For real history, ask the forge:
+     `gh api "repos/<org>/<repo>/commits?path=<file>&sha=<branch>"`.
+     **Falsify any blame result before you attribute anything to it**: fetch the
+     changed files of the commit it names, and if the file you were blaming is not
+     among them, the result is an artifact, not authorship.
+   - **`gh api .../contents/...` truncates a large file silently.** Pass
+     `-H "Accept: application/vnd.github.raw"`, and check the returned line count
+     is plausible before concluding that something is absent from a file.
    - **MCP data queries** (a log or metrics server, `listTestIds`,
      `getFailureLogs`) — check first, store your digest on a miss:
      `node <pluginRoot>/bin/cached-mcp.mjs <buildId> get <tool> '<argsJson>'`
